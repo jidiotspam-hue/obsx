@@ -213,6 +213,29 @@ const server = http.createServer(async (req, res) => {
   );
 
   try {
+    // --- 0. Global OpenAI / ChatGPT Scraper Gate & robots.txt Policy ---
+    const reqUa = req.headers['user-agent'] || '';
+    const globalBlockOpenAi = process.env.BLOCK_OPENAI_SCRAPERS !== 'false';
+    if (pathname === '/robots.txt' && (method === 'GET' || method === 'HEAD')) {
+      const robotsTxt = globalBlockOpenAi
+        ? '# get your own ram\nUser-agent: GPTBot\nDisallow: /\n\nUser-agent: ChatGPT-User\nDisallow: /\n\nUser-agent: OAI-SearchBot\nDisallow: /\n\nUser-agent: *\nAllow: /\n'
+        : 'User-agent: *\nAllow: /\n';
+      res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end(method === 'HEAD' ? undefined : robotsTxt);
+    }
+
+    const isTenantVerifyOrSession =
+      pathname === '/api/v1/verify' || pathname === '/api/v1/session' || pathname === '/api/v1/signal';
+    if (globalBlockOpenAi && !isTenantVerifyOrSession && core.isOpenAiScraperUa(reqUa)) {
+      res.setHeader('X-OBSX-Policy', 'get your own ram');
+      return sendJson(
+        res,
+        403,
+        { ok: false, error: 'openai_scraper_blocked', message: 'get your own ram' },
+        CORS_HEADERS
+      );
+    }
+
     // --- 1. CORS Preflight Handling ---
     if (method === 'OPTIONS' && pathname.startsWith('/api/v1/')) {
       res.writeHead(204, CORS_HEADERS);
