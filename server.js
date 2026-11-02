@@ -226,8 +226,45 @@ const server = http.createServer(async (req, res) => {
 
     const isTenantVerifyOrSession =
       pathname === '/api/v1/verify' || pathname === '/api/v1/session' || pathname === '/api/v1/signal';
-    if (globalBlockOpenAi && !isTenantVerifyOrSession && core.isOpenAiScraperUa(reqUa)) {
+    const reqReferer = req.headers.referer || req.headers.referrer || '';
+    if (globalBlockOpenAi && !isTenantVerifyOrSession && core.isOpenAiScraperUa(reqUa, reqReferer, url.search)) {
       res.setHeader('X-OBSX-Policy', 'get your own ram');
+      const acceptHeader = req.headers.accept || '';
+      if (acceptHeader.includes('text/html') && !pathname.startsWith('/api/')) {
+        res.writeHead(403, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-store',
+          'X-OBSX-Policy': 'get your own ram',
+        });
+        return res.end(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>403 Forbidden — get your own ram</title>
+  <style>
+    body { background: #090d16; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 24px; box-sizing: border-box; }
+    .card { max-width: 640px; width: 100%; background: #111827; border: 1px solid #ef4444; border-radius: 12px; padding: 32px; box-shadow: 0 20px 50px rgba(0,0,0,0.6); }
+    .badge { display: inline-block; padding: 4px 10px; background: rgba(239,68,68,0.15); color: #f87171; border: 1px solid rgba(239,68,68,0.4); border-radius: 6px; font-size: 12px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
+    h1 { font-size: 36px; margin: 16px 0 12px; color: #ffffff; letter-spacing: -0.02em; }
+    blockquote { margin: 20px 0; padding: 14px 18px; border-left: 3px solid #ef4444; background: rgba(255,255,255,0.03); color: #94a3b8; font-size: 14px; line-height: 1.6; }
+    .footer { margin-top: 24px; font-size: 12px; color: #64748b; border-top: 1px solid #1f2937; padding-top: 16px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <span class="badge">HTTP 403 · OPENAI / CHATGPT SCRAPER BLOCKED</span>
+    <h1>get your own ram</h1>
+    <p style="color:#cbd5e1; line-height:1.6;">This node runs on dedicated personal hardware DRAM. OpenAI crawlers, ChatGPT agents, and ChatGPT referrals are explicitly denied access.</p>
+    <blockquote>
+      "From a global allocation perspective, actually, it's quite terrible to have everybody have a bunch of the world's limited supply of DRAM sitting in their own computer and being used five percent of the time."
+      <br/>— Sam Altman
+    </blockquote>
+    <div class="footer">Enforced by OBSX Security Gate · Policy: <code>blockOpenAiScrapers=true</code></div>
+  </div>
+</body>
+</html>`);
+      }
       return sendJson(
         res,
         403,
