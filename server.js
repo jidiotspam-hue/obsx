@@ -143,17 +143,21 @@ function detectProxyHeaders(req) {
 // Global active connections map for graceful termination
 const activeSockets = new Set();
 
-async function gateSelfRequest(req, body, actionName) {
-  const token = (body && body.token) || req.headers['x-obsx-token'];
-  const nonce = (body && body.nonce) || req.headers['x-obsx-nonce'];
-
+function isStrictGateActive() {
   const isTestRunner =
     process.env.NODE_ENV === 'test' ||
     process.argv.some((a) => a.includes('test'));
-  const isStrict =
+  return (
     process.env.STRICT_GATE === 'true' ||
     process.env.NODE_ENV === 'production' ||
-    (!isTestRunner && process.env.STRICT_GATE !== 'false');
+    (!isTestRunner && process.env.STRICT_GATE !== 'false')
+  );
+}
+
+async function gateSelfRequest(req, body, actionName) {
+  const token = (body && body.token) || req.headers['x-obsx-token'];
+  const nonce = (body && body.nonce) || req.headers['x-obsx-nonce'];
+  const isStrict = isStrictGateActive();
 
   if (!token) {
     if (isStrict) {
@@ -174,9 +178,10 @@ async function gateSelfRequest(req, body, actionName) {
     headers: req.headers,
     ua: req.headers['user-agent'],
     action: actionName,
+    requireBiometrics: isStrict,
   });
 
-  if (verdict.allowed === false) {
+  if (verdict.allowed === false || (isStrict && verdict.verdict !== 'accept')) {
     return {
       allowed: false,
       statusCode: 403,
@@ -267,7 +272,13 @@ const server = http.createServer(async (req, res) => {
         if (method !== 'POST') return sendMethodNotAllowed(res, ['POST', 'OPTIONS']);
         const body = await readBody(req);
         const project = await core.loadProject(core.DEMO.pid);
-        const verdict = await core.verify(project, body, { ip: clientIp, proxyHeaders, headers: req.headers, ua: req.headers['user-agent'] });
+        const verdict = await core.verify(project, body, {
+          ip: clientIp,
+          proxyHeaders,
+          headers: req.headers,
+          ua: req.headers['user-agent'],
+          requireBiometrics: isStrictGateActive(),
+        });
         res.setHeader('X-OBSX-Mode', verdict.mode || 'enforce');
         if (verdict.shadowVerdict) res.setHeader('X-OBSX-Shadow-Verdict', verdict.shadowVerdict);
         return sendJson(res, 200, verdict, CORS_HEADERS);
@@ -438,6 +449,8 @@ const server = http.createServer(async (req, res) => {
           amount: body.amount || 500,
           clientIp,
           proxyHeaders,
+          ua: req.headers['user-agent'] || '',
+          requireBiometrics: isStrictGateActive(),
         });
         return sendJson(res, 200, result, CORS_HEADERS);
       }
@@ -659,8 +672,9 @@ const server = http.createServer(async (req, res) => {
               headers: req.headers,
               ua: req.headers['user-agent'],
               action: 'Save Protected Note',
+              requireBiometrics: isStrictGateActive(),
             });
-            if (verificationVerdict.allowed === false) {
+            if (verificationVerdict.allowed === false || verificationVerdict.verdict !== 'accept') {
               console.log('[NOTES REJECTED BY OBSX]', verificationVerdict);
               return sendJson(res, 403, {
                 ok: false,
