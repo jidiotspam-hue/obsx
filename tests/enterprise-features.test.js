@@ -379,6 +379,21 @@ test('enterprise: OpenAI/ChatGPT scrapers are blocked with "get your own ram" an
   await core.updateProjectSettings(proj.pid, { blockOpenAiScrapers: false });
   const updatedProj = await core.loadProject(proj.pid);
   assert.equal(updatedProj.settings.blockOpenAiScrapers, false);
+
+  // 3. Googlebot and Google Search Console inspection pass cleanly with 200 + sitemap
+  const googleRes = await request('GET', '/', {
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)' },
+  });
+  assert.equal(googleRes.status, 200);
+
+  const robotsRes = await request('GET', '/robots.txt');
+  assert.equal(robotsRes.status, 200);
+  assert.ok(robotsRes.body.includes('User-agent: Googlebot\nAllow: /'));
+  assert.ok(robotsRes.body.includes('Sitemap: https://obsx.tech/sitemap.xml'));
+
+  const sitemapRes = await request('GET', '/sitemap.xml');
+  assert.equal(sitemapRes.status, 200);
+  assert.ok(sitemapRes.body.includes('<loc>https://obsx.tech/</loc>'));
 });
 
 

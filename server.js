@@ -213,15 +213,43 @@ const server = http.createServer(async (req, res) => {
   );
 
   try {
-    // --- 0. Global OpenAI / ChatGPT Scraper Gate & robots.txt Policy ---
+    // --- 0. Global OpenAI / ChatGPT Scraper Gate, Google SEO Sitemap & robots.txt Policy ---
     const reqUa = req.headers['user-agent'] || '';
     const globalBlockOpenAi = process.env.BLOCK_OPENAI_SCRAPERS !== 'false';
     if (pathname === '/robots.txt' && (method === 'GET' || method === 'HEAD')) {
       const robotsTxt = globalBlockOpenAi
-        ? '# get your own ram\nUser-agent: GPTBot\nDisallow: /\n\nUser-agent: ChatGPT-User\nDisallow: /\n\nUser-agent: OAI-SearchBot\nDisallow: /\n\nUser-agent: *\nAllow: /\n'
-        : 'User-agent: *\nAllow: /\n';
+        ? '# get your own ram\nUser-agent: GPTBot\nDisallow: /\n\nUser-agent: ChatGPT-User\nDisallow: /\n\nUser-agent: OAI-SearchBot\nDisallow: /\n\nUser-agent: Googlebot\nAllow: /\n\nUser-agent: Googlebot-Image\nAllow: /\n\nUser-agent: Google-InspectionTool\nAllow: /\n\nUser-agent: *\nAllow: /\n\nSitemap: https://obsx.tech/sitemap.xml\n'
+        : 'User-agent: Googlebot\nAllow: /\n\nUser-agent: *\nAllow: /\n\nSitemap: https://obsx.tech/sitemap.xml\n';
       res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
       return res.end(method === 'HEAD' ? undefined : robotsTxt);
+    }
+
+    if (pathname === '/sitemap.xml' && (method === 'GET' || method === 'HEAD')) {
+      const sitemapXml = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://obsx.tech/</loc>
+    <changefreq>daily</changefreq>
+    <priority>1.0</priority>
+  </url>
+  <url>
+    <loc>https://obsx.tech/docs.html</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>https://obsx.tech/dashboard.html</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://obsx.tech/notes.html</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+</urlset>`;
+      res.writeHead(200, { 'Content-Type': 'application/xml; charset=utf-8' });
+      return res.end(method === 'HEAD' ? undefined : sitemapXml);
     }
 
     const isTenantVerifyOrSession =
