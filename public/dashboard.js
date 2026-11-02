@@ -302,12 +302,16 @@
 
             <!-- OpenAI / ChatGPT Scraper Gate ("get your own ram") -->
             <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
-              <div>
-                <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">OpenAI / ChatGPT Scraper Policy</div>
-                <div style="display: flex; align-items: center; gap: 8px; margin-top: 3px;">
-                  <span class="badge ${(p.settings && p.settings.blockOpenAiScrapers !== false) ? 'badge-good' : 'badge-secondary'}">
-                    ${(p.settings && p.settings.blockOpenAiScrapers !== false) ? '● Blocking OpenAI Scrapers ("get your own ram")' : '○ Allowed'}
-                  </span>
+              <div style="display: flex; align-items: center; gap: 10px;">
+                <img src="/dram-dark.jpg" alt="Pixel DRAM Stick" style="width: 44px; height: auto; border-radius: 5px; border: 1px solid var(--border); image-rendering: pixelated; background: #000;" />
+                <div>
+                  <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">OpenAI / ChatGPT Scraper Policy (DRAM Sovereignty)</div>
+                  <div style="display: flex; align-items: center; gap: 8px; margin-top: 3px; flex-wrap: wrap;">
+                    <span class="badge ${(p.settings && p.settings.blockOpenAiScrapers !== false) ? 'badge-good' : 'badge-secondary'}">
+                      ${(p.settings && p.settings.blockOpenAiScrapers !== false) ? '● Blocking OpenAI Scrapers ("get your own ram")' : '○ Allowed'}
+                    </span>
+                    <a href="/?utm_source=chatgpt.com" target="_blank" rel="noopener" style="font-size: 11.5px; color: var(--accent); text-decoration: none; font-weight: 600;">Preview DRAM Balloons &rarr;</a>
+                  </div>
                 </div>
               </div>
               <div>
