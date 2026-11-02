@@ -11,6 +11,7 @@ const core = require('./lib/core');
 const accounts = require('./lib/accounts');
 const crypto = require('./lib/crypto');
 const mailer = require('./lib/mailer');
+const updater = require('./lib/updater');
 const { getKv } = require('./lib/kv');
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
@@ -434,6 +435,25 @@ const server = http.createServer(async (req, res) => {
         if (method !== 'GET') return sendMethodNotAllowed(res, ['GET']);
         const telemetry = await core.getLiveTelemetry();
         return sendJson(res, 200, telemetry, CORS_HEADERS);
+      }
+
+      // 11b-2. Runtime Version, Build Attestation & Upstream Auto-Updater Status
+      if (pathname === '/api/v1/system/version') {
+        if (method !== 'GET') return sendMethodNotAllowed(res, ['GET', 'OPTIONS']);
+        const info = updater.getSystemVersionInfo();
+        res.setHeader('X-OBSX-Build', `${info.version}-${info.shortCommit}-${info.edition}`);
+        return sendJson(res, 200, info, CORS_HEADERS);
+      }
+
+      if (pathname === '/api/v1/system/update') {
+        if (method !== 'POST') return sendMethodNotAllowed(res, ['POST']);
+        const user = await accounts.getSessionUser(req);
+        const isLoopback = clientIp === '127.0.0.1' || clientIp === '::1';
+        if (!user && !isLoopback) {
+          return sendJson(res, 401, { ok: false, error: 'unauthorized' });
+        }
+        const updateRes = await updater.checkAndApplyUpstreamUpdate({ force: true });
+        return sendJson(res, 200, { ok: true, ...updateRes, versionInfo: updater.getSystemVersionInfo() });
       }
 
       // 11c. High-Stakes Vault Payment & Scratch Exploit Arena
@@ -918,6 +938,7 @@ process.on('uncaughtException', (err) => {
 if (require.main === module) {
   server.listen(PORT, () => {
     console.log(`[OBSX Security] Server listening on http://localhost:${PORT}`);
+    updater.startAutoUpdater();
   });
 }
 
