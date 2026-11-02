@@ -225,7 +225,12 @@ const server = http.createServer(async (req, res) => {
     }
 
     const isTenantVerifyOrSession =
-      pathname === '/api/v1/verify' || pathname === '/api/v1/session' || pathname === '/api/v1/signal';
+      pathname === '/api/v1/verify' ||
+      pathname === '/api/v1/session' ||
+      pathname === '/api/v1/signal' ||
+      pathname === '/dram-dark.jpg' ||
+      pathname === '/dram-light.jpg' ||
+      pathname === '/dram-stick.svg';
     const reqReferer = req.headers.referer || req.headers.referrer || '';
     if (globalBlockOpenAi && !isTenantVerifyOrSession && core.isOpenAiScraperUa(reqUa, reqReferer, url.search)) {
       res.setHeader('X-OBSX-Policy', 'get your own ram');
@@ -243,24 +248,69 @@ const server = http.createServer(async (req, res) => {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>403 Forbidden — get your own ram</title>
   <style>
-    body { background: #090d16; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 24px; box-sizing: border-box; }
-    .card { max-width: 640px; width: 100%; background: #111827; border: 1px solid #ef4444; border-radius: 12px; padding: 32px; box-shadow: 0 20px 50px rgba(0,0,0,0.6); }
+    body { background: #090d16; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 24px; box-sizing: border-box; overflow: hidden; position: relative; }
+    .dram-sky { position: fixed; inset: 0; pointer-events: none; z-index: 1; overflow: hidden; }
+    .dram-balloon { position: absolute; bottom: -140px; display: flex; flex-direction: column; align-items: center; animation: floatUp linear infinite; opacity: 0.9; filter: drop-shadow(0 8px 16px rgba(0,0,0,0.6)); }
+    .dram-balloon img { width: 110px; height: auto; image-rendering: pixelated; border-radius: 6px; }
+    .dram-string { width: 1.5px; height: 55px; background: linear-gradient(to bottom, rgba(250,204,21,0.85), rgba(255,255,255,0.05)); margin-top: -4px; }
+    .dram-tag { font-size: 10px; font-weight: 700; color: #facc15; background: rgba(17,24,39,0.9); border: 1px solid rgba(250,204,21,0.4); padding: 2px 6px; border-radius: 4px; margin-top: 2px; white-space: nowrap; }
+    @keyframes floatUp {
+      0% { transform: translateY(0) rotate(-3deg); opacity: 0; }
+      10% { opacity: 0.92; }
+      50% { transform: translateY(-55vh) rotate(4deg); }
+      90% { opacity: 0.92; }
+      100% { transform: translateY(-120vh) rotate(-3deg); opacity: 0; }
+    }
+    .card { position: relative; z-index: 10; max-width: 660px; width: 100%; background: rgba(17, 24, 39, 0.94); backdrop-filter: blur(10px); border: 1px solid #ef4444; border-radius: 14px; padding: 32px; box-shadow: 0 24px 60px rgba(0,0,0,0.75); text-align: center; }
+    .dram-hero-imgs { display: flex; justify-content: center; align-items: center; gap: 18px; margin-bottom: 18px; }
+    .dram-hero-imgs img { height: 74px; width: auto; image-rendering: pixelated; border-radius: 8px; border: 1px solid rgba(255,255,255,0.12); background: #000; padding: 4px; }
     .badge { display: inline-block; padding: 4px 10px; background: rgba(239,68,68,0.15); color: #f87171; border: 1px solid rgba(239,68,68,0.4); border-radius: 6px; font-size: 12px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
-    h1 { font-size: 36px; margin: 16px 0 12px; color: #ffffff; letter-spacing: -0.02em; }
-    blockquote { margin: 20px 0; padding: 14px 18px; border-left: 3px solid #ef4444; background: rgba(255,255,255,0.03); color: #94a3b8; font-size: 14px; line-height: 1.6; }
-    .footer { margin-top: 24px; font-size: 12px; color: #64748b; border-top: 1px solid #1f2937; padding-top: 16px; }
+    h1 { font-size: 40px; margin: 14px 0 10px; color: #ffffff; letter-spacing: -0.02em; }
+    blockquote { text-align: left; margin: 20px 0; padding: 14px 18px; border-left: 3px solid #ef4444; background: rgba(255,255,255,0.03); color: #94a3b8; font-size: 13.5px; line-height: 1.6; border-radius: 0 8px 8px 0; }
+    .footer { margin-top: 24px; font-size: 12px; color: #64748b; border-top: 1px solid #1f2937; padding-top: 16px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
+    .btn-back { color: #38bdf8; text-decoration: none; font-weight: 600; }
   </style>
 </head>
 <body>
+  <div class="dram-sky">
+    <div class="dram-balloon" style="left: 6%; animation-duration: 9s; animation-delay: 0s;">
+      <img src="/dram-stick.svg" alt="DRAM" /><div class="dram-string"></div><span class="dram-tag">5% Utilized DRAM</span>
+    </div>
+    <div class="dram-balloon" style="left: 20%; animation-duration: 11s; animation-delay: 2s;">
+      <img src="/dram-dark.jpg" alt="DRAM" /><div class="dram-string"></div><span class="dram-tag">get your own ram</span>
+    </div>
+    <div class="dram-balloon" style="left: 36%; animation-duration: 8.5s; animation-delay: 4s;">
+      <img src="/dram-light.jpg" alt="DRAM" /><div class="dram-string"></div><span class="dram-tag">Personal Raspberry Pi RAM</span>
+    </div>
+    <div class="dram-balloon" style="left: 64%; animation-duration: 10.5s; animation-delay: 1s;">
+      <img src="/dram-stick.svg" alt="DRAM" /><div class="dram-string"></div><span class="dram-tag">Not for Cloud Scrapers</span>
+    </div>
+    <div class="dram-balloon" style="left: 78%; animation-duration: 9.5s; animation-delay: 3s;">
+      <img src="/dram-dark.jpg" alt="DRAM" /><div class="dram-string"></div><span class="dram-tag">get your own ram</span>
+    </div>
+    <div class="dram-balloon" style="left: 90%; animation-duration: 12s; animation-delay: 0.5s;">
+      <img src="/dram-light.jpg" alt="DRAM" /><div class="dram-string"></div><span class="dram-tag">100% Sovereign DRAM</span>
+    </div>
+  </div>
   <div class="card">
+    <div class="dram-hero-imgs">
+      <img src="/dram-dark.jpg" alt="Pixel DRAM Module Dark" />
+      <img src="/dram-stick.svg" alt="Pixel DRAM Stick" style="background:transparent; border:none; height:64px;" />
+      <img src="/dram-light.jpg" alt="Pixel DRAM Module Light" style="background:#fff;" />
+    </div>
     <span class="badge">HTTP 403 · OPENAI / CHATGPT SCRAPER BLOCKED</span>
     <h1>get your own ram</h1>
-    <p style="color:#cbd5e1; line-height:1.6;">This node runs on dedicated personal hardware DRAM. OpenAI crawlers, ChatGPT agents, and ChatGPT referrals are explicitly denied access.</p>
+    <p style="color:#cbd5e1; line-height:1.6; margin: 0 auto; max-width: 540px;">
+      This security node runs on dedicated personal hardware DRAM. OpenAI crawlers, ChatGPT agents, and ChatGPT referrals are explicitly denied access.
+    </p>
     <blockquote>
       "From a global allocation perspective, actually, it's quite terrible to have everybody have a bunch of the world's limited supply of DRAM sitting in their own computer and being used five percent of the time."
-      <br/>— Sam Altman
+      <br/>— <strong>Sam Altman</strong> (Cheeky Pint Podcast, Oct 29)
     </blockquote>
-    <div class="footer">Enforced by OBSX Security Gate · Policy: <code>blockOpenAiScrapers=true</code></div>
+    <div class="footer">
+      <span>Enforced by OBSX Security Gate · Policy: <code>blockOpenAiScrapers=true</code></span>
+      <a href="/" class="btn-back">Return to Human Site &rarr;</a>
+    </div>
   </div>
 </body>
 </html>`);

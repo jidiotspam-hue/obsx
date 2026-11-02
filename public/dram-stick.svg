@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 72" shape-rendering="crispEdges">
+  <!-- Outer dark pixel border -->
+  <path d="M8 8h144v16h-6v12h6v20H8V36h6V24H8V8z" fill="#18181b"/>
+  <!-- Green PCB body -->
+  <path d="M12 12h136v10h-6v16h6v14H12V38h6V22h-6V12z" fill="#5b8c5a"/>
+  <!-- Top PCB highlight -->
+  <rect x="12" y="12" width="136" height="4" fill="#74a872"/>
+  <!-- White trace pin dot left -->
+  <rect x="18" y="16" width="4" height="4" fill="#fef08a"/>
+  <!-- 4 IC Memory Chips -->
+  <g>
+    <!-- Chip 1 -->
+    <rect x="24" y="18" width="24" height="24" fill="#18181b"/>
+    <rect x="28" y="22" width="16" height="16" fill="#3f3f46"/>
+    <rect x="28" y="26" width="4" height="4" fill="#71717a"/>
+    <rect x="32" y="22" width="4" height="4" fill="#71717a"/>
+    <!-- Chip 2 -->
+    <rect x="56" y="18" width="24" height="24" fill="#18181b"/>
+    <rect x="60" y="22" width="16" height="16" fill="#3f3f46"/>
+    <rect x="60" y="26" width="4" height="4" fill="#71717a"/>
+    <rect x="64" y="22" width="4" height="4" fill="#71717a"/>
+    <!-- Chip 3 -->
+    <rect x="88" y="18" width="24" height="24" fill="#18181b"/>
+    <rect x="92" y="22" width="16" height="16" fill="#3f3f46"/>
+    <rect x="92" y="26" width="4" height="4" fill="#71717a"/>
+    <rect x="96" y="22" width="4" height="4" fill="#71717a"/>
+    <!-- Chip 4 -->
+    <rect x="120" y="18" width="24" height="24" fill="#18181b"/>
+    <rect x="124" y="22" width="16" height="16" fill="#3f3f46"/>
+    <rect x="124" y="26" width="4" height="4" fill="#71717a"/>
+    <rect x="128" y="22" width="4" height="4" fill="#71717a"/>
+  </g>
+  <!-- Bottom PCB solder dots -->
+  <rect x="24" y="46" width="4" height="4" fill="#fef08a"/>
+  <rect x="36" y="46" width="4" height="4" fill="#fef08a"/>
+  <rect x="60" y="46" width="4" height="4" fill="#fef08a"/>
+  <rect x="72" y="46" width="4" height="4" fill="#fef08a"/>
+  <rect x="92" y="46" width="4" height="4" fill="#fef08a"/>
+  <rect x="116" y="46" width="4" height="4" fill="#fef08a"/>
+  <rect x="128" y="46" width="4" height="4" fill="#fef08a"/>
+  <!-- Gold Edge Connector Pins (Left Bank + Notch + Right Bank) -->
+  <rect x="20" y="52" width="72" height="14" fill="#18181b"/>
+  <rect x="96" y="52" width="48" height="14" fill="#18181b"/>
+  <rect x="24" y="54" width="6" height="10" fill="#facc15"/>
+  <rect x="32" y="54" width="6" height="10" fill="#ca8a04"/>
+  <rect x="40" y="54" width="6" height="10" fill="#facc15"/>
+  <rect x="48" y="54" width="6" height="10" fill="#ca8a04"/>
+  <rect x="56" y="54" width="6" height="10" fill="#facc15"/>
+  <rect x="68" y="54" width="6" height="10" fill="#facc15"/>
+  <rect x="76" y="54" width="6" height="10" fill="#ca8a04"/>
+  <rect x="84" y="54" width="6" height="10" fill="#facc15"/>
+  <rect x="100" y="54" width="6" height="10" fill="#facc15"/>
+  <rect x="108" y="54" width="6" height="10" fill="#ca8a04"/>
+  <rect x="116" y="54" width="6" height="10" fill="#facc15"/>
+  <rect x="124" y="54" width="6" height="10" fill="#facc15"/>
+  <rect x="132" y="54" width="6" height="10" fill="#ca8a04"/>
+</svg>
