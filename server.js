@@ -610,6 +610,7 @@ const server = http.createServer(async (req, res) => {
               publicKey: project.publicKey,
               settings: project.settings,
             },
+            upstreamAdvisory: updater.getOperatorDriftAdvisory(),
             ...telemetry,
           });
         }

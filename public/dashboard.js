@@ -682,6 +682,51 @@
       const proj = data.project || cachedUserProjects.find((p) => p.pid === pid) || {};
       const pk = proj.publicKey || '';
 
+      // Render Private Operator-Only Upstream Drift & Adaptation Reminder (when local tree is dirty or behind upstream)
+      const adv = data.upstreamAdvisory;
+      let driftBanner = document.getElementById('operator-drift-advisory-banner');
+      if (adv && adv.showReminder) {
+        if (!driftBanner) {
+          driftBanner = document.createElement('div');
+          driftBanner.id = 'operator-drift-advisory-banner';
+          driftBanner.style.cssText = 'margin: 0 0 16px 0; padding: 14px 16px; border-radius: 8px; border: 1px solid rgba(245, 158, 11, 0.45); background: rgba(245, 158, 11, 0.08); font-size: 12.5px; line-height: 1.5;';
+          const parentTarget = (projectTelemetryContainer && projectTelemetryContainer.parentNode) || document.body;
+          parentTarget.insertBefore(driftBanner, projectTelemetryContainer || parentTarget.firstChild);
+        }
+        const modFiles = (adv.locallyModifiedFiles && adv.locallyModifiedFiles.length)
+          ? adv.locallyModifiedFiles.map((f) => `<code>${escapeHtml(f)}</code>`).join(', ')
+          : 'None';
+        const upCommits = (adv.upstreamCommits && adv.upstreamCommits.length)
+          ? `<div style="margin-top:6px;"><strong>New Official Upstream Commits (${adv.commitsBehind} behind):</strong><ul style="margin:4px 0 0 18px; padding:0;">${adv.upstreamCommits.map((c) => `<li><code>${escapeHtml(c)}</code></li>`).join('')}</ul></div>`
+          : '';
+        const upFiles = (adv.upstreamChangedFiles && adv.upstreamChangedFiles.length)
+          ? `<div style="margin-top:4px;"><strong>Changed Upstream Files:</strong> ${adv.upstreamChangedFiles.map((f) => `<code>${escapeHtml(f)}</code>`).join(', ')}</div>`
+          : '';
+        const overlapWarn = (adv.overlappingFiles && adv.overlappingFiles.length)
+          ? `<div style="margin-top:4px; color:#f59e0b;"><strong>Adaptation Overlap Detected:</strong> Both your local node and official upstream modified ${adv.overlappingFiles.map((f) => `<code>${escapeHtml(f)}</code>`).join(', ')}.</div>`
+          : '';
+        driftBanner.innerHTML = `
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+            <strong style="color:#f59e0b;">[PRIVATE OPERATOR ADVISORY] Local Node Customization &amp; Upstream Sync Paused</strong>
+            <span class="badge badge-warn">Edition: ${escapeHtml(adv.edition || 'modified-local')}</span>
+          </div>
+          <div style="color:var(--text-muted);">
+            Auto-updater paused fast-forward sync to protect your local changes. Only you (authenticated operator) can see this notice.
+          </div>
+          <div style="margin-top:6px;"><strong>Your Modified Files:</strong> ${modFiles}</div>
+          ${upCommits}
+          ${upFiles}
+          ${overlapWarn}
+          <div style="margin-top:8px;">
+            <strong>Adapt &amp; Rebase Command:</strong>
+            <code style="display:block; margin-top:4px; padding:6px 8px; background:rgba(0,0,0,0.35); border-radius:4px; user-select:all;">${escapeHtml(adv.adaptationCommand || 'git fetch origin main && git stash && git pull --rebase origin main && git stash pop')}</code>
+          </div>
+        `;
+        driftBanner.style.display = 'block';
+      } else if (driftBanner) {
+        driftBanner.style.display = 'none';
+      }
+
       const stats = data.stats || {};
       const hasTraffic = Boolean(data.hasTraffic && stats.total > 0);
 
