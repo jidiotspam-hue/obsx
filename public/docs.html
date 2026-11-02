@@ -165,35 +165,31 @@ app.post('/api/checkout', async (req, res) => {
     <div class="card" style="margin-bottom: 32px;">
       <div class="card-title" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
         <span>4. Autonomous Vector Circuit Breaker (AVCB)</span>
-        <span class="badge badge-good">Selective Load-Shedding</span>
+        <span class="badge" style="background: rgba(226, 136, 106, 0.15); color: var(--accent); border: 1px solid var(--accent); font-size: 11px;">obsx.tech Managed Cloud Exclusive</span>
       </div>
       <p class="card-sub">
-        Protects infrastructure during sustained attacks by temporarily shedding malicious ingress vectors while keeping legitimate traffic 100% online.
+        Protects infrastructure during sustained attacks by dynamically isolating malicious ingress vectors across edge nodes while keeping legitimate traffic 100% online.
       </p>
 
       <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 18px 0;">
         <div style="background: var(--bg-card-subtle); padding: 14px; border-radius: var(--radius-xs); border: 1px solid var(--border);">
-          <strong style="font-size: 13px; color: var(--text);">1. Threat Detection</strong>
-          <p style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">Monitors rolling 60s rejection density per attack vector (proxy, CDP bot, spline replay).</p>
+          <strong style="font-size: 13px; color: var(--text);">1. Dynamic Threat Detection</strong>
+          <p style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">Evaluates attack density and zero-day anomalous signatures across global edge telemetry.</p>
         </div>
         <div style="background: var(--bg-card-subtle); padding: 14px; border-radius: var(--radius-xs); border: 1px solid var(--border);">
-          <strong style="font-size: 13px; color: var(--accent);">2. Ingress Shedding</strong>
-          <p style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">Tripped vectors are dropped immediately at the edge (HTTP 429 + Retry-After) with zero CPU burn.</p>
+          <strong style="font-size: 13px; color: var(--accent);">2. Ingress Load-Shedding</strong>
+          <p style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">Tripped vectors are isolated at the edge proxy boundary with zero application CPU overhead.</p>
         </div>
         <div style="background: var(--bg-card-subtle); padding: 14px; border-radius: var(--radius-xs); border: 1px solid var(--border);">
-          <strong style="font-size: 13px; color: var(--good);">3. Auto-Recovery</strong>
-          <p style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">After a 3-minute cooldown, probe requests verify cleanliness and automatically restore normal routing.</p>
+          <strong style="font-size: 13px; color: var(--good);">3. Automated Self-Healing</strong>
+          <p style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">Dynamic recovery cycles test ingress traffic health and automatically restore standard routing.</p>
         </div>
       </div>
 
-      <h4 style="margin: 18px 0 8px; font-size: 14px;">Activation</h4>
+      <h4 style="margin: 18px 0 8px; font-size: 14px;">Cloud Availability</h4>
       <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 8px;">
-        Disabled by default. Activate via your project credentials card on the <a href="/dashboard.html" style="color: var(--accent); text-decoration: underline;">Dashboard</a> or via API:
+        AVCB is powered exclusively by the closed-source OBSX Sentinel™ engine on official <a href="https://obsx.tech" style="color: var(--accent); text-decoration: underline;">obsx.tech</a> edge infrastructure.
       </p>
-      <div class="code-block">
-        <pre class="code-content"><code>// PATCH /api/v1/project/:pid/settings
-{ "adaptiveCircuitBreaker": true }</code></pre>
-      </div>
     </div>
   </main>
 

@@ -468,26 +468,14 @@
         });
       });
 
-      // Poll live circuit breaker state for active projects
-      projs.forEach(async (p) => {
-        if (!p.settings || !p.settings.adaptiveCircuitBreaker) return;
-        try {
-          const cbRes = await fetch(`/api/v1/project/${p.pid}/circuit-breaker`);
-          const cbData = await cbRes.json();
-          const detailsSpan = document.getElementById(`cb-details-${p.pid}`);
-          const resetBtn = document.getElementById(`btn-reset-cb-${p.pid}`);
-          if (cbData.hasSentinel === false) {
-            if (detailsSpan) detailsSpan.innerHTML = `<span style="color:var(--text-muted); font-size:11px;">(Active on obsx.tech managed nodes)</span>`;
-            if (resetBtn) resetBtn.style.display = 'none';
-          } else if (cbData.ok && cbData.activeVectors && cbData.activeVectors.length > 0) {
-            const isolatedList = cbData.activeVectors.map((v) => `${v.vector} (${v.remainingSeconds}s)`).join(', ');
-            if (detailsSpan) detailsSpan.innerHTML = `<span style="color:var(--bad); font-weight:600;">[ISOLATED] ${escapeHtml(isolatedList)}</span>`;
-            if (resetBtn) resetBtn.style.display = 'inline-block';
-          } else {
-            if (detailsSpan) detailsSpan.textContent = '● Ingress normal';
-            if (resetBtn) resetBtn.style.display = 'none';
-          }
-        } catch {}
+      // Display managed cloud note for circuit breaker
+      projs.forEach((p) => {
+        const detailsSpan = document.getElementById(`cb-details-${p.pid}`);
+        const resetBtn = document.getElementById(`btn-reset-cb-${p.pid}`);
+        if (detailsSpan) {
+          detailsSpan.innerHTML = `<span style="color:var(--text-muted); font-size:11px;">(Managed cloud capability on obsx.tech)</span>`;
+        }
+        if (resetBtn) resetBtn.style.display = 'none';
       });
 
       // Synchronize Guarded Project Selector (Option B)

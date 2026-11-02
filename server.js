@@ -512,10 +512,8 @@ const server = http.createServer(async (req, res) => {
           if (!project || project.owner !== user.uid) return sendJson(res, 404, { ok: false, error: 'project_not_found' });
           return sendJson(res, 200, {
             ok: true,
-            enabled: Boolean(project.settings && project.settings.adaptiveCircuitBreaker),
             hasSentinel: false,
-            activeVectors: [],
-            allVectors: [],
+            message: 'Managed cloud feature on obsx.tech',
           });
         }
 
