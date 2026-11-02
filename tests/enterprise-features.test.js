@@ -306,3 +306,53 @@ test('enterprise: project owners can list and delete projects', async () => {
   assert.equal(finalList.status, 200);
   assert.equal(finalList.json.projects.length, 0);
 });
+
+// 9. Challenge-Bound Telemetry Seal (tsig) & Global Sentinel Fleet Ring
+test('enterprise: challenge-bound telemetry HMAC seal (tsig) rejects tampered beacon signatures', async () => {
+  const p = await core.loadProject(core.DEMO.pid);
+  const s = await core.startSession(p, { ip: '127.0.0.1' });
+
+  let nonce = 0;
+  while (!crypto.verifyPoW(s.challenge, String(nonce), s.difficulty)) {
+    nonce++;
+  }
+
+  await core.recordSignals({
+    token: s.token,
+    nonce: String(nonce),
+    tsig: 'forged_hmac_seal_xyz',
+    signals: {
+      sh: 'trc_v1_live',
+      mousePoints: [
+        { x: 10, y: 15, t: 100 },
+        { x: 28, y: 38, t: 165 },
+        { x: 55, y: 74, t: 245 },
+      ],
+    },
+  });
+
+  const realNow = Date.now;
+  Date.now = () => realNow() + 2000;
+  const v = await core.verify(p, { token: s.token, nonce: String(nonce) });
+  Date.now = realNow;
+
+  assert.ok(v.reasons.some((r) => r.code === 'tampered_builtins'));
+});
+
+test('enterprise: Global Sentinel Fleet Ring escalates and exposes hostile subnets via /api/v1/sentinel/ring', async () => {
+  const p = await core.loadProject(core.DEMO.pid);
+  const hostileIp = '198.51.100.77';
+
+  for (let i = 0; i < 3; i++) {
+    const s = await core.startSession(p, { ip: hostileIp });
+    await core.verify(p, { token: s.token, nonce: 'bad' }, { ip: hostileIp });
+  }
+
+  const ring = await core.getGlobalThreatRing();
+  assert.equal(ring.ok, true);
+  assert.ok(ring.isolatedSubnetCount >= 1);
+
+  const escalatedSession = await core.startSession(p, { ip: hostileIp });
+  assert.ok(escalatedSession.difficulty >= 4, 'Global threat ring must pre-escalate PoW difficulty');
+});
+

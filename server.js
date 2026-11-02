@@ -456,6 +456,33 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 200, { ok: true, ...updateRes, versionInfo: updater.getSystemVersionInfo() });
       }
 
+      if (pathname === '/api/v1/system/diff') {
+        if (method !== 'GET') return sendMethodNotAllowed(res, ['GET']);
+        const user = await accounts.getSessionUser(req);
+        const isLoopback = clientIp === '127.0.0.1' || clientIp === '::1';
+        if (!user && !isLoopback) {
+          return sendJson(res, 401, { ok: false, error: 'unauthorized' });
+        }
+        return sendJson(res, 200, updater.getUpstreamCodeDiff());
+      }
+
+      if (pathname === '/api/v1/system/adapt') {
+        if (method !== 'POST') return sendMethodNotAllowed(res, ['POST']);
+        const user = await accounts.getSessionUser(req);
+        const isLoopback = clientIp === '127.0.0.1' || clientIp === '::1';
+        if (!user && !isLoopback) {
+          return sendJson(res, 401, { ok: false, error: 'unauthorized' });
+        }
+        const adaptRes = updater.autoAdaptDirtyNode();
+        return sendJson(res, adaptRes.ok ? 200 : 409, adaptRes);
+      }
+
+      if (pathname === '/api/v1/sentinel/ring') {
+        if (method !== 'GET') return sendMethodNotAllowed(res, ['GET', 'OPTIONS']);
+        const ring = await core.getGlobalThreatRing();
+        return sendJson(res, 200, ring, CORS_HEADERS);
+      }
+
       // 11c. High-Stakes Vault Payment & Scratch Exploit Arena
       if (pathname === '/api/v1/vault/drain') {
         if (method !== 'POST') return sendMethodNotAllowed(res, ['POST', 'OPTIONS']);

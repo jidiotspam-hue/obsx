@@ -721,8 +721,48 @@
             <strong>Adapt &amp; Rebase Command:</strong>
             <code style="display:block; margin-top:4px; padding:6px 8px; background:rgba(0,0,0,0.35); border-radius:4px; user-select:all;">${escapeHtml(adv.adaptationCommand || 'git fetch origin main && git stash && git pull --rebase origin main && git stash pop')}</code>
           </div>
+          <div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;">
+            <button type="button" id="btn-view-upstream-diff" class="btn btn-secondary" style="font-size:11.5px; padding:5px 10px;">View Upstream Diff</button>
+            <button type="button" id="btn-auto-adapt-node" class="btn btn-primary" style="font-size:11.5px; padding:5px 10px;">1-Click Auto-Adapt &amp; Rebase</button>
+          </div>
+          <pre id="operator-upstream-diff-view" style="display:none; margin-top:8px; padding:8px; max-height:220px; overflow:auto; background:rgba(0,0,0,0.45); border-radius:4px; font-size:11px; white-space:pre-wrap;"></pre>
         `;
         driftBanner.style.display = 'block';
+        const btnDiff = document.getElementById('btn-view-upstream-diff');
+        const diffView = document.getElementById('operator-upstream-diff-view');
+        if (btnDiff && diffView) {
+          btnDiff.onclick = async () => {
+            if (diffView.style.display === 'block') {
+              diffView.style.display = 'none';
+              return;
+            }
+            btnDiff.textContent = 'Loading diff...';
+            try {
+              const dRes = await fetch('/api/v1/system/diff');
+              const dData = await dRes.json();
+              diffView.textContent = `=== UPSTREAM DIFF (HEAD..origin/main) ===\n${dData.upstreamDiff || 'None'}\n\n=== LOCAL WORKING TREE DIFF ===\n${dData.localDiff || 'None'}`;
+              diffView.style.display = 'block';
+            } catch (e) {
+              diffView.textContent = 'Failed to load diff.';
+              diffView.style.display = 'block';
+            }
+            btnDiff.textContent = 'Hide Upstream Diff';
+          };
+        }
+        const btnAdapt = document.getElementById('btn-auto-adapt-node');
+        if (btnAdapt) {
+          btnAdapt.onclick = async () => {
+            btnAdapt.disabled = true;
+            btnAdapt.textContent = 'Adapting & Rebasing...';
+            try {
+              const aRes = await fetch('/api/v1/system/adapt', { method: 'POST' });
+              const aData = await aRes.json();
+              btnAdapt.textContent = aData.ok ? `Adapted to ${aData.commit}!` : (aData.message || 'Conflict detected');
+            } catch (e) {
+              btnAdapt.textContent = 'Adapt failed';
+            }
+          };
+        }
       } else if (driftBanner) {
         driftBanner.style.display = 'none';
       }
