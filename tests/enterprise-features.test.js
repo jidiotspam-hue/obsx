@@ -356,3 +356,29 @@ test('enterprise: Global Sentinel Fleet Ring escalates and exposes hostile subne
   assert.ok(escalatedSession.difficulty >= 4, 'Global threat ring must pre-escalate PoW difficulty');
 });
 
+test('enterprise: OpenAI/ChatGPT scrapers are blocked with "get your own ram" and toggleable per project', async () => {
+  // 1. Site-wide HTTP block on GPTBot / ChatGPT-User
+  const siteRes = await request('GET', '/', {
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; GPTBot/1.0; +https://openai.com/gptbot)' },
+  });
+  assert.equal(siteRes.status, 403);
+  assert.equal(siteRes.json.message, 'get your own ram');
+
+  // 2. Per-project toggle via official/self-hosted project settings
+  const proj = await core.createProject({ name: 'OpenAI Gate Project' }, 'u_test_openai');
+  const blockedVerdict = await core.verify(
+    proj,
+    { token: 'unused' },
+    { ip: '127.0.0.1', ua: 'Mozilla/5.0 (compatible; ChatGPT-User/1.0; +https://openai.com/bot)' }
+  );
+  assert.equal(blockedVerdict.verdict, 'reject');
+  assert.equal(blockedVerdict.message, 'get your own ram');
+  assert.ok(blockedVerdict.reasons.some((r) => r.code === 'openai_scraper_blocked' && r.text === 'get your own ram'));
+
+  // Toggle off for this project
+  await core.updateProjectSettings(proj.pid, { blockOpenAiScrapers: false });
+  const updatedProj = await core.loadProject(proj.pid);
+  assert.equal(updatedProj.settings.blockOpenAiScrapers, false);
+});
+
+

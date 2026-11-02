@@ -299,6 +299,23 @@
                 </button>
               </div>
             </div>
+
+            <!-- OpenAI / ChatGPT Scraper Gate ("get your own ram") -->
+            <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+              <div>
+                <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">OpenAI / ChatGPT Scraper Policy</div>
+                <div style="display: flex; align-items: center; gap: 8px; margin-top: 3px;">
+                  <span class="badge ${(p.settings && p.settings.blockOpenAiScrapers !== false) ? 'badge-good' : 'badge-secondary'}">
+                    ${(p.settings && p.settings.blockOpenAiScrapers !== false) ? '● Blocking OpenAI Scrapers ("get your own ram")' : '○ Allowed'}
+                  </span>
+                </div>
+              </div>
+              <div>
+                <button type="button" class="btn btn-secondary btn-toggle-openai" data-pid="${p.pid}" data-enabled="${(p.settings && p.settings.blockOpenAiScrapers !== false) ? 'true' : 'false'}" style="font-size: 11.5px; padding: 4px 10px;">
+                  ${(p.settings && p.settings.blockOpenAiScrapers !== false) ? 'Allow OpenAI' : 'Block OpenAI ("get your own ram")'}
+                </button>
+              </div>
+            </div>
           </div>
         `;
       }).join('');
@@ -438,6 +455,34 @@
             }
           } catch (err) {
             alert('Error updating circuit breaker: ' + err.message);
+            btn.disabled = false;
+          }
+        });
+      });
+
+      projectsList.querySelectorAll('.btn-toggle-openai').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          const pid = btn.getAttribute('data-pid');
+          const isCurrentlyEnabled = btn.getAttribute('data-enabled') === 'true';
+          const nextState = !isCurrentlyEnabled;
+
+          btn.disabled = true;
+          const { token, nonce } = await harvestAttestation();
+          try {
+            const res = await fetch(`/api/v1/project/${pid}/settings`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ blockOpenAiScrapers: nextState, token, nonce }),
+            });
+            const data = await res.json();
+            if (data.ok) {
+              await loadProjects();
+            } else {
+              alert('Failed to update OpenAI scraper setting: ' + (data.error || 'Unknown error'));
+              btn.disabled = false;
+            }
+          } catch (err) {
+            alert('Error updating OpenAI scraper setting: ' + err.message);
             btn.disabled = false;
           }
         });
