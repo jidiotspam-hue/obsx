@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Documentation — OBSX Security</title>
+  <meta name="description" content="Official integration documentation for OBSX Security: client SDK, proof-of-work attestation, and server-side verification." />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="alternate icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+  <link rel="alternate icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/style.css?v=2.3.5" />
+</head>
+<body>
+  <!-- Header / Navigation -->
+  <header class="nav">
+    <div class="container nav-wrap">
+      <a href="/" class="brand">
+        <span class="brand-dot"></span>
+        OBSX
+        <span class="brand-sub">Security</span>
+      </a>
+      <nav class="links">
+        <a href="/">Sandbox</a>
+        <a href="/notes.html">Notes App</a>
+        <a href="/dashboard.html">Dashboard</a>
+        <a href="/docs.html" class="active">Docs</a>
+        <a href="https://github.com/jidiotspam-hue/obsx" target="_blank" rel="noopener">GitHub</a>
+        <a href="/notes.html" class="nav-cta">Try Demo →</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container" style="max-width: 860px; padding: 56px 24px;">
+    <span class="section-tag">// Developer Reference</span>
+    <h1 style="font-family: var(--font-serif); font-size: clamp(34px, 5vw, 48px); font-weight: 400; letter-spacing: -0.5px; margin-bottom: 14px;">
+      OBSX Integration &amp; API Guide
+    </h1>
+    <p style="color: var(--text-muted); font-size: 16.5px; line-height: 1.6; margin-bottom: 40px;">
+      How to integrate OBSX client attestation, solve ephemeral micro-proof-of-work puzzles, and verify incoming requests deterministically on your server.
+    </p>
+
+    <!-- 1. Client Installation -->
+    <div class="card" style="margin-bottom: 32px;">
+      <div class="card-title">
+        <span>1. Browser Client Installation</span>
+        <span class="badge badge-good">Zero Runtime Dependencies</span>
+      </div>
+      <p class="card-sub">
+        Include the official lightweight client SDK in your page <code>&lt;head&gt;</code> before other scripts execute:
+      </p>
+
+      <div class="code-block" style="margin-top: 10px;">
+        <pre class="code-content"><code>&lt;script src="https://obsx.tech/obsx.min.js" data-obsx-site="pk_YOUR_SITE_KEY"&gt;&lt;/script&gt;</code></pre>
+      </div>
+
+      <h4 style="margin: 24px 0 8px; font-size: 15px;">Programmatic Verification</h4>
+      <p style="color: var(--text-muted); font-size: 13.5px; margin-bottom: 12px;">
+        When a sensitive user action is triggered (checkout, prompt generation, voucher claim, or sign-up):
+      </p>
+      <div class="code-block">
+        <pre class="code-content"><code>// Automatically harvests biometric entropy and solves the SHA-256 micro-PoW (~15ms)
+const attestation = await OBSX.verify({ action: 'checkout' });
+
+if (attestation.verdict === 'accept') {
+  // Submit single-use token with your request
+  const response = await fetch('/api/checkout', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token: attestation.token, items: cartItems })
+  });
+} else {
+  console.warn('Action blocked by client gate:', attestation.reasons);
+}</code></pre>
+      </div>
+    </div>
+
+    <!-- 2. Server-Side Verification -->
+    <div class="card" style="margin-bottom: 32px;">
+      <div class="card-title">
+        <span>2. Server-Side Verification Gate</span>
+        <span class="badge badge-good">&lt;1ms Local Verification</span>
+      </div>
+      <p class="card-sub">
+        Verify the client session token and single-use replay nonce before processing business logic:
+      </p>
+
+      <div class="code-block">
+        <pre class="code-content"><code>// Node.js Native / Express Middleware
+const { verifyToken } = require('obsx-security');
+
+app.post('/api/checkout', async (req, res) => {
+  const { token, items } = req.body;
+
+  // Verify HMAC signature, single-use token burn, and tamper checks
+  const verdict = await verifyToken(token, {
+    secret: process.env.OBSX_SECRET,
+    clientIp: req.ip
+  });
+
+  if (verdict.verdict === 'reject') {
+    return res.status(403).json({
+      ok: false,
+      error: 'security_gate_rejected',
+      reasons: verdict.reasons
+    });
+  }
+
+  // Request is cryptographically attested — execute transaction
+  const order = await processOrder(items);
+  res.json({ ok: true, orderId: order.id });
+});</code></pre>
+      </div>
+
+      <h4 style="margin: 24px 0 8px; font-size: 15px;">Standalone Direct HTTP Verification</h4>
+      <p style="color: var(--text-muted); font-size: 13.5px; margin-bottom: 12px;">
+        If you are using Go, Ruby, or Rust, verify directly via HTTP against your OBSX self-hosted node:
+      </p>
+      <div class="code-block">
+        <pre class="code-content"><code>curl -X POST https://obsx.tech/api/v1/verify \
+  -H "Authorization: Bearer sk_YOUR_SECRET_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "token": "CLIENT_TOKEN",
+    "nonce": "POW_NONCE"
+  }'
+
+# Response:
+# { "ok": true, "verdict": "accept", "risk": 0, "reasons": [] }</code></pre>
+      </div>
+    </div>
+
+    <!-- 3. Threat Model & Guarantees -->
+    <div class="card" style="margin-bottom: 32px;">
+      <div class="card-title">
+        <span>3. Cryptographic Invariants &amp; Defense Matrix</span>
+      </div>
+      <p class="card-sub">Core mathematical properties enforced by the OBSX Protocol:</p>
+
+      <div style="display: flex; flex-direction: column; gap: 16px;">
+        <div>
+          <strong style="color: var(--text); font-size: 14.5px;">Cryptographic Micro-Proof-of-Work:</strong>
+          <p style="color: var(--text-muted); font-size: 13.5px; margin-top: 4px;">Defeats automated scraping by challenging the client with an ephemeral SHA-256 puzzle. Solved in ~15ms via Web Crypto in genuine browsers, but raises botnet hardware costs to unsustainable levels.</p>
+        </div>
+        <div>
+          <strong style="color: var(--text); font-size: 14.5px;">Atomic Single-Use Token Burn:</strong>
+          <p style="color: var(--text-muted); font-size: 13.5px; margin-top: 4px;">Tokens are strictly single-use. Replay attempts or duplicate concurrent submissions immediately fail verification.</p>
+        </div>
+        <div>
+          <strong style="color: var(--text); font-size: 14.5px;">Web Proxy &amp; Virtualization Traps:</strong>
+          <p style="color: var(--text-muted); font-size: 13.5px; margin-top: 4px;">Audits function property descriptors and Web IDL accessors to identify browser virtualization shims (Ultraviolet, Scramjet, Bare-mux, and Sovereign gateways).</p>
+        </div>
+        <div>
+          <strong style="color: var(--text); font-size: 14.5px;">Kinematic Jerk Minimization (d³x/dt³):</strong>
+          <p style="color: var(--text-muted); font-size: 13.5px; margin-top: 4px;">Evaluates physiological neuromuscular tremor across mouse and touch movements, distinguishing natural human trajectories from mathematically synthetic spline bots.</p>
+        </div>
+        <div>
+          <strong style="color: var(--text); font-size: 14.5px;">Subnet-Scoped Pre-Auth Rate Limiting:</strong>
+          <p style="color: var(--text-muted); font-size: 13.5px; margin-top: 4px;">Rate limits pre-authentication and OTP endpoints by IP subnet rather than global email identity, entirely preventing third-party account lockout denial-of-service.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- 4. Autonomous Vector Circuit Breaker -->
+    <div class="card" style="margin-bottom: 32px;">
+      <div class="card-title" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+        <span>4. Autonomous Vector Circuit Breaker (AVCB)</span>
+        <span class="badge badge-good">Selective Load-Shedding</span>
+      </div>
+      <p class="card-sub">
+        Protects infrastructure during sustained attacks by temporarily shedding malicious ingress vectors while keeping legitimate traffic 100% online.
+      </p>
+
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 18px 0;">
+        <div style="background: var(--bg-card-subtle); padding: 14px; border-radius: var(--radius-xs); border: 1px solid var(--border);">
+          <strong style="font-size: 13px; color: var(--text);">1. Threat Detection</strong>
+          <p style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">Monitors rolling 60s rejection density per attack vector (proxy, CDP bot, spline replay).</p>
+        </div>
+        <div style="background: var(--bg-card-subtle); padding: 14px; border-radius: var(--radius-xs); border: 1px solid var(--border);">
+          <strong style="font-size: 13px; color: var(--accent);">2. Ingress Shedding</strong>
+          <p style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">Tripped vectors are dropped immediately at the edge (HTTP 429 + Retry-After) with zero CPU burn.</p>
+        </div>
+        <div style="background: var(--bg-card-subtle); padding: 14px; border-radius: var(--radius-xs); border: 1px solid var(--border);">
+          <strong style="font-size: 13px; color: var(--good);">3. Auto-Recovery</strong>
+          <p style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">After a 3-minute cooldown, probe requests verify cleanliness and automatically restore normal routing.</p>
+        </div>
+      </div>
+
+      <h4 style="margin: 18px 0 8px; font-size: 14px;">Activation</h4>
+      <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 8px;">
+        Disabled by default. Activate via your project credentials card on the <a href="/dashboard.html" style="color: var(--accent); text-decoration: underline;">Dashboard</a> or via API:
+      </p>
+      <div class="code-block">
+        <pre class="code-content"><code>// PATCH /api/v1/project/:pid/settings
+{ "adaptiveCircuitBreaker": true }</code></pre>
+      </div>
+    </div>
+  </main>
+
+  <!-- Footer -->
+  <footer>
+    <div class="container footer-wrap">
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <span class="brand-dot"></span>
+        <strong style="color: var(--text);">OBSX Security</strong>
+        <span>· Open source under the MIT License.</span>
+      </div>
+      <div style="display: flex; gap: 20px; flex-wrap: wrap;">
+        <a href="/">Sandbox</a>
+        <a href="/notes.html">Notes App</a>
+        <a href="/dashboard.html">Dashboard</a>
+        <a href="/privacy.html">Privacy</a>
+        <a href="/terms.html">Terms</a>
+        <a href="https://github.com/jidiotspam-hue/obsx" target="_blank" rel="noopener">GitHub</a>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Privacy Policy — OBSX Security</title>
+  <meta name="description" content="OBSX Security Privacy Policy: Zero tracking cookies, zero persistent biometric profiling, and zero external dependency telemetry." />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="alternate icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+  <link rel="alternate icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/style.css?v=2.3.5" />
+  <style>
+    .legal-content {
+      max-width: 780px;
+      margin: 40px auto 80px auto;
+      line-height: 1.7;
+    }
+    .legal-content h1 {
+      font-family: var(--font-serif);
+      font-size: 2.8rem;
+      margin-bottom: 8px;
+      color: var(--text);
+    }
+    .legal-content .last-updated {
+      font-size: 0.88rem;
+      color: var(--text-faint);
+      margin-bottom: 36px;
+      font-family: var(--font-mono);
+    }
+    .legal-content h2 {
+      font-family: var(--font-sans);
+      font-size: 1.35rem;
+      margin-top: 36px;
+      margin-bottom: 12px;
+      color: var(--text);
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 6px;
+    }
+    .legal-content p, .legal-content li {
+      color: var(--text-muted);
+      margin-bottom: 16px;
+      font-size: 0.95rem;
+    }
+    .legal-content ul {
+      padding-left: 24px;
+      margin-bottom: 20px;
+    }
+    .legal-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 24px;
+      margin: 28px 0;
+      box-shadow: var(--shadow-sm);
+    }
+    .legal-card h3 {
+      font-size: 1.05rem;
+      color: var(--text);
+      margin-bottom: 8px;
+    }
+  </style>
+</head>
+<body>
+  <!-- Header -->
+  <header>
+    <div class="container header-wrap">
+      <a href="/" class="brand">
+        <span class="brand-dot"></span>
+        OBSX Security
+      </a>
+      <nav class="links">
+        <a href="/">Sandbox</a>
+        <a href="/notes.html">Notes App</a>
+        <a href="/dashboard.html">Dashboard</a>
+        <a href="/docs.html">Docs</a>
+        <a href="https://github.com/jidiotspam-hue/obsx" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <article class="legal-content">
+      <div class="hero-pill" style="margin-bottom: 16px;">
+        <span class="pill-dot"></span>
+        Zero Tracking Cookies · Zero Biometric Profiling · GDPR & CCPA Compliant
+      </div>
+      <h1>Privacy Policy</h1>
+      <div class="last-updated">Effective Date: November 1, 2026 · Version 2.3.2</div>
+
+      <p>
+        OBSX Security (&ldquo;OBSX&rdquo;, &ldquo;we&rdquo;, &ldquo;our&rdquo;, or &ldquo;us&rdquo;) is an open-source client integrity attestation and anti-automation platform. We believe security should never come at the expense of user privacy. Unlike commercial CAPTCHA and fingerprinting networks, OBSX is built on a <strong>privacy-first, cryptographic paradigm</strong> that does not track users across websites, build behavioral advertising profiles, or store personal identifiers.
+      </p>
+
+      <div class="legal-card">
+        <h3>Summary of Core Privacy Guarantees</h3>
+        <ul>
+          <li><strong>Zero Cross-Site Tracking:</strong> We never set third-party tracking cookies or store cross-site advertising IDs.</li>
+          <li><strong>No Biometric Storage:</strong> Neuromuscular micro-tremor and kinematic trajectory signals are evaluated ephemerally in volatile memory and immediately discarded.</li>
+          <li><strong>Cryptographic Proof-of-Work:</strong> Client legitimacy is verified by hardware work puzzles (SHA-256 micro-challenges) solved locally in the user's browser, not by invasive identity harvesting.</li>
+          <li><strong>Subnet-Truncated IP Processing:</strong> Client IP addresses are processed in memory and aggregated by subnet (/24 IPv4, /48 IPv6) solely for anti-DDoS challenge escalation.</li>
+        </ul>
+      </div>
+
+      <h2>1. Information We Collect and Process</h2>
+      <p>OBSX processes technical signals strictly to distinguish legitimate human web browsers from automated botnets, credential stuffers, and unauthorized API scrapers:</p>
+      <ul>
+        <li><strong>Ephemeral Cryptographic Nonces:</strong> Random challenge tokens solved client-side via native Web Crypto. Nonces expire within 300 seconds and are permanently invalidated once spent.</li>
+        <li><strong>Hardware Execution Indicators:</strong> Ephemeral GPU pipeline rasterization signatures to confirm an active display driver (distinguishing physical displays from headless software emulators like <code>llvmpipe</code>). These 32-bit hashes contain zero hardware serial numbers.</li>
+        <li><strong>Network Level Data:</strong> Request IP addresses and standard HTTP request headers, utilized exclusively for rate-limiting and subnet-level abuse prevention.</li>
+        <li><strong>Developer Account Data:</strong> For registered platform developers using the dashboard, we retain email addresses for passwordless authentication (OTP verification) and secret key management.</li>
+      </ul>
+
+      <h2>2. Legal Basis for Processing (GDPR Article 6)</h2>
+      <p>
+        For users located in the European Economic Area (EEA) and United Kingdom (UK), our processing of technical telemetry is lawful under <strong>Article 6(1)(f) GDPR (Legitimate Interests)</strong>: protecting web application infrastructure, safeguarding user accounts from brute-force takeover, and preventing malicious denial-of-service traffic.
+      </p>
+
+      <h2>3. Data Retention and Discard Policy</h2>
+      <p>
+        All client session tokens and behavioral verification markers are stored in short-lived memory structures with a maximum Time-To-Live (TTL) of 300 seconds (5 minutes). Once a verification token is consumed or expired, it is atomically deleted. We do not maintain historical logs of individual visitor mouse movements or keystroke data.
+      </p>
+
+      <h2>4. Third-Party Disclosures & International Transfers</h2>
+      <p>
+        OBSX Security does not sell, rent, monetize, or disclose visitor telemetry to third-party data brokers, advertising networks, or analytics aggregators. In self-hosted or on-premises deployments, all telemetry remains strictly within your enterprise perimeter.
+      </p>
+
+      <h2>5. Your Rights (GDPR & CCPA/CPRA)</h2>
+      <p>Under applicable international privacy regulations, you have the right to:</p>
+      <ul>
+        <li>Request access to or deletion of developer account credentials.</li>
+        <li>Object to processing based on legitimate interests.</li>
+        <li>Inquire about the technical parameters of automated threat mitigation.</li>
+      </ul>
+      <p>Because OBSX does not track end-user browsing identities across websites, we cannot correlate anonymous client verification tokens to individual human identities.</p>
+
+      <h2>6. Open-Source Transparency</h2>
+      <p>
+        In accordance with Kerckhoffs's Principle, all code governing OBSX client signal collection and server verification is open-source and auditable on GitHub at <a href="https://github.com/jidiotspam-hue/obsx" target="_blank" rel="noopener">github.com/jidiotspam-hue/obsx</a>.
+      </p>
+
+      <h2>7. Contact and Security Inquiries</h2>
+      <p>
+        For privacy questions, vulnerability disclosures, or Data Processing Agreement (DPA) requests for enterprise deployments, please contact our security team at <a href="mailto:security@obsx.tech">security@obsx.tech</a> or <a href="mailto:official@obsx.tech">official@obsx.tech</a>.
+      </p>
+    </article>
+  </main>
+
+  <!-- Footer -->
+  <footer>
+    <div class="container footer-wrap">
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <span class="brand-dot"></span>
+        <strong style="color: var(--text);">OBSX Security</strong>
+        <span>· Open source under the MIT License.</span>
+      </div>
+      <div style="display: flex; gap: 20px; flex-wrap: wrap;">
+        <a href="/">Sandbox</a>
+        <a href="/notes.html">Notes App</a>
+        <a href="/dashboard.html">Dashboard</a>
+        <a href="/docs.html">Documentation</a>
+        <a href="/privacy.html" style="color: var(--accent);">Privacy</a>
+        <a href="/terms.html">Terms</a>
+        <a href="https://github.com/jidiotspam-hue/obsx" target="_blank" rel="noopener">GitHub</a>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>

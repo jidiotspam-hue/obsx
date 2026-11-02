@@ -1,0 +1,26 @@
+node_modules/
+.DS_Store
+*.log
+.env
+.env.*
+!.env.example
+*.env
+credentials.json
+*.pem
+*.key
+coverage/
+dist/
+.kv-snapshot.json
+.*-snapshot-*.json
+*.tmp.*
+
+
+# Internal Audit & Paperwork Artifacts (Keep local only in AI_Outputs)
+results/
+audit-reports/
+redteam-reports/
+legal-results/
+marketing-results/
+git-polish-reports/
+generalist-reports/
+github-reports/

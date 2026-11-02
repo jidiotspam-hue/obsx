@@ -1,0 +1,898 @@
+/**
+ * OBSX Security Client SDK v1.0.0
+ * The Ultimate Truth in Client Integrity, Tamper Detection & Cryptographic Attestation
+ * Copyright (c) 2026 Alexis Grimmace - MIT License
+ */
+(function (global) {
+  'use strict';
+
+  // 1. Capture load-time pristine references
+  const _Date = global.Date;
+  const _now = _Date.now;
+  const _perf = global.performance;
+  const _fnToString = global.Function.prototype.toString;
+  const _fetch = global.fetch;
+  const _setTimeout = global.setTimeout;
+  const _addEventListener = global.addEventListener;
+  const _Object = global.Object;
+  const _freeze = _Object.freeze;
+  const _getOwnPropertyDescriptor = _Object.getOwnPropertyDescriptor;
+
+  const SDK_HASH = 'trc_v1_live';
+  const pageInitTime = _now.call(_Date);
+  let activeSession = null;
+  const mouseBuffer = [];
+  const touchBuffer = [];
+  const keyIntervals = [];
+  let lastKeyTime = 0;
+  const tamperedFlags = [];
+  let cachedGpu = null;
+
+  // Client diagnostic accessors and instrumentation integrity hooks
+  let probeFlags = 0;
+  try {
+    _Object.defineProperty(global, '__OBSX_DEBUG__', {
+      get: () => { probeFlags |= 1; return { sandbox: true }; },
+      set: () => { probeFlags |= 1; },
+      configurable: true,
+    });
+    _Object.defineProperty(global, '__VERITAS_DEBUG__', {
+      get: () => { probeFlags |= 1; return { sandbox: true }; },
+      set: () => { probeFlags |= 1; },
+      configurable: true,
+    });
+    _Object.defineProperty(global, '__tracer_dev__', {
+      get: () => { probeFlags |= 2; return false; },
+      set: () => { probeFlags |= 2; },
+      configurable: true,
+    });
+  } catch {}
+
+  // 2. Comprehensive Native Built-in Verification (Immune to .bind() & Proxy traps)
+  function isNativeFunction(fn) {
+    if (typeof fn !== 'function') return false;
+    try {
+      const str = _fnToString.call(fn);
+      if (!/\{\s*\[native code\]\s*\}/.test(str)) return false;
+
+      const desc = _getOwnPropertyDescriptor(fn, 'name');
+      if (desc && typeof desc.value === 'string' && desc.value.startsWith('bound ')) {
+        return false;
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // Clean-Room Pristine Prototype Snapshot (Defeats Pre-Execution Monkey-Patching)
+  function auditCleanRoomPrototypes() {
+    if (typeof document === 'undefined' || !document.documentElement || typeof document.createElement !== 'function') {
+      return;
+    }
+
+    let frame = null;
+    try {
+      frame = document.createElement('iframe');
+      frame.style.display = 'none';
+      frame.src = 'about:blank';
+      document.documentElement.appendChild(frame);
+      const fresh = frame.contentWindow;
+      if (!fresh) return;
+
+      const BENIGN_APM = new Set(['fetch', 'setTimeout', 'setInterval', 'addEventListener', 'XMLHttpRequest']);
+
+      const WATCH_TARGETS = [
+        { name: 'performance.now', root: _perf, freshRoot: fresh.performance, prop: 'now' },
+        { name: 'Date.now', root: _Date, freshRoot: fresh.Date, prop: 'now' },
+        { name: 'Math.random', root: global.Math, freshRoot: fresh.Math, prop: 'random' },
+        { name: 'Function.prototype.toString', root: global.Function.prototype, freshRoot: fresh.Function.prototype, prop: 'toString' },
+        { name: 'Function.prototype.call', root: global.Function.prototype, freshRoot: fresh.Function.prototype, prop: 'call' },
+        { name: 'Function.prototype.apply', root: global.Function.prototype, freshRoot: fresh.Function.prototype, prop: 'apply' },
+        { name: 'Function.prototype.bind', root: global.Function.prototype, freshRoot: fresh.Function.prototype, prop: 'bind' },
+        { name: 'Object.getOwnPropertyDescriptor', root: _Object, freshRoot: fresh.Object, prop: 'getOwnPropertyDescriptor' },
+        { name: 'Object.getPrototypeOf', root: _Object, freshRoot: fresh.Object, prop: 'getPrototypeOf' },
+        { name: 'fetch', root: global, freshRoot: fresh, prop: 'fetch' },
+        { name: 'setTimeout', root: global, freshRoot: fresh, prop: 'setTimeout' },
+        { name: 'setInterval', root: global, freshRoot: fresh, prop: 'setInterval' },
+      ];
+
+      const freshToString = fresh.Function.prototype.toString;
+      const freshGopd = fresh.Object.getOwnPropertyDescriptor;
+
+      for (const target of WATCH_TARGETS) {
+        if (!target.root || !(target.prop in target.root)) continue;
+
+        const currentDesc = _getOwnPropertyDescriptor(target.root, target.prop);
+        const cleanDesc = target.freshRoot ? freshGopd(target.freshRoot, target.prop) : null;
+        const currentFn = target.root[target.prop];
+
+        if (cleanDesc && currentDesc) {
+          const cleanAcc = 'get' in cleanDesc || 'set' in cleanDesc;
+          const currAcc = 'get' in currentDesc || 'set' in currentDesc;
+          if (cleanAcc !== currAcc) {
+            tamperedFlags.push('tampered_descriptor:' + target.name);
+            continue;
+          }
+        }
+
+        let isNative = true;
+        if (typeof currentFn === 'function') {
+          try {
+            const str = freshToString.call(currentFn);
+            if (!/\{\s*\[native code\]\s*\}/.test(str)) {
+              isNative = false;
+            }
+            if (currentDesc && typeof currentDesc.value === 'function') {
+              const nameDesc = _getOwnPropertyDescriptor(currentFn, 'name');
+              if (nameDesc && typeof nameDesc.value === 'string' && nameDesc.value.startsWith('bound ')) {
+                isNative = false;
+              }
+            }
+          } catch {
+            isNative = false;
+          }
+        } else {
+          isNative = false;
+        }
+
+        if (!isNative) {
+          const flag = (BENIGN_APM.has(target.prop) || BENIGN_APM.has(target.name))
+            ? 'wrapped:' + target.name
+            : 'tampered:' + target.name;
+          if (!tamperedFlags.includes(flag)) {
+            tamperedFlags.push(flag);
+          }
+        }
+      }
+    } catch {} finally {
+      if (frame && frame.parentNode) {
+        frame.parentNode.removeChild(frame);
+      }
+    }
+  }
+
+  // Audit core browser built-ins and proxy-targeted primitives
+  function auditRuntime() {
+    auditCleanRoomPrototypes();
+
+    const targets = [
+      { obj: global, prop: 'fetch', benign: true },
+      { obj: global, prop: 'setTimeout', benign: true },
+      { obj: _perf, prop: 'now', benign: false },
+      { obj: global.Function.prototype, prop: 'toString', benign: false },
+    ];
+
+    for (const { obj, prop, benign } of targets) {
+      if (obj && prop in obj) {
+        if (!isNativeFunction(obj[prop])) {
+          const flag = benign ? 'wrapped:' + prop : 'tampered:' + prop;
+          if (!tamperedFlags.includes(flag)) {
+            tamperedFlags.push(flag);
+          }
+        }
+      }
+    }
+
+    // Audit WebRTC & WebSocket for proxy wiretaps / SDP scrubbing
+    const peerConn = global.RTCPeerConnection || global.webkitRTCPeerConnection;
+    if (peerConn && !isNativeFunction(peerConn) && (global.__bare || global.__uv$bare || global.__sovereignHookActive)) {
+      tamperedFlags.push('proxy_virtualization:wrapped_RTCPeerConnection');
+    }
+    if (global.WebSocket && !isNativeFunction(global.WebSocket) && (global.__bare || global.__uv$bare || global.__sovereignHookActive)) {
+      tamperedFlags.push('proxy_virtualization:wrapped_WebSocket');
+    }
+
+    // Advanced Web Proxy & Anti-Filter Virtualization Detection
+    auditProxyVirtualization();
+
+    // Headless and environment geometry consistency check
+    auditEnvironmentGeometry();
+
+    // Ephemeral GPU acceleration verification (Zero-identity)
+    probeGpuRenderer();
+
+    // Deep Chrome DevTools Protocol (CDP) & automation artifact audit
+    auditAutomationArtifacts();
+  }
+
+  function computeHardwareRasterizerProof() {
+    if (typeof document === 'undefined') return 'unattested';
+    try {
+      const cvs = document.createElement('canvas');
+      cvs.width = 16;
+      cvs.height = 16;
+      const ctx = cvs.getContext('2d');
+      if (!ctx) return 'unsupported';
+      ctx.textBaseline = 'top';
+      ctx.font = '12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto';
+      ctx.fillStyle = '#f60';
+      ctx.fillRect(2, 2, 8, 8);
+      ctx.fillStyle = '#069';
+      ctx.fillText('OBSX', 1, 2);
+      ctx.shadowBlur = 4;
+      ctx.shadowColor = 'rgba(0,0,0,0.5)';
+      const data = ctx.getImageData(0, 0, 16, 16).data;
+      let hash = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        hash = (hash << 5) - hash + data[i] + data[i + 1] + data[i + 2] + data[i + 3];
+        hash |= 0;
+      }
+      return 'hrp_' + (hash >>> 0).toString(16);
+    } catch {
+      return 'err';
+    }
+  }
+
+  function probeGpuRenderer() {
+    if (cachedGpu) return cachedGpu;
+    try {
+      if (typeof document !== 'undefined') {
+        const canvas = document.createElement('canvas');
+        const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+        if (gl) {
+          const ext = gl.getExtension('WEBGL_debug_renderer_info');
+          if (ext) {
+            const renderer = gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) || '';
+            const vendor = gl.getParameter(ext.UNMASKED_VENDOR_WEBGL) || '';
+            cachedGpu = `${vendor} ~ ${renderer}`;
+            if (/SwiftShader|llvmpipe|Mesa OffScreen|Software Rasterizer/i.test(cachedGpu)) {
+              tamperedFlags.push('gpu:software_rasterizer:' + cachedGpu.slice(0, 40));
+            }
+            return cachedGpu;
+          }
+        }
+      }
+    } catch {}
+    cachedGpu = 'standard_webgl';
+    return cachedGpu;
+  }
+
+  function auditAutomationArtifacts() {
+    try {
+      // 1. Detect Chromedriver & Selenium probe variables
+      const cdcPattern = /^cdc_[a-zA-Z0-9]+/;
+      for (const k of _Object.keys(global)) {
+        if (cdcPattern.test(k) || k.startsWith('__webdriver_') || k.startsWith('__selenium_')) {
+          tamperedFlags.push('automation_cdp:' + k);
+        }
+      }
+      if (global.document) {
+        for (const k of _Object.keys(global.document)) {
+          if (cdcPattern.test(k) || k.startsWith('$cdc_')) {
+            tamperedFlags.push('automation_cdp_doc:' + k);
+          }
+        }
+      }
+      // 2. Playwright / Puppeteer execution markers
+      if ('__playwright' in global || '__puppeteer_evaluation_script__' in global) {
+        tamperedFlags.push('automation_framework:playwright_puppeteer');
+      }
+      // 3. Desktop browser empty plugin anomaly
+      if (global.navigator && typeof global.navigator.plugins !== 'undefined') {
+        const isDesktop = /Macintosh|Windows NT|Linux x86_64/i.test(global.navigator.userAgent);
+        const isMobile = /Android|iPhone|iPad/i.test(global.navigator.userAgent);
+        if (isDesktop && !isMobile && global.navigator.plugins.length === 0) {
+          tamperedFlags.push('env_anomaly:desktop_empty_plugins');
+        }
+      }
+    } catch {}
+  }
+
+  function auditProxyVirtualization() {
+    // 1. Scan for known web proxy injection artifacts & configurations
+    // Covers Ultraviolet, Scramjet, Rammerhead, Bare-mux, Wisp, and Sovereign Gateway
+    const proxyArtifacts = [
+      '__uv', '__uv$config', '__uv$location',
+      '__scramjet', '$scramjet', '__scramjet$config',
+      '__rammerhead', 'rammerhead',
+      'BareMux', '__bare', '__wisp',
+      '__tomp', 'wispMux',
+      '__sovereignHookActive', '__sovereignTelemetry'
+    ];
+    for (const art of proxyArtifacts) {
+      if (art in global) {
+        tamperedFlags.push('proxy_artifact:' + art);
+      }
+    }
+
+    // 2. Detect location accessor getter trap (Ultraviolet / Scramjet URL virtualization)
+    try {
+      const locDesc = _getOwnPropertyDescriptor(global, 'location');
+      if (locDesc && (typeof locDesc.get === 'function' || typeof locDesc.set === 'function')) {
+        // Legitimate modern browsers have native getter/setter on window.location ([native code]).
+        // Web proxy unblockers (Ultraviolet/Scramjet) override it with synthetic JS closures!
+        if ((locDesc.get && !isNativeFunction(locDesc.get)) || (locDesc.set && !isNativeFunction(locDesc.set))) {
+          tamperedFlags.push('proxy_virtualization:location_getter_trap');
+        }
+      }
+    } catch {}
+
+    // 3. Detect origin & location desynchronization
+    try {
+      if (global.document && global.location && global.document.domain && global.location.hostname) {
+        if (!global.location.hostname.endsWith(global.document.domain)) {
+          tamperedFlags.push('proxy_virtualization:domain_mismatch');
+        }
+      }
+    } catch {}
+
+    // 4. Detect Service Worker proxy controllers (Ultraviolet, Scramjet, Sovereign)
+    try {
+      if (global.navigator && global.navigator.serviceWorker && global.navigator.serviceWorker.controller) {
+        const swUrl = global.navigator.serviceWorker.controller.scriptURL || '';
+        if (/\/uv\/|\/scramjet\/|\/bare\/|\/wisp\/|sw\.js\?uv|sw-proxy\.js|sovereign-sw-/i.test(swUrl)) {
+          tamperedFlags.push('proxy_virtualization:sw_controller:' + swUrl.slice(0, 40));
+        }
+      }
+    } catch {}
+
+    // 5. Detect proxy session cookie artifacts
+    try {
+      if (global.document && typeof global.document.cookie === 'string') {
+        const cookies = global.document.cookie;
+        if (/__crammerhead=|uv-token=|bare-mux=|sovereign_proxy_origin=/i.test(cookies)) {
+          tamperedFlags.push('proxy_virtualization:cookie_signature');
+        }
+      }
+    } catch {}
+
+    // 6. Inspect DOM for proxy rewriter injection artifacts (Sovereign HUD / rewrote scripts)
+    try {
+      if (global.document && typeof global.document.querySelector === 'function') {
+        if (global.document.querySelector('#proxy-hud-injected, #proxy-pill-injected, #proxy-panic-injected, #ss-proxy-hud')) {
+          tamperedFlags.push('proxy_virtualization:dom_hud_injected');
+        }
+        if (global.document.querySelector('script[data-origin][data-base]')) {
+          tamperedFlags.push('proxy_virtualization:script_hook_injected');
+        }
+      }
+    } catch {}
+  }
+
+  function auditEnvironmentGeometry() {
+    try {
+      if (typeof global.screen !== 'undefined') {
+        const scr = global.screen;
+        // Headless browsers often spawn with 0x0 display or impossible geometry
+        if (scr.width === 0 || scr.height === 0) {
+          tamperedFlags.push('env_geometry:zero_screen_dimensions');
+        }
+        if (scr.availWidth > scr.width || scr.availHeight > scr.height) {
+          tamperedFlags.push('env_geometry:impossible_screen_bounds');
+        }
+      }
+      if (typeof global.outerWidth !== 'undefined' && typeof global.outerHeight !== 'undefined') {
+        if (global.outerWidth === 0 && global.outerHeight === 0 && typeof global.innerWidth !== 'undefined' && global.innerWidth > 0) {
+          tamperedFlags.push('env_geometry:zero_outer_dimensions');
+        }
+      }
+    } catch {}
+  }
+
+  function harvestRumTiming() {
+    try {
+      if (typeof _perf !== 'undefined' && typeof _perf.getEntriesByType === 'function') {
+        const navEntries = _perf.getEntriesByType('navigation');
+        if (navEntries && navEntries.length > 0) {
+          const nav = navEntries[0];
+          return {
+            dns: Math.max(0, Math.round(nav.domainLookupEnd - nav.domainLookupStart)),
+            tcp: Math.max(0, Math.round(nav.connectEnd - nav.connectStart)),
+            ttfb: Math.max(0, Math.round(nav.responseStart - nav.requestStart)),
+            dom: Math.max(0, Math.round(nav.domContentLoadedEventEnd - nav.responseEnd)),
+            navType: nav.type || 'navigate',
+          };
+        }
+      }
+    } catch {}
+    return null;
+  }
+
+  function probeAudioEntropy() {
+    try {
+      const AudioCtx = global.AudioContext || global.webkitAudioContext;
+      if (typeof AudioCtx !== 'undefined') {
+        return { supported: true, native: _fnToString.call(AudioCtx).includes('[native code]') };
+      }
+    } catch {}
+    return { supported: false, native: false };
+  }
+
+  auditRuntime();
+
+  // 3. Passive Human Interaction Observers (Rolling Ring-Buffers)
+  if (_addEventListener) {
+    _addEventListener.call(global, 'mousemove', (e) => {
+      if (mouseBuffer.length >= 60) mouseBuffer.shift();
+      mouseBuffer.push({ x: e.clientX, y: e.clientY, t: _now.call(_Date) });
+    }, { passive: true });
+
+    _addEventListener.call(global, 'touchmove', (e) => {
+      if (e.touches && e.touches[0]) {
+        if (touchBuffer.length >= 40) touchBuffer.shift();
+        const tch = e.touches[0];
+        touchBuffer.push({
+          x: tch.clientX,
+          y: tch.clientY,
+          r: tch.radiusX || 0,
+          f: typeof tch.force === 'number' ? tch.force : 0,
+          t: _now.call(_Date),
+        });
+      }
+    }, { passive: true });
+
+    _addEventListener.call(global, 'keydown', () => {
+      const t = _now.call(_Date);
+      if (lastKeyTime > 0) {
+        if (keyIntervals.length >= 30) keyIntervals.shift();
+        keyIntervals.push(t - lastKeyTime);
+      }
+      lastKeyTime = t;
+    }, { passive: true });
+  }
+
+  // 4. Client-side Proof of Work Solver (SHA-256)
+  // Supports off-thread Web Worker execution with async chunked main-thread fallback
+  async function solveProofOfWork(challenge, difficulty) {
+    if (!challenge || !difficulty) return '0';
+    const target = '0'.repeat(difficulty);
+    const encoder = new TextEncoder();
+    let nonce = 0;
+
+    // Ephemeral inline Web Worker execution for zero main-thread blocking
+    if (typeof Worker !== 'undefined' && typeof Blob !== 'undefined' && typeof URL !== 'undefined') {
+      try {
+        const workerCode = `
+          self.onmessage = async function(e) {
+            const { challenge, difficulty } = e.data;
+            const target = '0'.repeat(difficulty);
+            const enc = new TextEncoder();
+            let n = 0;
+            while (n < 500000) {
+              const input = challenge + ':' + n;
+              const buf = await crypto.subtle.digest('SHA-256', enc.encode(input));
+              const arr = new Uint8Array(buf);
+              let hex = '';
+              for (let i = 0; i < arr.length; i++) {
+                hex += arr[i].toString(16).padStart(2, '0');
+                if (hex.length >= difficulty && !hex.startsWith(target)) break;
+              }
+              if (hex.startsWith(target)) {
+                return self.postMessage(String(n));
+              }
+              n++;
+            }
+            self.postMessage(String(n));
+          };
+        `;
+        const blob = new Blob([workerCode], { type: 'application/javascript' });
+        const workerUrl = URL.createObjectURL(blob);
+        const worker = new Worker(workerUrl);
+
+        const workerResult = await new Promise((resolve, reject) => {
+          const timeout = _setTimeout(() => {
+            worker.terminate();
+            URL.revokeObjectURL(workerUrl);
+            reject(new Error('PoW Worker Timeout'));
+          }, 3500);
+          worker.onmessage = (msg) => {
+            clearTimeout(timeout);
+            worker.terminate();
+            URL.revokeObjectURL(workerUrl);
+            resolve(msg.data);
+          };
+          worker.onerror = (err) => {
+            clearTimeout(timeout);
+            worker.terminate();
+            URL.revokeObjectURL(workerUrl);
+            reject(err);
+          };
+          worker.postMessage({ challenge, difficulty });
+        });
+
+        if (workerResult) return workerResult;
+      } catch {
+        // Fallback to async main thread
+      }
+    }
+
+    if (global.crypto && global.crypto.subtle) {
+      while (nonce < 200000) {
+        const input = `${challenge}:${nonce}`;
+        const buf = await global.crypto.subtle.digest('SHA-256', encoder.encode(input));
+        const hashArray = Array.from(new Uint8Array(buf));
+        const hashHex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+        if (hashHex.startsWith(target)) {
+          return String(nonce);
+        }
+        nonce++;
+        if (nonce % 500 === 0) {
+          await new Promise((r) => _setTimeout(r, 0));
+        }
+      }
+    }
+    return String(nonce);
+  }
+
+  var CANON_MAX_DEPTH = 32;
+
+  function canonJson(v, depth, seen) {
+    var d = depth || 0;
+    if (d > CANON_MAX_DEPTH) {
+      throw new Error('[OBSX] Payload depth exceeds maximum allowed limit (32)');
+    }
+    if (Array.isArray(v)) {
+      return (
+        '[' +
+        v
+          .map(function (x) {
+            return x === undefined || typeof x === 'function' || typeof x === 'symbol'
+              ? 'null'
+              : canonJson(x, d + 1, seen);
+          })
+          .join(',') +
+        ']'
+      );
+    }
+    if (v !== null && typeof v === 'object') {
+      var s = seen;
+      if (!s && typeof WeakSet !== 'undefined') {
+        s = new WeakSet();
+      }
+      if (s) {
+        if (s.has(v)) {
+          throw new Error('[OBSX] Circular reference detected in action payload');
+        }
+        s.add(v);
+      }
+      var keys = _Object.keys(v)
+        .sort()
+        .filter(function (k) {
+          return (
+            v[k] !== undefined &&
+            typeof v[k] !== 'function' &&
+            typeof v[k] !== 'symbol' &&
+            k !== 'obsx' &&
+            k !== 'advisory' &&
+            k !== 'seal'
+          );
+        });
+      return (
+        '{' +
+        keys
+          .map(function (k) {
+            return JSON.stringify(k) + ':' + canonJson(v[k], d + 1, s);
+          })
+          .join(',') +
+        '}'
+      );
+    }
+    var j = JSON.stringify(v);
+    return j === undefined ? 'null' : j;
+  }
+
+  function base64urlToUint8Array(b64u) {
+    if (typeof b64u !== 'string') return new Uint8Array(0);
+    const b64 = b64u.replace(/-/g, '+').replace(/_/g, '/');
+    const pad = b64.length % 4 === 0 ? '' : '='.repeat(4 - (b64.length % 4));
+    const raw = (global.atob || ((s) => Buffer.from(s, 'base64').toString('binary')))(b64 + pad);
+    const u8 = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) u8[i] = raw.charCodeAt(i);
+    return u8;
+  }
+
+  function uint8ArrayToBase64url(u8) {
+    let binary = '';
+    for (let i = 0; i < u8.length; i++) binary += String.fromCharCode(u8[i]);
+    const b64 = (global.btoa || ((s) => Buffer.from(s, 'binary').toString('base64')))(binary);
+    return b64.replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
+  }
+
+  // 5. Public OBSX Client API
+  const OBSX = {
+    version: '2.3.0',
+    _autoRefreshTimer: null,
+
+    async init(options = {}) {
+      const siteKey = options.site || 
+        (typeof document !== 'undefined' ? (
+          document.querySelector('script[data-obsx-site]')?.getAttribute('data-obsx-site') ||
+          document.querySelector('script[data-veritas-site]')?.getAttribute('data-veritas-site') ||
+          document.querySelector('script[data-tracer-site]')?.getAttribute('data-tracer-site')
+        ) : null);
+      if (!siteKey) throw new Error('[OBSX] Missing public site key.');
+
+      const mode = options.mode || 
+        (typeof document !== 'undefined' ? (
+          document.querySelector('script[data-obsx-mode]')?.getAttribute('data-obsx-mode') || 'enforce'
+        ) : 'enforce');
+
+      const endpoint = options.endpoint || '/api/v1';
+
+      // Start authenticated session
+      const res = await _fetch(`${endpoint}/session`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ site: siteKey, mode }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || 'Failed to initialize OBSX session.');
+
+      // Solve Proof of Work challenge
+      const nonce = await solveProofOfWork(data.challenge, data.difficulty);
+
+      activeSession = {
+        token: data.token,
+        session: data.session,
+        endpoint,
+        siteKey,
+        mode: data.mode || mode,
+        nonce,
+        rk: data.rk,
+        startTime: _now.call(_Date),
+        expiresAt: data.expiresAt || (_now.call(_Date) + 3600 * 1000),
+      };
+
+      // Periodic initial telemetry dispatch
+      _setTimeout(() => this.flush(), 600);
+
+      // Auto-refresh token 60s before expiration for long-running pages
+      if (this._autoRefreshTimer) clearTimeout(this._autoRefreshTimer);
+      const renewMs = Math.max(10000, (activeSession.expiresAt - _now.call(_Date)) - 60000);
+      this._autoRefreshTimer = _setTimeout(() => {
+        this.init(options).catch(() => {});
+      }, renewMs);
+
+      return activeSession;
+    },
+
+    async flush() {
+      if (!activeSession) return;
+      auditRuntime();
+
+      let rt_mask = 0;
+      if (tamperedFlags.some((t) => !t.startsWith('proxy_') && !t.startsWith('env_') && !t.startsWith('gpu_'))) rt_mask |= 1;
+      if (tamperedFlags.some((t) => t.startsWith('proxy_'))) rt_mask |= 2;
+      if (typeof navigator !== 'undefined' && navigator.webdriver) rt_mask |= 4;
+      if (probeFlags > 0) rt_mask |= 8;
+      if (typeof navigator !== 'undefined' && /HeadlessChrome|PhantomJS/.test(navigator.userAgent)) rt_mask |= 16;
+      if (tamperedFlags.some((t) => t.startsWith('env_'))) rt_mask |= 32;
+      if (tamperedFlags.some((t) => t.startsWith('gpu_'))) rt_mask |= 64;
+
+      const payload = {
+        token: activeSession.token,
+        vitals: {
+          fp: SDK_HASH,
+          cls: 0.002,
+          fid: 14,
+          d_vec: mouseBuffer.slice(-25).map((p) => `${Math.round(p.x)},${Math.round(p.y)},${p.t}`).join(';'),
+          c_var: keyIntervals.slice(-15).join(','),
+          rt_mask: rt_mask,
+          hp: probeFlags,
+          age: Math.max(_now.call(_Date) - activeSession.startTime, _now.call(_Date) - pageInitTime),
+        },
+        signals: {
+          sh: SDK_HASH,
+          hrp: computeHardwareRasterizerProof(),
+          tampered: tamperedFlags,
+          webdriver: typeof navigator !== 'undefined' && !!navigator.webdriver,
+          headless: typeof navigator !== 'undefined' && /HeadlessChrome|PhantomJS/.test(navigator.userAgent),
+          gpuRenderer: cachedGpu || 'unknown',
+          mousePoints: mouseBuffer.slice(-20),
+          touchPoints: touchBuffer.slice(-20),
+          keyIntervals: keyIntervals.slice(-15),
+          elapsedMs: Math.max(_now.call(_Date) - activeSession.startTime, _now.call(_Date) - pageInitTime),
+          probe: probeFlags,
+          rum: harvestRumTiming(),
+          audio: probeAudioEntropy(),
+          mode: activeSession.mode || 'enforce',
+        },
+      };
+
+      try {
+        await _fetch(`${activeSession.endpoint}/signal`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      } catch {
+        // Silently tolerate transient network stalls
+      }
+    },
+
+    reset() {
+      activeSession = null;
+      if (this._autoRefreshTimer) {
+        clearTimeout(this._autoRefreshTimer);
+        this._autoRefreshTimer = null;
+      }
+    },
+
+    // Interactive Drop-in Turnstile-style Widget Renderer
+    render(containerOrSelector, options = {}) {
+      if (typeof document === 'undefined') return;
+      const el = typeof containerOrSelector === 'string'
+        ? document.querySelector(containerOrSelector)
+        : containerOrSelector;
+      if (!el) return;
+
+      const theme = options.theme || 'dark';
+      const isDark = theme === 'dark';
+      const bg = isDark ? '#111827' : '#ffffff';
+      const border = isDark ? '#1f2937' : '#e5e7eb';
+      const text = isDark ? '#f9fafb' : '#111827';
+      const textSub = isDark ? '#9ca3af' : '#6b7280';
+
+      el.innerHTML = `
+        <div class="obsx-widget-box" role="region" aria-live="polite" style="display:inline-flex; align-items:center; gap:12px; padding:10px 16px; background:${bg}; border:1px solid ${border}; border-radius:8px; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; box-shadow:0 1px 3px rgba(0,0,0,0.1); user-select:none;">
+          <div class="obsx-widget-icon" style="width:24px; height:24px; display:flex; align-items:center; justify-content:center;">
+            <svg class="obsx-spinner" viewBox="0 0 24 24" style="width:20px; height:20px; animation: obsx-spin 1s linear infinite;">
+              <circle cx="12" cy="12" r="10" stroke="#0ea5e9" stroke-width="3" fill="none" stroke-dasharray="31.4" stroke-dashoffset="10"/>
+            </svg>
+          </div>
+          <div style="display:flex; flex-direction:column;">
+            <span class="obsx-widget-label" style="font-size:13px; font-weight:600; color:${text};">Verifying security...</span>
+            <span style="font-size:10.5px; color:${textSub};">Protected by OBSX Security</span>
+          </div>
+          <input type="hidden" name="obsx-token" value="" />
+          <input type="hidden" name="obsx-nonce" value="" />
+          <style>
+            @keyframes obsx-spin { 100% { transform: rotate(360deg); } }
+          </style>
+        </div>
+      `;
+
+      const input = el.querySelector('input[name="obsx-token"]');
+      const inputNonce = el.querySelector('input[name="obsx-nonce"]');
+      const label = el.querySelector('.obsx-widget-label');
+      const icon = el.querySelector('.obsx-widget-icon');
+
+      this.getAttestation().then((attestation) => {
+        if (input) input.value = attestation.token;
+        if (inputNonce) inputNonce.value = attestation.nonce;
+        if (label) {
+          label.textContent = 'Success! Attestation verified';
+          label.style.color = '#10b981';
+        }
+        if (icon) {
+          icon.innerHTML = `<svg viewBox="0 0 20 20" fill="#10b981" style="width:20px; height:20px;"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>`;
+        }
+        if (typeof options.callback === 'function') {
+          options.callback(attestation.token);
+        }
+      }).catch((err) => {
+        if (label) {
+          label.textContent = 'Verification failed';
+          label.style.color = '#ef4444';
+        }
+      });
+    },
+
+    _debugOverride() {
+      probeFlags |= 4;
+      return false;
+    },
+
+    _bypassToken() {
+      probeFlags |= 4;
+      return null;
+    },
+
+    async rehandshake(options = {}) {
+      this.reset();
+      await this.init(options);
+      await this.flush();
+      return {
+        token: activeSession ? activeSession.token : null,
+        nonce: activeSession ? activeSession.nonce : null,
+        mode: activeSession ? (activeSession.mode || 'enforce') : 'enforce',
+      };
+    },
+
+    async getAttestation(options = {}) {
+      const now = _now.call(_Date);
+      if (!activeSession || options.fresh || (activeSession.expiresAt && now >= activeSession.expiresAt)) {
+        this.reset();
+        await this.init(options);
+      }
+      await this.flush();
+      const current = {
+        token: activeSession ? activeSession.token : null,
+        nonce: activeSession ? activeSession.nonce : null,
+        mode: activeSession ? (activeSession.mode || 'enforce') : 'enforce',
+      };
+      if (options.consume !== false) {
+        activeSession = null;
+        this.init(options).catch(() => {});
+      }
+      return current;
+    },
+
+    async sign(payload = {}) {
+      if (!activeSession || !activeSession.rk) {
+        await this.init();
+      }
+      if (!global.crypto || !global.crypto.subtle) {
+        throw new Error('[OBSX] Cryptographic action signing requires Web Crypto API (HTTPS)');
+      }
+
+      const ts = _now.call(_Date);
+      const msg = `obsx.seal.v1\n${activeSession.session}\n${ts}\n${activeSession.nonce || ''}\n${canonJson(payload)}`;
+      const keyBuf = base64urlToUint8Array(activeSession.rk);
+      const cryptoKey = await global.crypto.subtle.importKey(
+        'raw',
+        keyBuf,
+        { name: 'HMAC', hash: 'SHA-256' },
+        false,
+        ['sign']
+      );
+      const encoder = new (global.TextEncoder || TextEncoder)();
+      const sigBuf = await global.crypto.subtle.sign('HMAC', cryptoKey, encoder.encode(msg));
+      const sig = uint8ArrayToBase64url(new Uint8Array(sigBuf));
+
+      return {
+        token: activeSession.token,
+        nonce: activeSession.nonce,
+        mode: activeSession.mode || 'enforce',
+        ts,
+        sig,
+      };
+    },
+
+    async seal(payload = {}) {
+      const plain = typeof payload === 'object' && payload !== null ? { ...payload } : { value: payload };
+      delete plain.obsx;
+      delete plain.seal;
+      delete plain.advisory;
+      const sealMeta = await this.sign(plain);
+      plain.obsx = sealMeta;
+      return plain;
+    },
+
+    async verify(payload = {}, isRetry = false) {
+      if (!activeSession) await this.init();
+      await this.flush();
+
+      const verifyUrl = `${activeSession.endpoint}/demo`;
+      const curToken = activeSession.token;
+      const curNonce = activeSession.nonce;
+      activeSession = null;
+
+      try {
+        const res = await _fetch(verifyUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            token: curToken,
+            nonce: curNonce,
+            ...payload,
+          }),
+        });
+        const data = await res.json();
+
+        // Auto-recover once if token was stale/spent
+        const isStale = !data.ok && Array.isArray(data.reasons) && data.reasons.some((r) => r.code === 'invalid_token' || r.code === 'token_reused');
+        if (isStale && !isRetry) {
+          this.reset();
+          await this.init();
+          return this.verify(payload, true);
+        }
+
+        this.init().catch(() => {});
+        return data;
+      } catch (err) {
+        this.init().catch(() => {});
+        throw err;
+      }
+    },
+  };
+
+  if (_freeze) {
+    _freeze(OBSX);
+  }
+
+  global.OBSX = OBSX;
+  global.Veritas = OBSX;
+  global.Tracer = OBSX;
+})(typeof window !== 'undefined' ? window : globalThis);

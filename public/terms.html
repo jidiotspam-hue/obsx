@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Terms of Service — OBSX Security</title>
+  <meta name="description" content="OBSX Security Terms of Service and Acceptable Use Policy." />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="alternate icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+  <link rel="alternate icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/style.css?v=2.3.5" />
+  <style>
+    .legal-content {
+      max-width: 780px;
+      margin: 40px auto 80px auto;
+      line-height: 1.7;
+    }
+    .legal-content h1 {
+      font-family: var(--font-serif);
+      font-size: 2.8rem;
+      margin-bottom: 8px;
+      color: var(--text);
+    }
+    .legal-content .last-updated {
+      font-size: 0.88rem;
+      color: var(--text-faint);
+      margin-bottom: 36px;
+      font-family: var(--font-mono);
+    }
+    .legal-content h2 {
+      font-family: var(--font-sans);
+      font-size: 1.35rem;
+      margin-top: 36px;
+      margin-bottom: 12px;
+      color: var(--text);
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 6px;
+    }
+    .legal-content p, .legal-content li {
+      color: var(--text-muted);
+      margin-bottom: 16px;
+      font-size: 0.95rem;
+    }
+    .legal-content ul {
+      padding-left: 24px;
+      margin-bottom: 20px;
+    }
+    .legal-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 24px;
+      margin: 28px 0;
+      box-shadow: var(--shadow-sm);
+    }
+    .legal-card h3 {
+      font-size: 1.05rem;
+      color: var(--text);
+      margin-bottom: 8px;
+    }
+  </style>
+</head>
+<body>
+  <!-- Header -->
+  <header>
+    <div class="container header-wrap">
+      <a href="/" class="brand">
+        <span class="brand-dot"></span>
+        OBSX Security
+      </a>
+      <nav class="links">
+        <a href="/">Sandbox</a>
+        <a href="/notes.html">Notes App</a>
+        <a href="/dashboard.html">Dashboard</a>
+        <a href="/docs.html">Docs</a>
+        <a href="https://github.com/jidiotspam-hue/obsx" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <article class="legal-content">
+      <div class="hero-pill" style="margin-bottom: 16px;">
+        <span class="pill-dot"></span>
+        MIT Open-Source License · Acceptable Use Policy · Fair Security Research
+      </div>
+      <h1>Terms of Service</h1>
+      <div class="last-updated">Effective Date: November 1, 2026 · Version 2.3.2</div>
+
+      <p>
+        These Terms of Service (&ldquo;Terms&rdquo;) govern your access to and use of the OBSX Security platform, APIs, client software development kits (SDKs), and related websites operated at <code>obsx.tech</code> and open-source repositories.
+      </p>
+
+      <div class="legal-card">
+        <h3>Core Principles</h3>
+        <ul>
+          <li><strong>Open Source Freedom:</strong> The OBSX core engine and client SDKs are released under the permissive MIT License. You are free to inspect, fork, self-host, and embed OBSX in commercial or open-source software.</li>
+          <li><strong>Acceptable Use:</strong> You agree not to weaponize OBSX services for denial-of-service amplification, mail relay abuse, or unauthorized exploitation.</li>
+          <li><strong>Responsible Security Research:</strong> Security researchers are actively encouraged to stress-test our algorithms under responsible disclosure guidelines.</li>
+        </ul>
+      </div>
+
+      <h2>1. License and Open-Source Software</h2>
+      <p>
+        The software source code of OBSX Security is licensed under the <strong>MIT License</strong>. The full license text is preserved in our repository at <a href="https://github.com/jidiotspam-hue/obsx/blob/main/LICENSE" target="_blank" rel="noopener">github.com/jidiotspam-hue/obsx/blob/main/LICENSE</a>. Your rights to inspect, modify, merge, and distribute copies of the code are governed by the MIT License terms.
+      </p>
+
+      <h2>2. Acceptable Use Policy (AUP)</h2>
+      <p>You agree not to use the public hosted nodes or developer APIs at <code>obsx.tech</code> to:</p>
+      <ul>
+        <li>Conduct distributed denial-of-service (DDoS) attacks against our infrastructure or any third-party infrastructure.</li>
+        <li>Exploit developer alert or notification endpoints (such as <code>/api/v1/alert/test</code>) to dispatch unsolicited bulk email (spam) or harass third parties.</li>
+        <li>Evade legitimate rate limiting through automated IP pool cycling with malicious intent.</li>
+        <li>Impersonate official OBSX cryptographic signatures or forge HMAC attestation seals.</li>
+      </ul>
+
+      <h2>3. Security Research & Coordinated Disclosure</h2>
+      <p>
+        OBSX is engineered under <em>Kerckhoffs's Principle</em>: mathematical transparency over security through obscurity. We welcome defensive security audits, academic review, and penetration testing against our public sandboxes.
+      </p>
+      <p>
+        If you discover a vulnerability or cryptographic defect, please report it privately to <a href="mailto:security@obsx.tech">security@obsx.tech</a> before public disclosure. We commit to acknowledging receipt within 24 hours and deploying verified remediations within 72 hours.
+      </p>
+
+      <h2>4. Disclaimers & Limitation of Liability</h2>
+      <p>
+        THE PLATFORM, HOSTED SANDBOXES, AND ASSOCIATED SOFTWARE ARE PROVIDED &ldquo;AS IS&rdquo;, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+      </p>
+
+      <h2>5. Enterprise Service Level Agreements (SLAs)</h2>
+      <p>
+        Public hosted demo endpoints (such as <code>obsx.tech/api/v1/telemetry/live</code>) are provided for evaluation and developmental sandbox testing. Production enterprise customers requiring guaranteed uptime SLAs, private dedicated edge clusters, and custom Proof-of-Work tuning should contact <a href="mailto:official@obsx.tech">official@obsx.tech</a>.
+      </p>
+
+      <h2>6. Modifications to Terms</h2>
+      <p>
+        We may update these Terms periodically to reflect architectural changes or regulatory updates. Continued use of the platform after updates constitutes acceptance of the revised Terms.
+      </p>
+
+      <h2>7. Contact</h2>
+      <p>
+        Questions regarding these Terms of Service may be directed to <a href="mailto:official@obsx.tech">official@obsx.tech</a> or submitted via our GitHub repository at <a href="https://github.com/jidiotspam-hue/obsx" target="_blank" rel="noopener">github.com/jidiotspam-hue/obsx</a>.
+      </p>
+    </article>
+  </main>
+
+  <!-- Footer -->
+  <footer>
+    <div class="container footer-wrap">
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <span class="brand-dot"></span>
+        <strong style="color: var(--text);">OBSX Security</strong>
+        <span>· Open source under the MIT License.</span>
+      </div>
+      <div style="display: flex; gap: 20px; flex-wrap: wrap;">
+        <a href="/">Sandbox</a>
+        <a href="/notes.html">Notes App</a>
+        <a href="/dashboard.html">Dashboard</a>
+        <a href="/docs.html">Documentation</a>
+        <a href="/privacy.html">Privacy</a>
+        <a href="/terms.html" style="color: var(--accent);">Terms</a>
+        <a href="https://github.com/jidiotspam-hue/obsx" target="_blank" rel="noopener">GitHub</a>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>

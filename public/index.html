@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OBSX Security — Client Integrity Attestation & Anti-Automation</title>
+  <meta name="description" content="OBSX Security: Open-source client integrity attestation, cryptographic micro-proof-of-work, and tamper-resistant request verification with zero external dependencies." />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="alternate icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+  <link rel="alternate icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/style.css?v=2.3.5" />
+  <script src="/obsx.min.js?v=2.3.5" data-obsx-site="pk_obsx_sandbox"></script>
+</head>
+<body>
+  <!-- Header / Navigation -->
+  <header class="nav">
+    <div class="container nav-wrap">
+      <a href="/" class="brand">
+        <span class="brand-dot"></span>
+        OBSX
+        <span class="brand-sub">Security</span>
+      </a>
+      <nav class="links">
+        <a href="/" class="active">Sandbox</a>
+        <a href="/notes.html">Notes App</a>
+        <a href="/dashboard.html">Dashboard</a>
+        <a href="/docs.html">Docs</a>
+        <a href="https://github.com/jidiotspam-hue/obsx" target="_blank" rel="noopener">GitHub</a>
+        <a href="/notes.html" class="nav-cta">Try Demo →</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- Hero Section -->
+    <section class="hero">
+      <div class="hero-pill">
+        <span class="pill-dot"></span>
+        Self-Protected Node · Protected by OBSX Security · Zero External Dependencies · MIT
+      </div>
+      <h1>True client integrity.<br /><em>Zero advisory blind spots.</em></h1>
+      <p>
+        OBSX replaces bypassable advisory JSON telemetry and intrusive CAPTCHAs with cryptographic micro-proof-of-work, prototype-tamper auditing, and deterministic backend verification.
+      </p>
+      <div class="hero-actions">
+        <a href="/notes.html" class="btn btn-primary">Try Live Notes App →</a>
+        <a href="#telemetry" class="btn btn-secondary">View Live Telemetry</a>
+        <a href="https://github.com/jidiotspam-hue/obsx" target="_blank" rel="noopener" class="btn btn-secondary">View on GitHub</a>
+      </div>
+    </section>
+
+    <!-- Interactive Sandbox Grid -->
+    <div class="grid" id="sandbox">
+      <div class="card">
+        <div class="card-title">
+          <span>Interactive Sandbox</span>
+          <span class="badge badge-good" id="sdk-status">SDK Ready</span>
+        </div>
+        <p class="card-sub">
+          Test real human interaction against simulated headless automation, prototype tampering, and proxy unblockers in real time.
+        </p>
+
+        <div class="terminal">
+          <div class="terminal-line"><span class="terminal-key">Session:</span> <span class="terminal-val" id="disp-session">Initializing...</span></div>
+          <div class="terminal-line"><span class="terminal-key">PoW Target:</span> <span class="terminal-val" id="disp-pow">Pending</span></div>
+          <div class="terminal-line"><span class="terminal-key">Entropy:</span> <span class="terminal-val" id="disp-entropy">Collecting mouse/key movement...</span></div>
+          <div class="terminal-line"><span class="terminal-key">Gate Verdict:</span> <span class="terminal-val" id="disp-verdict">—</span></div>
+        </div>
+
+        <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px;">
+          <button type="button" class="btn btn-primary" id="btn-human">Send Genuine Action</button>
+          <button type="button" class="btn btn-secondary" id="btn-bot">Simulate Headless Bot ({})</button>
+          <button type="button" class="btn btn-secondary" id="btn-jerk-bot">Simulate Zero-Jerk Bot</button>
+          <button type="button" class="btn btn-secondary" id="btn-tamper">Simulate .bind() Tamper</button>
+          <button type="button" class="btn btn-secondary" id="btn-proxy">Simulate UV / Bare-Mux</button>
+          <button type="button" class="btn btn-secondary" id="btn-sovereign">Simulate Sovereign Hook</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">
+          <span>Live Verification Log</span>
+          <span class="badge badge-warn" id="log-count">0 Events</span>
+        </div>
+        <p class="card-sub">
+          Detailed cryptographic verification outputs, risk scoring (0–100), and reason codes.
+        </p>
+
+        <div id="verdict-feed" style="font-family: var(--font-mono); font-size: 13px; max-height: 250px; overflow-y: auto;">
+          <p style="color: var(--text-muted); padding: 12px 0;">Awaiting actions from sandbox buttons...</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Section 01: Architecture -->
+    <section class="editorial" id="how">
+      <span class="section-tag">// 01 Architecture</span>
+      <h2 class="section-head">Proof-of-work attestation meets zero-dependency verification.</h2>
+      <p class="section-sub">
+        Traditional anti-bot scripts blindly accept whatever JSON telemetry the client submits. OBSX challenges client compute, verifies hardware bindings, and seals every request with single-use cryptographic tokens.
+      </p>
+
+      <div style="margin: 28px 0; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow);">
+        <img src="/architecture.svg" alt="OBSX Security Architecture Flow" style="width: 100%; height: auto; display: block;" />
+      </div>
+
+      <div class="features-grid">
+        <div class="feature-box">
+          <div class="feature-num">01 / POW</div>
+          <h3>Cryptographic Micro-PoW</h3>
+          <p>Every session is challenged with an ephemeral SHA-256 micro-puzzle. Solved in ~15ms via Web Crypto; prevents automated botnets from flooding requests for free.</p>
+        </div>
+        <div class="feature-box">
+          <div class="feature-num">02 / ZERO TRUST</div>
+          <h3>Mandatory Attestation</h3>
+          <p>Unlike legacy scripts where empty JSON payloads <code>{}</code> pass at risk 0, OBSX treats missing signals as immediate hard rejections.</p>
+        </div>
+        <div class="feature-box">
+          <div class="feature-num">03 / TAMPER AUDIT</div>
+          <h3>Descriptor-Level Probing</h3>
+          <p>Inspects property descriptors and native Web IDL accessors to detect <code>.bind()</code> hooks, <code>Proxy</code> traps, and web proxy unblockers.</p>
+        </div>
+        <div class="feature-box">
+          <div class="feature-num">04 / ENTROPY</div>
+          <h3>Kinematic Jerk Analysis</h3>
+          <p>Evaluates human pointer curvature (minimizing <code>d³x/dt³</code>) and keystroke variance to catch synthetic linear trajectories and robotic cadences.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Section 02: Competitor Comparison -->
+    <section class="editorial" id="comparison">
+      <span class="section-tag">// 02 Comparison</span>
+      <h2 class="section-head">Why traditional advisory scripts fail under real attack.</h2>
+      <p class="section-sub">
+        A direct side-by-side comparison of OBSX against traditional advisory scripts and intrusive third-party CAPTCHAs.
+      </p>
+
+      <div class="table-wrap">
+        <table class="clean-tbl">
+          <thead>
+            <tr>
+              <th>Security Capability</th>
+              <th>OBSX Security</th>
+              <th>Traditional Advisory Scripts</th>
+              <th>Legacy CAPTCHAs</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Cryptographic Micro-PoW</strong></td>
+              <td><span class="badge badge-good">Enforced (~15ms Web Crypto)</span></td>
+              <td><span class="badge badge-bad">None (Free curl calls)</span></td>
+              <td><span class="badge badge-warn">Server heavy / slow</span></td>
+            </tr>
+            <tr>
+              <td><strong>Empty Signals ({}) Vulnerability</strong></td>
+              <td><span class="badge badge-good">Hard Reject (Risk 100)</span></td>
+              <td><span class="badge badge-bad">Passes at Risk 0 (Flaw)</span></td>
+              <td><span class="badge badge-good">Rejected</span></td>
+            </tr>
+            <tr>
+              <td><strong>Web Proxy Detection (Bare-Mux / UV)</strong></td>
+              <td><span class="badge badge-good">Native Web IDL Heuristics</span></td>
+              <td><span class="badge badge-bad">Blind (Unmonitored)</span></td>
+              <td><span class="badge badge-warn">Easily proxied</span></td>
+            </tr>
+            <tr>
+              <td><strong>Prototype Tamper Resilience</strong></td>
+              <td><span class="badge badge-good">Descriptor &amp; Bound Name Checks</span></td>
+              <td><span class="badge badge-bad">Bypassed via .bind()</span></td>
+              <td><span class="badge badge-warn">Varies</span></td>
+            </tr>
+            <tr>
+              <td><strong>Rate Limit Scoping</strong></td>
+              <td><span class="badge badge-good">Subnet-Scoped (No identity DOS)</span></td>
+              <td><span class="badge badge-bad">Global Identity Lockout (DOS)</span></td>
+              <td><span class="badge badge-warn">IP based</span></td>
+            </tr>
+            <tr>
+              <td><strong>External Runtime Dependencies</strong></td>
+              <td><span class="badge badge-good">0 (Native Node.js crypto)</span></td>
+              <td><span class="badge badge-warn">External service calls</span></td>
+              <td><span class="badge badge-bad">Heavy 3rd-party CDN</span></td>
+            </tr>
+            <tr>
+              <td><strong>User Experience Friction</strong></td>
+              <td><span class="badge badge-good">Zero Puzzles / Frictionless</span></td>
+              <td><span class="badge badge-good">Frictionless</span></td>
+              <td><span class="badge badge-bad">High Friction (Click images)</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Section 03: Ideal Use Cases -->
+    <section class="editorial" id="use-cases">
+      <span class="section-tag">// 03 Ideal Use Cases</span>
+      <h2 class="section-head">Engineered for high-stakes web endpoints.</h2>
+      <p class="section-sub">
+        Where traditional bot tools create blind spots or degrade user experience, OBSX provides deterministic, cost-effective security.
+      </p>
+
+      <div class="features-grid">
+        <div class="feature-box">
+          <div class="feature-num">USE CASE 01</div>
+          <h3>AI Chat &amp; LLM Endpoints</h3>
+          <p>Prevent automated scraping, token draining, and proxy relays targeting expensive LLM APIs (e.g. client chat applications) without forcing human users to solve puzzles.</p>
+        </div>
+        <div class="feature-box">
+          <div class="feature-num">USE CASE 02</div>
+          <h3>Voucher &amp; Promo Code Claims</h3>
+          <p>Stop automated brute-force PIN guessing, credential stuffing, and voucher pool draining on high-value reward transactions while preserving seamless human checkouts.</p>
+        </div>
+        <div class="feature-box">
+          <div class="feature-num">USE CASE 03</div>
+          <h3>Auth &amp; Subnet-Scoped OTP</h3>
+          <p>Protect registration and login flows from SMS toll fraud and credential stuffing without allowing bad actors to maliciously lock out legitimate users' email accounts.</p>
+        </div>
+        <div class="feature-box">
+          <div class="feature-num">USE CASE 04</div>
+          <h3>Fair Leaderboards &amp; Voting</h3>
+          <p>Eliminate synthetic click macros and automated spline bots in gaming leaderboards, polls, and micro-transactions through kinematic jerk entropy verification.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Section 04: Implementation & Quickstarts -->
+    <section class="editorial" id="integration">
+      <span class="section-tag">// 04 Implementation</span>
+      <h2 class="section-head">One script tag. Three lines on your server.</h2>
+      <p class="section-sub">
+        Drop OBSX into any frontend and verify tokens on your backend with zero runtime dependencies.
+      </p>
+
+      <!-- Client Implementation Block -->
+      <div class="code-block">
+        <div class="code-tabs">
+          <div class="tabs-group">
+            <span style="font-size: 13px; font-weight: 600; color: var(--text); padding: 6px 10px;">Browser Client</span>
+          </div>
+          <button type="button" class="btn-copy" data-copy="code-client">Copy Snippet</button>
+        </div>
+        <pre class="code-content" id="code-client"><code>&lt;!-- 1. Include the OBSX Client SDK in &lt;head&gt; --&gt;
+&lt;script src="https://obsx.tech/obsx.min.js" data-obsx-site="pk_YOUR_SITE_KEY"&gt;&lt;/script&gt;
+
+&lt;script&gt;
+  // 2. Automatically solve PoW and collect biometric attestation
+  const verdict = await OBSX.verify({ score: 100 });
+
+  if (verdict.verdict === 'accept') {
+    // 3. Submit attested token with your payload
+    await fetch('/api/action', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: verdict.token, data: 'payload' })
+    });
+  }
+&lt;/script&gt;</code></pre>
+      </div>
+
+      <!-- Server Implementation Tabs -->
+      <div class="code-block">
+        <div class="code-tabs">
+          <div class="tabs-group">
+            <button type="button" class="tab-btn active" data-tab="tab-node">Node.js (Native / Express)</button>
+            <button type="button" class="tab-btn" data-tab="tab-next">Next.js App Router</button>
+            <button type="button" class="tab-btn" data-tab="tab-python">Python (FastAPI)</button>
+          </div>
+          <button type="button" class="btn-copy" data-copy="active-server-code">Copy Snippet</button>
+        </div>
+
+        <div class="code-pane" id="tab-node">
+          <pre class="code-content" id="active-server-code"><code>const { verifyToken } = require('obsx-security');
+
+app.post('/api/action', async (req, res) => {
+  const { token, data } = req.body;
+
+  // Zero-dependency HMAC and replay verification (<1ms)
+  const result = await verifyToken(token, {
+    secret: process.env.OBSX_SECRET,
+    clientIp: req.ip
+  });
+
+  if (result.verdict === 'reject') {
+    return res.status(403).json({ ok: false, error: 'gate_rejected', reasons: result.reasons });
+  }
+
+  // Action verified — proceed with business logic
+  res.json({ ok: true, status: 'success' });
+});</code></pre>
+        </div>
+
+        <div class="code-pane" id="tab-next" style="display: none;">
+          <pre class="code-content"><code>import { NextResponse } from 'next/server';
+import { verifyToken } from 'obsx-security';
+
+export async function POST(request: Request) {
+  const { token, data } = await request.json();
+  const clientIp = request.headers.get('x-forwarded-for') || '127.0.0.1';
+
+  const result = await verifyToken(token, {
+    secret: process.env.OBSX_SECRET!,
+    clientIp
+  });
+
+  if (result.verdict === 'reject') {
+    return NextResponse.json({ ok: false, reasons: result.reasons }, { status: 403 });
+  }
+
+  return NextResponse.json({ ok: true });
+}</code></pre>
+        </div>
+
+        <div class="code-pane" id="tab-python" style="display: none;">
+          <pre class="code-content"><code>from fastapi import FastAPI, HTTPException, Request
+from obsx import verify_token
+import os
+
+app = FastAPI()
+
+@app.post("/api/action")
+async def handle_action(request: Request):
+    body = await request.json()
+    verdict = verify_token(
+        token=body.get("token"),
+        secret=os.environ["OBSX_SECRET"],
+        client_ip=request.client.host
+    )
+    if verdict["verdict"] == "reject":
+        raise HTTPException(status_code=403, detail=verdict["reasons"])
+    return {"ok": True}</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- Section 05: Real-Time Self-Telemetry & Proof of Trust -->
+    <section class="editorial" id="telemetry">
+      <span class="section-tag">// 05 LIVE OBSERVABILITY</span>
+      <h2 class="section-head">Our own telemetry, to prove you can trust us.</h2>
+      <p class="section-sub">
+        We protect our own production platform with the exact same open-source protocol we ship. Below is the real-time, live-updating telemetry feed from this website (<code>obsx.tech</code>)—including blocked bots with reasons (IPs masked), verified human sessions, risk scores, and latency.
+      </p>
+
+      <!-- Live Self-Protection Metrics Grid -->
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-bottom: 24px;">
+        <div class="card" style="padding: 18px;">
+          <div style="font-size: 11.5px; color: var(--text-muted); font-weight: 600; text-transform: uppercase;">Total Actions Evaluated</div>
+          <div id="self-metric-total" style="font-size: 28px; font-weight: 700; font-family: var(--font-mono); margin-top: 4px; color: var(--text);">0</div>
+        </div>
+        <div class="card" style="padding: 18px;">
+          <div style="font-size: 11.5px; color: var(--good); font-weight: 600; text-transform: uppercase;">Verified Humans</div>
+          <div id="self-metric-accept" style="font-size: 28px; font-weight: 700; font-family: var(--font-mono); margin-top: 4px; color: var(--good);">0</div>
+        </div>
+        <div class="card" style="padding: 18px;">
+          <div style="font-size: 11.5px; color: var(--bad); font-weight: 600; text-transform: uppercase;">Bots &amp; Exploits Thwarted</div>
+          <div id="self-metric-reject" style="font-size: 28px; font-weight: 700; font-family: var(--font-mono); margin-top: 4px; color: var(--bad);">0</div>
+        </div>
+        <div class="card" style="padding: 18px;">
+          <div style="font-size: 11.5px; color: var(--accent); font-weight: 600; text-transform: uppercase;">Human Pass Rate</div>
+          <div id="self-metric-rate" style="font-size: 28px; font-weight: 700; font-family: var(--font-mono); margin-top: 4px; color: var(--accent);">100%</div>
+        </div>
+      </div>
+
+      <!-- Live Telemetry Stream Table -->
+      <div class="table-wrap">
+        <table class="clean-tbl">
+          <thead>
+            <tr>
+              <th>Timestamp</th>
+              <th>Action</th>
+              <th>Masked Client IP</th>
+              <th>Gate Verdict</th>
+              <th>Risk</th>
+              <th>Triggered Reasons / Audit Detail</th>
+            </tr>
+          </thead>
+          <tbody id="self-telemetry-body">
+            <tr>
+              <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 20px;">
+                Connecting to live obsx.tech node telemetry stream...
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Section 06: Kerckhoffs's Principle & Trust -->
+    <section class="editorial" id="trust">
+      <span class="section-tag">// 06 Trust & Philosophy</span>
+      <h2 class="section-head">Built for public open-source scrutiny.</h2>
+      <p class="section-sub">
+        Auguste Kerckhoffs stated in 1883 that a cryptosystem must remain secure even if everything about the system is public knowledge. OBSX does not rely on hidden obfuscated code—it relies on mathematics, physical inertia, and cryptographic invariants.
+      </p>
+
+      <div class="features-grid">
+        <div class="feature-box">
+          <div class="feature-num">GUARANTEE 01</div>
+          <h3>100% Mathematical Proofs</h3>
+          <p>Even if an attacker studies our full solver code, the computational cost of the SHA-256 micro-puzzle must still be paid by the hardware.</p>
+        </div>
+        <div class="feature-box">
+          <div class="feature-num">GUARANTEE 02</div>
+          <h3>Zero External Dependencies</h3>
+          <p>Powered entirely by native Web Crypto in the browser and Node.js <code>crypto</code> on the server. Zero third-party analytics, zero external latency.</p>
+        </div>
+        <div class="feature-box">
+          <div class="feature-num">GUARANTEE 03</div>
+          <h3>Privacy-First Architecture</h3>
+          <p>No tracking cookies, no cross-site user profiles, and no biometric data leaves the client. Only cryptographic risk proofs and session tokens are submitted.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Footer -->
+  <footer>
+    <div class="container footer-wrap">
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <span class="brand-dot"></span>
+        <strong style="color: var(--text);">OBSX Security</strong>
+        <span>· Open source under the MIT License.</span>
+      </div>
+      <div style="display: flex; gap: 20px; flex-wrap: wrap;">
+        <a href="/notes.html">Notes App</a>
+        <a href="/dashboard.html">Dashboard</a>
+        <a href="/docs.html">Documentation</a>
+        <a href="/privacy.html">Privacy</a>
+        <a href="/terms.html">Terms</a>
+        <a href="https://github.com/jidiotspam-hue/obsx" target="_blank" rel="noopener">GitHub</a>
+      </div>
+    </div>
+  </footer>
+
+  <script src="/app.js?v=2.3.5"></script>
+</body>
+</html>

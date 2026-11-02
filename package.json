@@ -1,0 +1,35 @@
+{
+  "name": "obsx-security",
+  "version": "2.0.0",
+  "description": "OBSX Security: Next-generation client integrity attestation, anti-automation, and tamper-resistant request verification.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "build": "node scripts/build.js",
+    "test": "NODE_ENV=test node --test --test-concurrency=1 tests/*.test.js",
+    "pretest": "node scripts/build.js"
+  },
+  "keywords": [
+    "security",
+    "anti-tamper",
+    "bot-detection",
+    "integrity",
+    "proof-of-work",
+    "browser-verification",
+    "anti-bot"
+  ],
+  "author": "Alexis Grimmace <alexisgrimmace@users.noreply.github.com>",
+  "license": "(MIT AND ELv2)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jidiotspam-hue/obsx.git"
+  },
+  "bugs": {
+    "url": "https://github.com/jidiotspam-hue/obsx/issues"
+  },
+  "homepage": "https://obsx.tech",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

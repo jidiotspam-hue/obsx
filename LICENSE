@@ -1,0 +1,103 @@
+# OBSX Security Protocol — Dual License
+
+Copyright (c) 2026 Alexis Grimmace. All rights reserved.
+
+---
+
+## UNIVERSAL & RETROACTIVE APPLICABILITY
+
+This license agreement, including all proprietary intellectual property reservations, dual-licensing zone demarcations, and anti-competition / anti-circumvention provisions, applies unconditionally and retroactively to **ALL** versions, releases, iterations, commits, tags, and distributions of this software (including without limitation version 2.0.0, 2.1.0, 2.2.0, and all prior and future versions).
+
+The most up-to-date version of this license supersedes, replaces, and governs all prior license notices, repository states, and historical commits. Any download, installation, cloning, execution, modification, or distribution of any copy or version of this software constitutes continuous acceptance of the most up-to-date version of this License.
+
+---
+
+This repository is distributed under a dual-licensing framework modeled after the
+open-core standard used by industry-leading infrastructure platforms (e.g., Sentry, Elastic).
+
+The repository is divided into two distinct legal zones:
+
+1. **ZONE 1: Core Protocol Engine & Client SDK** — Licensed under the **MIT License**.
+   Includes:
+   - `lib/crypto.js` (Proof-of-work generator, HMAC seals, canonicalization)
+   - `lib/core.js` (Core verification engine, rate limiting, replay defense)
+   - `lib/telemetry.js` (Kinematic jerk entropy & pointer dynamics evaluation)
+   - `src/tracer.js` (Client-side attestation collector)
+   - `public/obsx.min.js`, `public/veritas.min.js`, `public/tracer.min.js`
+   - `tests/` (Protocol compliance and verification test suites)
+
+2. **ZONE 2: Node Operator Scaffolding, Accounts & Dashboard** — Licensed under the **Elastic License 2.0 (ELv2)**.
+   Includes:
+   - `public/dashboard.html` & `public/dashboard.js` (Node operator management interface)
+   - `lib/accounts.js` (Multi-tenant user and project key administration)
+   - `lib/mailer.js` (Automated security incident notifications and email delivery)
+   - `server.js` (Operator HTTP server harness & metrics telemetry broadcaster)
+
+---
+
+## PROPRIETARY & CLOSED-SOURCE NOTICE: OBSX SENTINEL™
+
+The **OBSX Sentinel™ Adaptive Vector Circuit Breaker Engine** (autonomous vector isolation, distributed zero-day threat correlation, dynamic saturation throttling, real-time edge heuristics, and vector state machines) is **STRICTLY CLOSED SOURCE AND PROPRIETARY INTELLECTUAL PROPERTY**.
+
+- **Not Included in this Repository:** Sentinel™ is **NOT** included in this public repository and is **NOT** licensed under the MIT License or the Elastic License 2.0.
+- **Private Repository & Cloud Exclusive:** Sentinel™ is maintained exclusively in a private, proprietary repository (`jidiotspam-hue/obsx-sentinel`) under the *OBSX Sentinel™ Enterprise Proprietary Software License* and is deployed exclusively as a managed service powering the official cloud platform at **https://obsx.tech**.
+- **Strict Prohibition on Emulation, Shimming & Clean-Room Replication:** You may **NOT** decompile, reverse-engineer, clean-room implement, emulate, shim, or duplicate the Sentinel™ architecture, algorithms, interface contracts, vector classifications, or methods, nor create drop-in replacement modules or shims purporting to substitute for or replicate OBSX Sentinel™. The MIT license covering Zone 1 applies solely to the standalone core protocol engine operating in baseline open-source mode and explicitly **DOES NOT** grant any right to recreate, shim, or simulate Sentinel™.
+- **Self-Hosting Independence:** Self-hosted deployments from this repository execute the complete, fully functional, zero-dependency OBSX Core verification engine (Zone 1) with operator scaffolding (Zone 2) in baseline open-source mode.
+
+---
+
+## PART 1: MIT LICENSE (ZONE 1 — Core Protocol & Client SDK)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+## PART 2: ELASTIC LICENSE 2.0 (ELv2) (ZONE 2 — Operator Dashboard & Scaffolding)
+
+### 1. Acceptance
+By using, copying, modifying, or distributing any software, algorithms, or files designated under
+Zone 2—specifically including the node operator dashboard, server harness, and account administration modules—you agree to all of the terms and conditions below.
+
+### 2. Right to Use
+You may copy, distribute, modify, and create derivative works of the Zone 2 software,
+subject to the non-negotiable limitations in Section 3.
+
+**Permitted Uses Include:**
+- Downloading and running the full self-hosted node as-is for personal, commercial, or enterprise infrastructure.
+- Making private modifications and custom extensions for your internal, private operations.
+- Inspecting source code, conducting internal security audits, and testing.
+
+### 3. Limitations (Anti-Competition & Non-Harvesting Clauses)
+You may not:
+- **(a) Hosted SaaS Service Prohibition**: Provide the software, or any portion, feature, or functionality derived from Zone 2, to third parties as a hosted, managed, or software-as-a-service (SaaS) offering;
+- **(b) Component & Algorithm Extraction Prohibition**: Extract, copy, adapt, or incorporate any portion, component, module, algorithm, or snippet of Zone 2 (specifically including without limitation the node operator dashboard, metrics broadcaster, or account administration modules) into any competing product, framework, library, or distribution;
+- **(c) Notice Removal**: Move, change, disable, or obscure any licensing, copyright, attribution, or legal notices of the licensor;
+- **(d) Sentinel™ Circumvention & Shimming Prohibition**: Create, distribute, or incorporate any shim, mock, emulation, or derivative module designed to mimic, replicate, or circumvent the proprietary OBSX Sentinel™ interface, algorithms, or circuit breaker architecture.
+
+### 4. Termination
+The rights granted to you under this license terminate immediately if you violate any part of this agreement.
+
+### 5. Disclaimer
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Attestation Dashboard — OBSX Security</title>
+  <meta name="description" content="Live telemetry, cryptographic attestation rates, and threat metrics for your self-hosted OBSX node." />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="alternate icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+  <link rel="alternate icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/style.css?v=2.3.5" />
+  <script src="/obsx.min.js?v=2.3.5" data-obsx-site="pk_obsx_sandbox"></script>
+</head>
+<body>
+  <!-- Header / Navigation -->
+  <header class="nav">
+    <div class="container nav-wrap">
+      <a href="/" class="brand">
+        <span class="brand-dot"></span>
+        OBSX
+        <span class="brand-sub">Security</span>
+      </a>
+      <nav class="links">
+        <a href="/">Sandbox</a>
+        <a href="/notes.html">Notes App</a>
+        <a href="/dashboard.html" class="active">Dashboard</a>
+        <a href="/docs.html">Docs</a>
+        <a href="https://github.com/jidiotspam-hue/obsx" target="_blank" rel="noopener">GitHub</a>
+        <a href="/notes.html" class="nav-cta">Try Demo →</a>
+        <span id="nav-auth-status"></span>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container" style="max-width: 920px; padding: 56px 24px;">
+    <!-- Logged Out View: Sign Up / Sign In Flow -->
+    <div id="view-logged-out" class="card" style="margin-bottom: 32px; max-width: 540px; margin-left: auto; margin-right: auto;">
+      <div class="card-title">
+        <span>Operator Access &amp; Sign-In</span>
+        <span class="badge badge-warn">Authentication Required</span>
+      </div>
+      <p class="card-sub">Access your OBSX node metrics, manage site keys, and inspect live attestation logs.</p>
+      
+      <!-- Step 1: Request Code -->
+      <div id="auth-step-email" style="display: flex; flex-direction: column; gap: 14px;">
+        <label style="font-weight: 600; font-size: 13.5px;">Operator Email Address
+          <input type="email" id="inp-auth-email" placeholder="alex@obsx.tech" class="form-input" style="margin-top: 6px;" />
+        </label>
+        <button type="button" class="btn btn-primary" id="btn-send-code" style="padding: 11px;">Send Verification Code</button>
+      </div>
+
+      <!-- Step 2: Submit Code -->
+      <div id="auth-step-code" style="display: none; flex-direction: column; gap: 14px;">
+        <p style="font-size: 13.5px; color: var(--good); margin-bottom: 4px;">Code sent! Check your inbox or dev server log.</p>
+        <label style="font-weight: 600; font-size: 13.5px;">6-Digit One-Time Code
+          <input type="text" id="inp-auth-code" maxlength="6" placeholder="123456" class="form-input" style="margin-top: 6px; font-family: var(--font-mono); font-size: 20px; letter-spacing: 4px; text-align: center;" />
+        </label>
+        <div style="display: flex; gap: 10px;">
+          <button type="button" class="btn btn-primary" id="btn-verify-code" style="flex: 1; padding: 11px;">Verify &amp; Enter</button>
+          <button type="button" class="btn btn-secondary" id="btn-back-email">Back</button>
+        </div>
+      </div>
+
+      <div id="auth-msg" style="margin-top: 14px; font-size: 13px; display: none;"></div>
+
+      <div style="display: flex; align-items: center; gap: 8px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-muted);">
+        <span class="badge badge-good" style="font-size: 11px;">[OBSX GUARDED]</span>
+        <span>Protected by client attestation &amp; micro-PoW cryptographic challenge</span>
+      </div>
+    </div>
+
+    <!-- Logged In View -->
+    <div id="view-logged-in" style="display: none;">
+      <!-- User Profile Header -->
+      <div class="card" style="margin-bottom: 24px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 14px; padding: 20px 24px;">
+        <div>
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <span class="badge badge-good" id="user-badge">Node Active</span>
+            <strong id="user-email-display" style="font-size: 15px;"></strong>
+          </div>
+          <p style="font-size: 13px; color: var(--text-muted); margin-top: 4px;">OBSX Node Operator &bull; Custom Domain: <code>obsx.tech</code></p>
+        </div>
+        <div style="display: flex; gap: 10px;">
+          <button type="button" class="btn btn-secondary" id="btn-test-alert" title="Test custom email security dispatch">Send Test Alert</button>
+          <button type="button" class="btn btn-secondary" id="btn-signout">Sign Out</button>
+        </div>
+      </div>
+
+      <!-- Projects & API Credentials Management -->
+      <div class="card" style="margin-bottom: 24px;">
+        <div class="card-title" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <span>Projects &amp; Production API Credentials</span>
+            <span class="badge badge-good" id="projects-count-badge">0 Projects</span>
+          </div>
+          <button type="button" class="btn btn-primary" id="btn-toggle-new-project" style="font-size: 13px; padding: 6px 14px;">+ New Project</button>
+        </div>
+        <p class="card-sub">
+          Manage your production site public keys (<code>pk_live_...</code>) for frontend client SDK integration, and rotate secret verification keys (<code>sk_live_...</code>) for server-side verification.
+        </p>
+
+        <!-- New Key Reveal Banner (Ephemeral after creation or rotation) -->
+        <div id="key-reveal-banner" style="display: none; margin-top: 16px; padding: 16px; background: var(--bg-card-subtle); border: 1px solid var(--accent); border-radius: var(--radius-sm);">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <strong style="color: var(--accent); font-size: 14px;">[NOTICE] Secret Verification Key Generated</strong>
+            <button type="button" class="btn btn-secondary" id="btn-dismiss-key-reveal" style="font-size: 11px; padding: 2px 8px;">Dismiss</button>
+          </div>
+          <p style="font-size: 12.5px; color: var(--text-muted); margin-bottom: 12px;">
+            Copy this secret key now. It is cryptographically hashed with SHA-256 on this node and cannot be displayed again.
+          </p>
+          <div style="display: flex; gap: 8px; align-items: center; background: var(--bg); padding: 10px 14px; border-radius: var(--radius-xs); border: 1px solid var(--border);">
+            <code id="reveal-secret-key" style="flex: 1; font-family: var(--font-mono); font-size: 13px; color: var(--accent); word-break: break-all;"></code>
+            <button type="button" class="btn btn-copy" id="btn-copy-revealed-secret">Copy Secret</button>
+          </div>
+        </div>
+
+        <!-- Create Project Form (Toggleable) -->
+        <div id="form-create-project" style="display: none; margin-top: 18px; padding: 18px; background: var(--bg-card-subtle); border-radius: var(--radius-sm); border: 1px solid var(--border);">
+          <h4 style="font-size: 14px; margin-bottom: 12px; font-weight: 600;">Create New OBSX Project</h4>
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin-bottom: 14px;">
+            <div>
+              <label style="font-size: 12.5px; font-weight: 600; display: block; margin-bottom: 4px;">Project Name</label>
+              <input type="text" id="inp-new-project-name" placeholder="e.g. Production Web App" class="form-input" style="width: 100%;" />
+            </div>
+            <div>
+              <label style="font-size: 12.5px; font-weight: 600; display: block; margin-bottom: 4px;">Allowed Origins (Comma-separated)</label>
+              <input type="text" id="inp-new-project-origins" placeholder="e.g. https://myapp.com, http://localhost:3000" class="form-input" style="width: 100%;" />
+            </div>
+          </div>
+          <div style="display: flex; gap: 10px; justify-content: flex-end;">
+            <button type="button" class="btn btn-secondary" id="btn-cancel-create-project">Cancel</button>
+            <button type="button" class="btn btn-primary" id="btn-submit-create-project">Create &amp; Generate Keys</button>
+          </div>
+        </div>
+
+        <!-- Projects List Container -->
+        <div id="projects-list" style="margin-top: 18px; display: flex; flex-direction: column; gap: 14px;">
+          <p style="color: var(--text-muted); font-size: 13px;">Loading projects...</p>
+        </div>
+      </div>
+
+      <!-- Guarded Project Telemetry & Observability (Option B) -->
+      <div class="card" style="margin-bottom: 24px; padding: 20px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 16px;">
+          <div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <h2 style="font-size: 16px; margin: 0; font-weight: 700; letter-spacing: -0.2px;">Project Telemetry &amp; Observability</h2>
+              <span id="telemetry-isolation-badge" class="badge badge-good">[TENANT ISOLATED]</span>
+            </div>
+            <p style="color: var(--text-muted); font-size: 12.5px; margin: 4px 0 0 0;">
+              Cryptographically isolated metrics and real-time attestation stream for your application.
+            </p>
+          </div>
+          <div id="telemetry-auth-status">
+            <span class="badge badge-good" id="telemetry-auth-badge">[OPERATOR VERIFIED]</span>
+          </div>
+        </div>
+
+        <!-- Guarded Project Selector Bar -->
+        <div style="display: flex; align-items: center; gap: 10px; background: #090d13; border: 1px solid var(--border); border-radius: 6px; padding: 10px 14px; flex-wrap: wrap;">
+          <label for="select-telemetry-project" style="font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap;">
+            Active Project:
+          </label>
+          <select id="select-telemetry-project" class="form-input" style="flex: 1; min-width: 240px; margin-bottom: 0; font-family: var(--font-mono); font-size: 13px; height: 36px; padding: 6px 12px;">
+            <option value="">Loading your projects...</option>
+          </select>
+          <button type="button" class="btn btn-primary" id="btn-load-project-telemetry" style="font-size: 12.5px; padding: 8px 16px; height: 36px; white-space: nowrap;">
+            Load Telemetry
+          </button>
+        </div>
+      </div>
+
+      <!-- Minimal Status Card for Projects Awaiting Traffic -->
+      <div class="card" id="project-empty-status-card" style="display: none; padding: 28px; text-align: center; border: 1px dashed var(--border); margin-bottom: 24px;">
+        <div style="display: inline-block; margin-bottom: 12px;">
+          <span class="badge badge-warn">[AWAITING TRAFFIC]</span>
+        </div>
+        <h3 style="margin-top: 0; margin-bottom: 8px; font-size: 17px; font-weight: 700;">No Attestations Recorded Yet</h3>
+        <p style="color: var(--text-muted); font-size: 13.5px; max-width: 580px; margin: 0 auto 18px auto; line-height: 1.5;">
+          This project has not received any client verification traffic yet. Embed this script tag into your frontend HTML before closing <code style="color: var(--accent);">&lt;/head&gt;</code> to start attesting visitors:
+        </p>
+        <div style="background: #090d13; border: 1px solid var(--border); border-radius: 6px; padding: 12px 16px; max-width: 680px; margin: 0 auto 14px auto; display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+          <code id="snippet-install-tag" style="font-size: 12px; color: var(--accent); overflow-x: auto; white-space: nowrap; font-family: var(--font-mono);">&lt;script src="https://obsx.tech/obsx.min.js" data-obsx-site="pk_..." async&gt;&lt;/script&gt;</code>
+          <button type="button" class="btn btn-secondary" id="btn-copy-install-tag" style="font-size: 11.5px; padding: 5px 12px; white-space: nowrap;">Copy Tag</button>
+        </div>
+        <div style="font-size: 12px; color: var(--text-muted); display: flex; justify-content: center; gap: 16px; flex-wrap: wrap;">
+          <span>Zero external dependencies (&lt; 4KB gzipped)</span>
+          <span>Automatic micro-PoW puzzle solver</span>
+          <span>Real-time Kinematic tremor harvester</span>
+        </div>
+      </div>
+
+      <!-- Isolated Project Telemetry Container (Shown when project has recorded traffic) -->
+      <div id="project-telemetry-container" style="display: none;">
+        <!-- Live Observability & Telemetry Metrics Grid -->
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; margin-bottom: 24px;">
+          <div class="card" style="padding: 18px;">
+            <div style="font-size: 11.5px; color: var(--text-muted); font-weight: 600; text-transform: uppercase;">Total Actions</div>
+            <div id="metric-total" style="font-size: 28px; font-weight: 700; font-family: var(--font-mono); margin-top: 4px; color: var(--text);">0</div>
+          </div>
+          <div class="card" style="padding: 18px;">
+            <div style="font-size: 11.5px; color: var(--good); font-weight: 600; text-transform: uppercase;">Accepted</div>
+            <div id="metric-accept" style="font-size: 28px; font-weight: 700; font-family: var(--font-mono); margin-top: 4px; color: var(--good);">0</div>
+          </div>
+          <div class="card" style="padding: 18px;">
+            <div style="font-size: 11.5px; color: var(--bad); font-weight: 600; text-transform: uppercase;">Rejected</div>
+            <div id="metric-reject" style="font-size: 28px; font-weight: 700; font-family: var(--font-mono); margin-top: 4px; color: var(--bad);">0</div>
+          </div>
+          <div class="card" style="padding: 18px;">
+            <div style="font-size: 11.5px; color: var(--warn, #eab308); font-weight: 600; text-transform: uppercase;">Shadow Rejects</div>
+            <div id="metric-shadow-reject" style="font-size: 28px; font-weight: 700; font-family: var(--font-mono); margin-top: 4px; color: var(--warn, #eab308);">0</div>
+          </div>
+          <div class="card" style="padding: 18px;">
+            <div style="font-size: 11.5px; color: var(--accent); font-weight: 600; text-transform: uppercase;">Accept Rate</div>
+            <div id="metric-rate" style="font-size: 28px; font-weight: 700; font-family: var(--font-mono); margin-top: 4px; color: var(--accent);">100%</div>
+          </div>
+        </div>
+
+        <!-- Live Event Feed & Top Threat Vectors -->
+        <div class="grid">
+          <div class="card">
+            <div class="card-title">
+              <span>Recent Attestation Stream</span>
+              <span class="badge badge-good">Project Polling</span>
+            </div>
+            <div id="recent-events" style="font-family: var(--font-mono); font-size: 12.5px; max-height: 240px; overflow-y: auto;">
+              <p style="color: var(--text-muted);">Awaiting incoming verifications...</p>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">
+              <span>Threat Intelligence Breakdown</span>
+            </div>
+            <div id="threat-breakdown" style="font-size: 13.5px; color: var(--text-muted); line-height: 1.8;">
+              <p>No active threats detected. All telemetry verified healthy.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Real-Time Kinematic Radar & Neuromuscular Jerk Visualizer -->
+      <div class="card" style="margin-top: 24px;">
+        <div class="card-title">
+          <span>Kinematic Jerk Radar (d³x/dt³ Neuromuscular Analysis)</span>
+          <span class="badge badge-good" id="kinematic-badge">Biological Human Motion</span>
+        </div>
+        <p class="card-sub">
+          Move your cursor over this card to watch OBSX track physiological 3rd-derivative tremor variance in real time. Or simulate a mathematically synthetic spline bot.
+        </p>
+
+        <div style="position: relative; width: 100%; height: 200px; background: #0c1017; border-radius: 6px; border: 1px solid var(--border); overflow: hidden; margin-top: 12px;">
+          <canvas id="kinematic-canvas" width="860" height="200" style="width: 100%; height: 100%; display: block;"></canvas>
+          <div id="kinematic-stats" style="position: absolute; bottom: 10px; left: 14px; font-family: var(--font-mono); font-size: 11.5px; color: var(--text-muted); pointer-events: none;">
+            Samples: <span id="kin-points" style="color: var(--text);">0</span> | Jerk Variance (d³x/dt³): <span id="kin-jerk" style="color: var(--good);">Warming up...</span> | Status: <span id="kin-status" style="color: var(--good);">Listening for movement</span>
+          </div>
+          <div style="position: absolute; top: 10px; right: 12px; display: flex; gap: 8px;">
+            <button type="button" class="btn btn-secondary" id="btn-sim-bot-spline" style="font-size: 11px; padding: 4px 10px;">Simulate Bot Spline</button>
+            <button type="button" class="btn btn-secondary" id="btn-clear-radar" style="font-size: 11px; padding: 4px 10px;">Clear</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Critical Security Email Dispatcher & Incident Stream -->
+      <div class="card" style="margin-top: 24px;">
+        <div class="card-title">
+          <span>Critical Security Alerts (<code>official@obsx.tech</code>)</span>
+          <span class="badge badge-good" id="mailer-status-badge">Mailer Ready</span>
+        </div>
+        <p class="card-sub">
+          Automated real-time security alerts dispatched from <strong>official@obsx.tech</strong> whenever honeypot probes, proxy virtualization shims, or CDP automation attacks breach security boundaries.
+        </p>
+
+        <div style="display: flex; gap: 12px; align-items: center; margin-top: 14px; margin-bottom: 14px; flex-wrap: wrap;">
+          <input type="email" id="inp-alert-recipient" placeholder="Recipient (e.g. operator@obsx.tech)" class="form-input" style="flex: 1; min-width: 240px; margin-bottom: 0;" />
+          <button type="button" class="btn btn-primary" id="btn-dispatch-test-alert" style="padding: 10px 18px; font-size: 13px;">Dispatch Test Alert</button>
+        </div>
+
+        <div style="font-size: 12px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; margin-top: 16px; margin-bottom: 8px;">
+          Recent Dispatched Security Advisories
+        </div>
+        <div id="alerts-history" style="font-family: var(--font-mono); font-size: 12px; max-height: 180px; overflow-y: auto;">
+          <p style="color: var(--text-muted);">No critical incidents dispatched yet. Node operating cleanly.</p>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Footer -->
+  <footer>
+    <div class="container footer-wrap">
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <span class="brand-dot"></span>
+        <strong style="color: var(--text);">OBSX Security</strong>
+        <span>· Open source under the MIT License.</span>
+      </div>
+      <div style="display: flex; gap: 20px; flex-wrap: wrap;">
+        <a href="/">Sandbox</a>
+        <a href="/notes.html">Notes App</a>
+        <a href="/docs.html">Docs</a>
+        <a href="/privacy.html">Privacy</a>
+        <a href="/terms.html">Terms</a>
+        <a href="https://github.com/jidiotspam-hue/obsx" target="_blank" rel="noopener">GitHub</a>
+      </div>
+    </div>
+  </footer>
+
+  <script src="/dashboard.js?v=2.3.5"></script>
+</body>
+</html>

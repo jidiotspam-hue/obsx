@@ -1,0 +1,155 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 240" width="880" height="240" style="background:#090a10;border-radius:12px;font-family:'Courier New',Courier,monospace;">
+  <defs>
+    <style>
+      @keyframes floatSlow { 0%, 100% { transform: translateY(0px); } 50% { transform: translateY(-8px); } }
+      @keyframes floatFast { 0%, 100% { transform: translateY(0px); } 50% { transform: translateY(-12px); } }
+      @keyframes twinkle { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
+      .b-cyan { animation: floatSlow 4s ease-in-out infinite; }
+      .b-mag { animation: floatFast 3.5s ease-in-out infinite; }
+      .b-gold { animation: floatSlow 4.5s ease-in-out infinite; }
+      .star-1 { animation: twinkle 2s ease-in-out infinite; }
+      .star-2 { animation: twinkle 2.5s ease-in-out infinite 0.7s; }
+      .star-3 { animation: twinkle 1.8s ease-in-out infinite 1.2s; }
+    </style>
+  </defs>
+
+  <!-- Arcade Outer Border -->
+  <rect x="4" y="4" width="872" height="232" rx="10" fill="#090a10" stroke="#1f2338" stroke-width="3"/>
+  <rect x="10" y="10" width="860" height="220" rx="8" fill="none" stroke="#6366f1" stroke-width="1.5" stroke-dasharray="8 6" opacity="0.6"/>
+
+  <!-- Pixel Grid Backdrop (Dotted) -->
+  <pattern id="pixelGrid" width="20" height="20" patternUnits="userSpaceOnUse">
+    <rect x="0" y="0" width="2" height="2" fill="#1e2238" opacity="0.4"/>
+  </pattern>
+  <rect x="12" y="12" width="856" height="216" fill="url(#pixelGrid)"/>
+
+  <!-- Pixel Confetti Tiles -->
+  <!-- Cyan Tiles -->
+  <rect x="60" y="45" width="8" height="8" fill="#00f0ff" opacity="0.85"/>
+  <rect x="140" y="180" width="6" height="6" fill="#00f0ff" opacity="0.75"/>
+  <rect x="220" y="35" width="10" height="6" fill="#00f0ff" opacity="0.9"/>
+  <rect x="680" y="50" width="8" height="6" fill="#00f0ff" opacity="0.8"/>
+  <rect x="760" y="175" width="8" height="8" fill="#00f0ff" opacity="0.85"/>
+  <rect x="810" y="70" width="6" height="6" fill="#00f0ff" opacity="0.7"/>
+
+  <!-- Magenta Tiles -->
+  <rect x="95" y="120" width="8" height="6" fill="#ff007f" opacity="0.8"/>
+  <rect x="180" y="70" width="6" height="6" fill="#ff007f" opacity="0.9"/>
+  <rect x="290" y="195" width="8" height="8" fill="#ff007f" opacity="0.75"/>
+  <rect x="630" y="185" width="6" height="6" fill="#ff007f" opacity="0.8"/>
+  <rect x="710" y="110" width="10" height="6" fill="#ff007f" opacity="0.85"/>
+  <rect x="790" y="130" width="8" height="8" fill="#ff007f" opacity="0.9"/>
+
+  <!-- Gold/Yellow Tiles -->
+  <rect x="120" y="90" width="8" height="8" fill="#ffe600" opacity="0.85"/>
+  <rect x="250" y="160" width="6" height="6" fill="#ffe600" opacity="0.75"/>
+  <rect x="360" y="40" width="8" height="6" fill="#ffe600" opacity="0.8"/>
+  <rect x="580" y="55" width="6" height="6" fill="#ffe600" opacity="0.8"/>
+  <rect x="660" y="140" width="8" height="8" fill="#ffe600" opacity="0.9"/>
+  <rect x="740" y="35" width="6" height="6" fill="#ffe600" opacity="0.85"/>
+
+  <!-- Green & Purple Tiles -->
+  <rect x="160" y="145" width="6" height="6" fill="#00ff88" opacity="0.8"/>
+  <rect x="320" y="60" width="8" height="8" fill="#00ff88" opacity="0.75"/>
+  <rect x="730" y="190" width="8" height="6" fill="#00ff88" opacity="0.85"/>
+  <rect x="70" y="190" width="6" height="6" fill="#a855f7" opacity="0.8"/>
+  <rect x="830" y="150" width="8" height="8" fill="#a855f7" opacity="0.75"/>
+
+  <!-- Pixel Stars -->
+  <g class="star-1" fill="#ffe600">
+    <rect x="200" y="110" width="4" height="12"/>
+    <rect x="196" y="114" width="12" height="4"/>
+  </g>
+  <g class="star-2" fill="#00f0ff">
+    <rect x="670" y="90" width="4" height="12"/>
+    <rect x="666" y="94" width="12" height="4"/>
+  </g>
+  <g class="star-3" fill="#ff007f">
+    <rect x="380" y="180" width="4" height="10"/>
+    <rect x="377" y="183" width="10" height="4"/>
+  </g>
+  <g class="star-1" fill="#00ff88">
+    <rect x="520" y="45" width="4" height="10"/>
+    <rect x="517" y="48" width="10" height="4"/>
+  </g>
+
+  <!-- Left Pixel Balloon: Neon Cyan -->
+  <g class="b-cyan" transform="translate(48, 50)">
+    <!-- Balloon Body (Pixel Grid) -->
+    <rect x="12" y="0" width="24" height="4" fill="#00f0ff"/>
+    <rect x="6" y="4" width="36" height="4" fill="#00f0ff"/>
+    <rect x="0" y="8" width="48" height="28" fill="#00f0ff"/>
+    <rect x="6" y="36" width="36" height="4" fill="#00f0ff"/>
+    <rect x="12" y="40" width="24" height="4" fill="#00f0ff"/>
+    <rect x="18" y="44" width="12" height="4" fill="#00d4e0"/>
+    <!-- Highlight -->
+    <rect x="8" y="8" width="8" height="8" fill="#ffffff" opacity="0.9"/>
+    <!-- Knot -->
+    <rect x="20" y="48" width="8" height="4" fill="#00a8b3"/>
+    <polygon points="18,52 30,52 24,56" fill="#00a8b3"/>
+    <!-- String -->
+    <path d="M 24,56 Q 16,75 28,95 T 20,135" fill="none" stroke="#717a96" stroke-width="1.5" stroke-dasharray="2 2"/>
+  </g>
+
+  <!-- Left Pixel Balloon 2: Magenta (Deeper) -->
+  <g class="b-mag" transform="translate(100, 75)">
+    <rect x="10" y="0" width="20" height="3" fill="#ff007f"/>
+    <rect x="5" y="3" width="30" height="3" fill="#ff007f"/>
+    <rect x="0" y="6" width="40" height="24" fill="#ff007f"/>
+    <rect x="5" y="30" width="30" height="3" fill="#ff007f"/>
+    <rect x="10" y="33" width="20" height="3" fill="#ff007f"/>
+    <rect x="7" y="7" width="6" height="6" fill="#ffffff" opacity="0.85"/>
+    <rect x="16" y="36" width="8" height="3" fill="#d00067"/>
+    <polygon points="14,39 26,39 20,43" fill="#d00067"/>
+    <path d="M 20,43 Q 28,60 14,80 T 22,110" fill="none" stroke="#717a96" stroke-width="1.5" stroke-dasharray="2 2"/>
+  </g>
+
+  <!-- Right Pixel Balloon: Neon Gold -->
+  <g class="b-gold" transform="translate(775, 45)">
+    <rect x="12" y="0" width="24" height="4" fill="#ffe600"/>
+    <rect x="6" y="4" width="36" height="4" fill="#ffe600"/>
+    <rect x="0" y="8" width="48" height="28" fill="#ffe600"/>
+    <rect x="6" y="36" width="36" height="4" fill="#ffe600"/>
+    <rect x="12" y="40" width="24" height="4" fill="#ffe600"/>
+    <rect x="8" y="8" width="8" height="8" fill="#ffffff" opacity="0.9"/>
+    <rect x="20" y="44" width="8" height="4" fill="#cca800"/>
+    <polygon points="18,48 30,48 24,52" fill="#cca800"/>
+    <path d="M 24,52 Q 32,70 18,90 T 26,140" fill="none" stroke="#717a96" stroke-width="1.5" stroke-dasharray="2 2"/>
+  </g>
+
+  <!-- Right Pixel Balloon 2: Neon Magenta -->
+  <g class="b-mag" transform="translate(725, 78)">
+    <rect x="10" y="0" width="20" height="3" fill="#ff007f"/>
+    <rect x="5" y="3" width="30" height="3" fill="#ff007f"/>
+    <rect x="0" y="6" width="40" height="24" fill="#ff007f"/>
+    <rect x="5" y="30" width="30" height="3" fill="#ff007f"/>
+    <rect x="10" y="33" width="20" height="3" fill="#ff007f"/>
+    <rect x="7" y="7" width="6" height="6" fill="#ffffff" opacity="0.85"/>
+    <rect x="16" y="36" width="8" height="3" fill="#d00067"/>
+    <polygon points="14,39 26,39 20,43" fill="#d00067"/>
+    <path d="M 20,43 Q 12,65 24,85 T 16,110" fill="none" stroke="#717a96" stroke-width="1.5" stroke-dasharray="2 2"/>
+  </g>
+
+  <!-- Center Retro Pixel Typography Header -->
+  <g transform="translate(440, 52)" text-anchor="middle">
+    <!-- Top Launch Tag -->
+    <rect x="-190" y="-12" width="380" height="24" rx="4" fill="#1b1d2e" stroke="#6366f1" stroke-width="1"/>
+    <text x="0" y="4" font-size="11" font-weight="bold" fill="#a5b4fc" letter-spacing="3">★ LEVEL 1: OPEN-SOURCE PROTOCOL ★</text>
+
+    <!-- Main OBSX Pixel Art Title -->
+    <g transform="translate(-160, 22)">
+      <!-- O -->
+      <path d="M 0,12 H 12 V 0 H 48 V 12 H 60 V 48 H 48 V 60 H 12 V 48 H 0 Z M 16,16 V 44 H 44 V 16 Z" fill="#ffffff"/>
+      <!-- B -->
+      <path d="M 80,0 H 128 V 12 H 140 V 24 H 128 V 32 H 140 V 48 H 128 V 60 H 80 Z M 96,12 V 24 H 120 V 12 Z M 96,36 V 48 H 120 V 36 Z" fill="#ffffff"/>
+      <!-- S -->
+      <path d="M 160,0 H 216 V 14 H 176 V 24 H 216 V 60 H 160 V 46 H 200 V 36 H 160 Z" fill="#ffffff"/>
+      <!-- X -->
+      <path d="M 236,0 H 252 L 268,24 L 284,0 H 300 L 278,30 L 302,60 H 286 L 268,36 L 250,60 H 234 L 258,30 Z" fill="#6366f1"/>
+    </g>
+
+    <!-- Subtitle Banner -->
+    <text x="0" y="112" font-size="14" font-weight="bold" fill="#00f0ff" letter-spacing="2">PUBLIC RELEASE v2.2.0 • LAUNCH WEEK</text>
+    <text x="0" y="132" font-size="11" fill="#94a3b8" letter-spacing="1">High-Assurance Cryptographic Attestation • 0 Dependencies • 81/81 Tests</text>
+  </g>
+</svg>
