@@ -13,7 +13,9 @@ const crypto = require('./lib/crypto');
 const mailer = require('./lib/mailer');
 const updater = require('./lib/updater');
 const { getKv } = require('./lib/kv');
+const botshield = require('./lib/botshield');
 
+const BIND = process.env.OBSX_BIND || "0.0.0.0";
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const PUBLIC_DIR = path.resolve(__dirname, 'public');
 
@@ -102,15 +104,17 @@ function sendMethodNotAllowed(res, allowedMethods) {
   });
 }
 
+// Trusted-hop IP resolution: proxy headers are honoured only when a proxy is
+// configured, and the client-appendable LAST x-forwarded-for hop is no longer trusted.
 function getClientIp(req) {
+  const socketIp = req.socket && req.socket.remoteAddress ? req.socket.remoteAddress : '127.0.0.1';
   if (process.env.TRUST_PROXY === 'true') {
-    if (req.headers['cf-connecting-ip']) {
-      return String(req.headers['cf-connecting-ip']).trim();
-    }
+    const cf = String(req.headers['cf-connecting-ip'] || '').trim();
+    if (cf) return cf;
     const xff = String(req.headers['x-forwarded-for'] || '').split(',').map((s) => s.trim()).filter(Boolean);
-    if (xff.length > 0) return xff[xff.length - 1];
+    if (xff.length > 0) return xff[0];
   }
-  return req.socket && req.socket.remoteAddress ? req.socket.remoteAddress : '127.0.0.1';
+  return socketIp;
 }
 
 function isRequestHttps(req) {
@@ -147,7 +151,7 @@ const activeSockets = new Set();
 function isStrictGateActive() {
   const isTestRunner =
     process.env.NODE_ENV === 'test' ||
-    process.argv.some((a) => a.includes('test'));
+    process.env.OBSX_TEST_MODE === '1';
   return (
     process.env.STRICT_GATE === 'true' ||
     process.env.NODE_ENV === 'production' ||
@@ -155,10 +159,17 @@ function isStrictGateActive() {
   );
 }
 
-async function gateSelfRequest(req, body, actionName) {
+// Authenticated operator actions: soft kinematic risk is tolerated, hard bot
+// indicators (no token, invalid PoW, headless UA, proxy headers, missing telemetry,
+// circuit breaker) still block.
+const OPERATOR_GATE = { selfAuth: true, allowReview: true, settingsOverride: { reviewAt: 50, rejectAt: 90 } };
+
+async function gateSelfRequest(req, body, actionName, opts = {}) {
   const token = (body && body.token) || req.headers['x-obsx-token'];
   const nonce = (body && body.nonce) || req.headers['x-obsx-nonce'];
   const isStrict = isStrictGateActive();
+  // allowReview: soft (kinematic) risk is tolerated; hard bot indicators still block.
+  const allowReview = opts.allowReview === true;
 
   if (!token) {
     if (isStrict) {
@@ -166,7 +177,7 @@ async function gateSelfRequest(req, body, actionName) {
         allowed: false,
         statusCode: 403,
         error: 'security_gate_rejected',
-        reasons: [{ code: 'missing_token', weight: 100, text: `Attestation token is required for ${actionName}.` }],
+        reasons: [{ code: 'missing_token' }],
       };
     }
     return { allowed: true };
@@ -180,20 +191,152 @@ async function gateSelfRequest(req, body, actionName) {
     ua: req.headers['user-agent'],
     action: actionName,
     requireBiometrics: isStrict,
+    selfAuth: opts.selfAuth === true,
+    settingsOverride: opts.settingsOverride || null,
   });
 
-  if (verdict.allowed === false || (isStrict && verdict.verdict !== 'accept')) {
+  if (verdict.allowed === false || (isStrict && !allowReview && verdict.verdict !== 'accept')) {
     return {
       allowed: false,
       statusCode: 403,
       error: 'security_gate_rejected',
-      reasons: verdict.reasons,
-      verdict,
-    };
+    // Never ship the scoring model to the caller: codes only, no weights,
+    // no risk total, no internal details. Full detail stays in the logs.
+    reasons: (verdict.reasons || []).map((r) => ({ code: r.code })),
+    verdict: { allowed: false, verdict: verdict.verdict, mode: verdict.mode, sealed: verdict.sealed },
+  };
   }
 
   return { allowed: true, verdict };
 }
+
+// --- Load shedding: survive sustained connection floods. ---
+const startedAt = Date.now();
+// Thresholds sized for a 1 GB, 4-core origin. The old defaults (900 req/s,
+// 900 in-flight, 8000 connections) are server-class numbers: the guard only
+// fired once the box was already saturated, so every request in between was
+// served slowly and timed out at the edge.
+// Capacity and volume rules live in lib/botshield.js: one place to tune, and
+// testable without a running server. The server's job is measurement only —
+// open sockets, in-flight requests, request rate.
+const pageCache = new Map();
+
+function staticEntry(targetPath) {
+  const now = Date.now();
+  const hit = pageCache.get(targetPath);
+  if (hit && now - hit.at < 30000) return hit;
+  const body = fs.readFileSync(targetPath);
+  const ext = path.extname(targetPath).toLowerCase();
+  const entry = {
+    at: now,
+    body,
+    size: body.length,
+    etag: 'W/"' + body.length.toString(16) + '-' + crypto.sha256(body).slice(0, 10) + '"',
+    contentType: MIME_TYPES[ext] || 'application/octet-stream',
+    // Cacheable on purpose: an edge cache absorbs repeat hits so the origin
+    // only sees one fetch per TTL instead of one per request.
+    cacheControl: ext === '.html'
+      ? 'public, max-age=60, stale-while-revalidate=300'
+      : ext === '.js'
+        ? 'public, max-age=3600, stale-while-revalidate=86400'
+        : 'public, max-age=86400',
+  };
+  pageCache.set(targetPath, entry);
+  return entry;
+}
+let activeConnections = 0;
+let inFlight = 0;
+let shedCount = 0;
+let reqWindowStart = Date.now();
+let reqWindowCount = 0;
+let reqRate = 0;
+
+function tickRate() {
+  const now = Date.now();
+  if (now - reqWindowStart >= 1000) {
+    reqRate = Math.round(reqWindowCount * 1000 / (now - reqWindowStart));
+    reqWindowStart = now;
+    reqWindowCount = 0;
+  }
+  reqWindowCount++;
+  return reqRate;
+}
+
+// --- Origin-side evidence. ---
+// Cloudflare hides client IPs from the tunnel logs, so the origin keeps its own
+// picture of which paths are being hammered. Volume control itself lives in
+// lib/botshield.js.
+const pathHits = new Map();          // path -> hits in the current reporting window
+let lastSentinelLog = Date.now();
+
+function recordPathHit(pathname) {
+  pathHits.set(pathname, (pathHits.get(pathname) || 0) + 1);
+  if (pathHits.size > 400) pathHits.clear();
+  const now = Date.now();
+  if (now - lastSentinelLog < 60000) return;
+  lastSentinelLog = now;
+  if (reqRate > 20) {
+    const topPaths = [...pathHits.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([p, c]) => `${p}=${c}`)
+      .join(' ');
+    console.log(
+      `[OBSX Sentinel] ${new Date().toISOString()} reqRate=${reqRate} conns=${activeConnections} inFlight=${inFlight} latency=${botshield.stats(false).health.workLatencyMs}ms topPaths: ${topPaths}`
+    );
+  }
+  pathHits.clear();
+}
+
+// Public responses may report *that* a rule fired, never how it is scored.
+function trimVerdict(v) {
+  if (!v || typeof v !== 'object') return v;
+  return {
+    ok: v.ok !== false,
+    allowed: Boolean(v.allowed),
+    verdict: v.verdict,
+    risk: v.risk,
+    mode: v.mode,
+    sealed: v.sealed,
+    reasons: (v.reasons || []).map((r) => ({ code: r.code })),
+  };
+}
+
+// Session issuance is the entry point for gate farming: cap it per IP.
+const sessionIssueBudget = new Map();
+function withinSessionBudget(ip) {
+  const now = Date.now();
+  const limit = Number(process.env.OBSX_SESSION_BUDGET || 40);
+  const entry = sessionIssueBudget.get(ip);
+  if (!entry || now >= entry.reset) {
+    if (sessionIssueBudget.size > 20000) {
+      for (const [k, v] of sessionIssueBudget) if (now >= v.reset) sessionIssueBudget.delete(k);
+    }
+    sessionIssueBudget.set(ip, { count: 1, reset: now + 60000 });
+    return true;
+  }
+  entry.count++;
+  return entry.count <= limit;
+}
+
+const shedOffenders = new Map();   // ip -> {count, reason, first}
+function noteShed(ip, reason) {
+  const e = shedOffenders.get(ip) || { count: 0, reason, first: Date.now() };
+  e.count++;
+  shedOffenders.set(ip, e);
+  if (shedOffenders.size > 5000) {
+    for (const [k, v] of shedOffenders) if (Date.now() - v.first > 120000) shedOffenders.delete(k);
+  }
+  if (shedCount % 50 === 0) {
+    const top = [...shedOffenders.entries()]
+      .sort((a, b) => b[1].count - a[1].count)
+      .slice(0, 6)
+      .map(([ip, e]) => `${ip}=${e.count}(${e.reason})`)
+      .join(' ');
+    console.log(`[OBSX Shed] ${new Date().toISOString()} shedding ${shedCount} total; top offenders: ${top}`);
+  }
+}
+
 
 const server = http.createServer(async (req, res) => {
   const clientIp = getClientIp(req);
@@ -202,6 +345,48 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const pathname = url.pathname;
   const method = req.method;
+
+  const reqRateNow = tickRate();
+  inFlight++;
+  const arrivedAt = Date.now();
+
+  // Bot Protection is the first thing any request meets. It owns capacity,
+  // budgets, challenges and quarantine, and it measures its own health (RSS,
+  // event-loop lag, served rate) so the decision to refuse happens before any
+  // application work starts.
+  const shield = botshield.evaluate(req, res, clientIp, pathname, reqRateNow, url, {
+    activeConnections,
+    inFlight,
+  });
+  res.on('close', () => {
+    inFlight--;
+    if (!shield.handled) botshield.noteWorkLatency(Date.now() - arrivedAt, clientIp);
+  });
+
+  if (shield.handled) return;
+
+  if (pathname === '/api/v1/health') {
+    const bs = botshield.stats();
+    return sendJson(res, 200, {
+      ok: true, uptime: Math.round((Date.now() - startedAt) / 1000),
+      activeConnections, inFlight, shed: shedCount, reqRate,
+      workLatencyMs: bs.health.workLatencyMs,
+      rssMb: bs.health.rssMb,
+      eventLagMs: bs.health.eventLagMs,
+      botShield: {
+        enabled: bs.enabled, mode: bs.mode, engaged: bs.engaged,
+        difficultyBits: bs.difficultyBits,
+        challenged: bs.counters.challenged, solved: bs.counters.solved,
+        blocked: bs.counters.blocked, quarantined: bs.counters.quarantined,
+        shed: bs.counters.shed,
+        byTier: bs.counters.byTier,
+      },
+    });
+  }
+
+  // The volume gate covers every path, not just /api/: the flood that took
+  // this origin down hit "/" exclusively, and "/" was never rate-limited.
+  recordPathHit(pathname);
 
   // Global Hardened Security Headers
   res.setHeader('X-Frame-Options', 'DENY');
@@ -362,6 +547,9 @@ const server = http.createServer(async (req, res) => {
       // 1. Session Start (Public SDK Entry)
       if (pathname === '/api/v1/session') {
         if (method !== 'POST') return sendMethodNotAllowed(res, ['POST', 'OPTIONS']);
+        if (!withinSessionBudget(clientIp)) {
+          return sendJson(res, 429, { ok: false, error: 'session_rate_limited', retry_after: 10 }, CORS_HEADERS);
+        }
         const body = await readBody(req);
         const project = await core.projectByPublicKey(body.site);
         if (!project) return sendJson(res, 404, { ok: false, error: 'unknown_site' }, CORS_HEADERS);
@@ -420,7 +608,18 @@ const server = http.createServer(async (req, res) => {
         });
         res.setHeader('X-OBSX-Mode', verdict.mode || 'enforce');
         if (verdict.shadowVerdict) res.setHeader('X-OBSX-Shadow-Verdict', verdict.shadowVerdict);
-        return sendJson(res, 200, verdict, CORS_HEADERS);
+        // Public demo: show the outcome, not the scoring model. Weights, thresholds
+        // and internal details stay server-side.
+        return sendJson(res, 200, {
+          ok: true,
+          allowed: verdict.allowed,
+          verdict: verdict.verdict,
+          risk: verdict.risk,
+          mode: verdict.mode,
+          sealed: verdict.sealed,
+          reasons: (verdict.reasons || []).map((r) => ({ code: r.code })),
+          timestamp: verdict.timestamp || Date.now(),
+        }, CORS_HEADERS);
       }
 
       // 5. User Auth - Email OTP (Passwordless Login / Registration)
@@ -431,7 +630,11 @@ const server = http.createServer(async (req, res) => {
 
         // Guard authentication with OBSX Attestation Gate
         const action = body.action === 'verify' ? 'Operator Sign-In Verification' : 'Operator OTP Request';
-        const gate = await gateSelfRequest(req, body, action);
+        const gate = await gateSelfRequest(req, body, action, {
+          selfAuth: true,
+          allowReview: true,
+          settingsOverride: { reviewAt: 50, rejectAt: 90 },
+        });
         if (!gate.allowed) {
           return sendJson(res, gate.statusCode || 403, {
             ok: false,
@@ -498,7 +701,7 @@ const server = http.createServer(async (req, res) => {
           return sendJson(res, 401, { ok: false, error: 'unauthorized', message: 'Authentication required to create projects.' });
         }
         const body = await readBody(req);
-        const gate = await gateSelfRequest(req, body, 'Operator Create Project');
+        const gate = await gateSelfRequest(req, body, 'Operator Create Project', OPERATOR_GATE);
         if (!gate.allowed) {
           return sendJson(res, gate.statusCode || 403, {
             ok: false,
@@ -518,7 +721,7 @@ const server = http.createServer(async (req, res) => {
         if (!user) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
 
         const body = await readBody(req);
-        const gate = await gateSelfRequest(req, body, 'Security Alert Dispatch Probe');
+        const gate = await gateSelfRequest(req, body, 'Security Alert Dispatch Probe', OPERATOR_GATE);
         if (!gate.allowed) {
           return sendJson(res, gate.statusCode || 403, {
             ok: false,
@@ -572,6 +775,9 @@ const server = http.createServer(async (req, res) => {
       if (pathname === '/api/v1/telemetry/live') {
         if (method !== 'GET') return sendMethodNotAllowed(res, ['GET']);
         const telemetry = await core.getLiveTelemetry();
+        // Reason breakdown is operator-facing; anonymous visitors get totals only.
+        const teleUser = await accounts.getSessionUser(req);
+        if (!teleUser && telemetry && telemetry.stats) delete telemetry.stats.topReasons;
         return sendJson(res, 200, telemetry, CORS_HEADERS);
       }
 
@@ -585,9 +791,11 @@ const server = http.createServer(async (req, res) => {
 
       if (pathname === '/api/v1/system/update') {
         if (method !== 'POST') return sendMethodNotAllowed(res, ['POST']);
+        // Operator session required. Loopback is not an identity: the Cloudflare
+        // tunnel connects to the origin over 127.0.0.1, so a header-derived loopback
+        // address is forgeable and must not grant code-execution access.
         const user = await accounts.getSessionUser(req);
-        const isLoopback = clientIp === '127.0.0.1' || clientIp === '::1';
-        if (!user && !isLoopback) {
+        if (!user) {
           return sendJson(res, 401, { ok: false, error: 'unauthorized' });
         }
         const updateRes = await updater.checkAndApplyUpstreamUpdate({ force: true });
@@ -597,8 +805,7 @@ const server = http.createServer(async (req, res) => {
       if (pathname === '/api/v1/system/diff') {
         if (method !== 'GET') return sendMethodNotAllowed(res, ['GET']);
         const user = await accounts.getSessionUser(req);
-        const isLoopback = clientIp === '127.0.0.1' || clientIp === '::1';
-        if (!user && !isLoopback) {
+        if (!user) {
           return sendJson(res, 401, { ok: false, error: 'unauthorized' });
         }
         return sendJson(res, 200, updater.getUpstreamCodeDiff());
@@ -607,12 +814,32 @@ const server = http.createServer(async (req, res) => {
       if (pathname === '/api/v1/system/adapt') {
         if (method !== 'POST') return sendMethodNotAllowed(res, ['POST']);
         const user = await accounts.getSessionUser(req);
-        const isLoopback = clientIp === '127.0.0.1' || clientIp === '::1';
-        if (!user && !isLoopback) {
+        if (!user) {
           return sendJson(res, 401, { ok: false, error: 'unauthorized' });
         }
         const adaptRes = updater.autoAdaptDirtyNode();
         return sendJson(res, adaptRes.ok ? 200 : 409, adaptRes);
+      }
+
+      if (pathname === '/api/v1/bot-protection') {
+        if (method !== 'GET') return sendMethodNotAllowed(res, ['GET']);
+        // Full addresses only to whoever holds the operator key.
+        const detailed = crypto.safeEqual(String(req.headers['x-obsx-key'] || ''),
+          String(process.env.OBSX_SECRET || ''));
+        return sendJson(res, 200, botshield.stats(detailed), CORS_HEADERS);
+      }
+
+      if (pathname === '/api/v1/bot-protection/mode') {
+        if (method !== 'POST') return sendMethodNotAllowed(res, ['POST']);
+        const key = String(req.headers['x-obsx-key'] || '');
+        if (!crypto.safeEqual(key, String(process.env.OBSX_SECRET || ''))) {
+          return sendJson(res, 401, { ok: false, error: 'invalid_key' }, CORS_HEADERS);
+        }
+        const body = await readBody(req);
+        if (!botshield.setMode(body && body.mode)) {
+          return sendJson(res, 400, { ok: false, error: 'invalid_mode' }, CORS_HEADERS);
+        }
+        return sendJson(res, 200, botshield.stats(true), CORS_HEADERS);
       }
 
       if (pathname === '/api/v1/sentinel/ring') {
@@ -625,8 +852,10 @@ const server = http.createServer(async (req, res) => {
       if (pathname === '/api/v1/vault/drain') {
         if (method !== 'POST') return sendMethodNotAllowed(res, ['POST', 'OPTIONS']);
         const body = await readBody(req);
+        // Client-supplied "advisory" mode used to short-circuit scoring.
+        // Protection mode comes from project settings, not the caller.
         const result = await core.processVaultDrain({
-          mode: body.mode || 'obsx',
+          mode: body.mode === 'advisory' && !body.seal ? 'obsx' : (body.mode || 'obsx'),
           token: body.token,
           nonce: body.nonce,
           signals: body.signals,
@@ -637,11 +866,16 @@ const server = http.createServer(async (req, res) => {
           ua: req.headers['user-agent'] || '',
           requireBiometrics: isStrictGateActive(),
         });
+        if (result && result.verdict && Array.isArray(result.verdict.reasons)) {
+          result.verdict.reasons = result.verdict.reasons.map((r) => ({ code: r.code }));
+        }
         return sendJson(res, 200, result, CORS_HEADERS);
       }
 
       if (pathname === '/api/v1/vault/reset') {
         if (method !== 'POST') return sendMethodNotAllowed(res, ['POST', 'OPTIONS']);
+        const resetUser = await accounts.getSessionUser(req);
+        if (!resetUser) return sendJson(res, 401, { ok: false, error: 'unauthorized' }, CORS_HEADERS);
         const body = await readBody(req);
         const gate = await gateSelfRequest(req, body, 'Reset Security Vault Pool');
         if (!gate.allowed) {
@@ -668,7 +902,7 @@ const server = http.createServer(async (req, res) => {
           if (!project || project.owner !== user.uid) return sendJson(res, 404, { ok: false, error: 'project_not_found' });
 
           const body = await readBody(req);
-          const gate = await gateSelfRequest(req, body, 'Operator Rotate Secret Key');
+          const gate = await gateSelfRequest(req, body, 'Operator Rotate Secret Key', OPERATOR_GATE);
           if (!gate.allowed) {
             return sendJson(res, gate.statusCode || 403, {
               ok: false,
@@ -692,7 +926,7 @@ const server = http.createServer(async (req, res) => {
           if (!project || project.owner !== user.uid) return sendJson(res, 404, { ok: false, error: 'project_not_found' });
           const body = await readBody(req);
 
-          const gate = await gateSelfRequest(req, body, 'Operator Update Project Settings');
+          const gate = await gateSelfRequest(req, body, 'Operator Update Project Settings', OPERATOR_GATE);
           if (!gate.allowed) {
             return sendJson(res, gate.statusCode || 403, {
               ok: false,
@@ -731,7 +965,7 @@ const server = http.createServer(async (req, res) => {
           if (!project || project.owner !== user.uid) return sendJson(res, 404, { ok: false, error: 'project_not_found' });
 
           const body = await readBody(req);
-          const gate = await gateSelfRequest(req, body, 'Operator Reset Circuit Breaker');
+          const gate = await gateSelfRequest(req, body, 'Operator Reset Circuit Breaker', OPERATOR_GATE);
           if (!gate.allowed) {
             return sendJson(res, gate.statusCode || 403, {
               ok: false,
@@ -755,7 +989,7 @@ const server = http.createServer(async (req, res) => {
 
           const token = req.headers['x-obsx-token'];
           if (token) {
-            const gate = await gateSelfRequest(req, null, 'Operator Project Telemetry Query');
+            const gate = await gateSelfRequest(req, null, 'Operator Project Telemetry Query', OPERATOR_GATE);
             if (!gate.allowed) {
               return sendJson(res, gate.statusCode || 403, {
                 ok: false,
@@ -797,7 +1031,7 @@ const server = http.createServer(async (req, res) => {
           const pid = pathname.slice('/api/v1/project/'.length);
 
           const body = await readBody(req);
-          const gate = await gateSelfRequest(req, body, 'Operator Delete Project');
+          const gate = await gateSelfRequest(req, body, 'Operator Delete Project', OPERATOR_GATE);
           if (!gate.allowed) {
             return sendJson(res, gate.statusCode || 403, {
               ok: false,
@@ -818,8 +1052,9 @@ const server = http.createServer(async (req, res) => {
         if (user) return user.uid;
         const cookies = (req && req.headers ? req.headers.cookie : '') || '';
         const guestCookieMatch = cookies.match(/obsx_guest=([A-Za-z0-9_-]+)/);
-        const guestHeader = (req && req.headers ? req.headers['x-guest-id'] : '') || '';
-        const guestSecret = (guestCookieMatch ? guestCookieMatch[1] : '') || guestHeader;
+        // x-guest-id is attacker-controlled: anyone could name another guest's
+        // mailbox. Only the server-set cookie counts as guest identity.
+        const guestSecret = guestCookieMatch ? guestCookieMatch[1] : '';
         if (guestSecret) {
           return `guest_${crypto.sha256(`${clientIp}:${guestSecret}`).slice(0, 14)}`;
         }
@@ -866,7 +1101,7 @@ const server = http.createServer(async (req, res) => {
                 ok: false,
                 error: 'security_violation',
                 protection: 'obsx',
-                verdict: verificationVerdict,
+                verdict: trimVerdict(verificationVerdict),
               });
             }
           } else {
@@ -889,7 +1124,7 @@ const server = http.createServer(async (req, res) => {
                 ok: false,
                 error: 'advisory_rejected',
                 protection: 'advisory',
-                verdict: verificationVerdict,
+                verdict: trimVerdict(verificationVerdict),
               });
             }
           }
@@ -904,7 +1139,7 @@ const server = http.createServer(async (req, res) => {
           return sendJson(res, 201, {
             ok: true,
             note,
-            verdict: verificationVerdict,
+            verdict: trimVerdict(verificationVerdict),
           });
         }
 
@@ -919,7 +1154,7 @@ const server = http.createServer(async (req, res) => {
         const noteId = pathname.slice('/api/v1/notes/'.length);
 
         const body = await readBody(req);
-        const gate = await gateSelfRequest(req, body, 'Delete Protected Note');
+        const gate = await gateSelfRequest(req, body, 'Delete Protected Note', OPERATOR_GATE);
         if (!gate.allowed) {
           return sendJson(res, gate.statusCode || 403, {
             ok: false,
@@ -987,6 +1222,23 @@ const server = http.createServer(async (req, res) => {
     }
 
     try {
+      if (fs.existsSync(targetPath) && fs.statSync(targetPath).isFile()) {
+        const entry = staticEntry(targetPath);
+        const headers = {
+          'Content-Type': entry.contentType,
+          'Content-Length': entry.size,
+          'ETag': entry.etag,
+          'Cache-Control': entry.cacheControl,
+          'Access-Control-Allow-Origin': '*',
+        };
+        if (req.headers['if-none-match'] === entry.etag) {
+          res.writeHead(304, headers);
+          return res.end();
+        }
+        res.writeHead(200, headers);
+        if (method === 'HEAD') return res.end();
+        return res.end(entry.body);
+      }
       let stat = await fsp.stat(targetPath);
       if (stat.isDirectory()) {
         targetPath = path.join(targetPath, 'index.html');
@@ -1062,10 +1314,84 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-// Track keep-alive connections for clean teardown
+// Track keep-alive connections for clean teardown, and reclaim half-open ones.
+// Without idle timeouts, closed clients leave sockets in CLOSE-WAIT and the
+// listen backlog fills up, which eventually stalls the origin.
+server.keepAliveTimeout = 5000;
+server.headersTimeout = 10000;
+server.requestTimeout = 30000;
+
+// One keep-alive socket must not become an endless pipeline: after 100 requests
+// on the same connection Node closes it, so a client that reuses one socket
+// forever cannot pin an origin worker indefinitely.
+server.maxRequestsPerSocket = 100;
+
+const peerSockets = new Map();   // peer address -> open sockets
+
+// Idle timeouts follow the shield. Calm origin: browsers keep their connection.
+// Engaged origin: a flood socket is worth less than the descriptor it burns, so
+// half-open connections are reclaimed in seconds instead of twenty.
+let appliedPosture = '';
+function applyConnectionPosture() {
+  const posture = botshield.connectionPosture();
+  const signature = posture.keepAliveTimeoutMs + '/' + posture.idleTimeoutMs;
+  if (signature === appliedPosture) return;   // no change: don't reset every socket's timer
+  appliedPosture = signature;
+  server.keepAliveTimeout = posture.keepAliveTimeoutMs;
+  for (const socket of activeSockets) {
+    try { socket.setTimeout(posture.idleTimeoutMs, () => socket.destroy()); } catch (err) { /* socket already gone */ }
+  }
+}
+// Reachable for tests and for the dashboard: which posture is in force.
+server.applyConnectionPosture = applyConnectionPosture;
+setInterval(applyConnectionPosture, 5000).unref();
+
 server.on('connection', (socket) => {
+  activeConnections++;
   activeSockets.add(socket);
-  socket.on('close', () => activeSockets.delete(socket));
+  socket.setTimeout(botshield.connectionPosture().idleTimeoutMs, () => socket.destroy());
+
+  // One address holding hundreds of sockets is a slowloris-shaped flood, not a
+  // visitor. The tunnel multiplexer talks to us over loopback, so it is exempt.
+  const peer = socket.remoteAddress || 'unknown';
+  const isLoopback = peer === '127.0.0.1' || peer === '::1' || (peer || '').startsWith('::ffff:127.');
+  let peerCount = 0;
+  if (!isLoopback) {
+    peerCount = (peerSockets.get(peer) || 0) + 1;
+    peerSockets.set(peer, peerCount);
+    if (peerSockets.size > 10000) {
+      for (const [k, v] of peerSockets) if (v === 0) peerSockets.delete(k);
+    }
+  }
+
+  socket.on('close', () => {
+    activeConnections--;
+    activeSockets.delete(socket);
+    if (!isLoopback) {
+      const n = (peerSockets.get(peer) || 1) - 1;
+      if (n <= 0) peerSockets.delete(peer); else peerSockets.set(peer, n);
+    }
+  });
+  socket.on('error', () => socket.destroy());
+
+  if (!isLoopback && peerCount > botshield.config.maxConnsPerIp) {
+    shedCount++;
+    noteShed(peer, 'per_ip_conn_ceiling');
+    try {
+      socket.write('HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nRetry-After: 10\r\nConnection: close\r\nContent-Length: 46\r\n\r\n{"ok":false,"error":"too_many_connections","retryAfter":10}');
+    } catch (err) { /* socket already gone */ }
+    socket.destroy();
+    return;
+  }
+
+  if (activeConnections > botshield.config.hardConnCeiling) {
+    shedCount++;
+    noteShed(socket.remoteAddress || 'unknown', 'hard_conn_ceiling');
+    try {
+      socket.write('HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nRetry-After: 5\r\nConnection: close\r\nContent-Length: 44\r\n\r\n{"ok":false,"error":"overloaded","retryAfter":5}');
+    } catch (err) { /* socket already gone */ }
+    socket.destroy();
+  }
 });
 
 // Graceful process termination
@@ -1102,7 +1428,7 @@ process.on('uncaughtException', (err) => {
 });
 
 if (require.main === module) {
-  server.listen(PORT, () => {
+  server.listen(PORT, BIND, 4096, () => {
     console.log(`[OBSX Security] Server listening on http://localhost:${PORT}`);
     updater.startAutoUpdater();
   });

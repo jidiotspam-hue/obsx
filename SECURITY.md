@@ -51,3 +51,42 @@ When you submit a vulnerability report:
   - Denial of Service (DoS) attacks requiring massive volumetric bandwidth floods.
   - Social engineering against operators or maintainers.
   - Vulnerabilities in third-party mailer SMTP relays outside OBSX's code.
+
+---
+
+## Bot Protection: the origin shield
+
+`obsx.tech` runs a layer-7 flood gate inside the node itself (`lib/botshield.js`),
+so a flood is absorbed by the origin's own capacity accounting rather than by a
+third-party rule set. Cloudflare absorbs bandwidth; this decides *who* gets
+through.
+
+Tiers, cheapest first — every rule is O(1) and runs before any application work:
+
+| Tier | What it does | Cost to the origin |
+| :--- | :--- | :--- |
+| Connection ceiling | Sockets refused before parsing; per-address socket cap | a write and a destroy |
+| Quarantine | Repeat offenders refused from a map hit, escalating 5 → 30 min | one lookup |
+| Proof of work | A browser solves a 16–22 bit proof-of-work once, gets an HttpOnly cookie | ~2 ms, once per 15 min |
+| Budgets | Per IP, per /24 or /64, and per user-agent class | a map increment |
+| Capacity shed | 503 + `Retry-After` when connections, in-flight work, latency, or RSS are saturated | a small JSON |
+
+The shield engages automatically when the origin sees sustained pressure
+(default 120 req/s) and stands down when traffic settles (40 req/s for 45
+seconds), so ordinary visitors never see a challenge. Search engines are
+identified separately: they are budgeted, never JavaScript-challenged.
+
+A user agent string is treated as a claim, not evidence: a browser-looking agent
+with no `Accept` or `Accept-Language` header is challenged as spoofed.
+
+**Public endpoints.** `GET /api/v1/bot-protection` returns counters, thresholds and state sizes;
+offender addresses are masked (`203.0.*.*`) unless the operator key is
+supplied, so the public endpoint cannot be used to fingerprint visitors.
+`POST /api/v1/bot-protection/mode` (auto | always | off) requires the `x-obsx-key`
+header set to your `OBSX_SECRET`; without it the endpoint returns 401.
+
+**Why this matters.** A botnet does not hammer from one address; it rotates across
+thousands of IPs, each sending a few requests. Per-IP rules alone never trip, so
+the shield also budgets the subnet and the user-agent class the fleet shares.
+
+Run the tests: `OBSX_TEST_MODE=1 node --test tests/botshield.test.js`.

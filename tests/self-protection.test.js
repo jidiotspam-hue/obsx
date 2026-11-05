@@ -129,8 +129,19 @@ test('self-protection: mutating administrative endpoints strictly reject forged 
     assert.equal(alertRes.json.ok, false);
     assert.equal(alertRes.json.error, 'security_gate_rejected');
 
-    // 3. Vault reset with tampered token
-    const vaultRes = await makeRequest(port, 'POST', '/api/v1/vault/reset', {}, {
+    // 3. Vault reset with tampered token.
+    // /api/v1/vault/reset now needs an operator session before the gate runs
+    // (server.js): loopback/header identity is not an identity. So the stale
+    // expectation "no session -> 403 gate rejection" is replaced by "no session
+    // -> 401", and the gate rejection is still proven with a real session.
+    const anonVaultRes = await makeRequest(port, 'POST', '/api/v1/vault/reset', {}, {
+      token: fakeToken,
+      nonce: '0',
+    });
+    assert.equal(anonVaultRes.status, 401);
+    assert.equal(anonVaultRes.json.error, 'unauthorized');
+
+    const vaultRes = await makeRequest(port, 'POST', '/api/v1/vault/reset', { Cookie: cookie }, {
       token: fakeToken,
       nonce: '0',
     });

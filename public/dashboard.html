@@ -240,6 +240,23 @@
         </div>
       </div>
 
+      <!-- Bot Protection: Origin Shield -->
+      <div class="card" style="margin-top: 24px;">
+        <div class="card-title">
+          <span>Bot Protection — Origin Shield</span>
+          <span class="badge" id="shield-state">checking…</span>
+        </div>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 14px; margin-top: 14px;">
+          <div><div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Requests screened</div><div id="shield-req" style="font-size: 22px; font-family: var(--font-mono); margin-top: 3px;">0</div></div>
+          <div><div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Challenged</div><div id="shield-chal" style="font-size: 22px; font-family: var(--font-mono); margin-top: 3px;">0</div></div>
+          <div><div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Proved human</div><div id="shield-solved" style="font-size: 22px; font-family: var(--font-mono); margin-top: 3px; color: var(--good);">0</div></div>
+          <div><div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Refused</div><div id="shield-blocked" style="font-size: 22px; font-family: var(--font-mono); margin-top: 3px; color: var(--bad);">0</div></div>
+          <div><div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Quarantined IPs</div><div id="shield-quar" style="font-size: 22px; font-family: var(--font-mono); margin-top: 3px;">0</div></div>
+          <div><div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Mode</div><div id="shield-mode" style="font-size: 22px; font-family: var(--font-mono); margin-top: 3px;">auto</div></div>
+        </div>
+        <div id="shield-offenders" style="margin-top: 14px; font-size: 12.5px; color: var(--text-muted); font-family: var(--font-mono);"></div>
+      </div>
+
       <!-- Real-Time Kinematic Radar & Neuromuscular Jerk Visualizer -->
       <div class="card" style="margin-top: 24px;">
         <div class="card-title">
@@ -307,5 +324,34 @@
   </footer>
 
   <script src="/dashboard.js?v=2.3.5"></script>
+
+<script>
+(function () {
+  var fmt = function (n) { return (n || 0).toLocaleString(); };
+  function poll() {
+    fetch('/api/v1/bot-protection')
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d || !d.ok) return;
+        var st = document.getElementById('shield-state');
+        st.textContent = !d.enabled ? 'DISABLED' : (d.engaged ? 'UNDER ATTACK — ENGAGED' : 'ARMED');
+        st.style.color = d.engaged ? '#e11d48' : '#16a34a';
+        document.getElementById('shield-req').textContent = fmt(d.counters.requests);
+        document.getElementById('shield-chal').textContent = fmt(d.counters.challenged);
+        document.getElementById('shield-solved').textContent = fmt(d.counters.solved);
+        document.getElementById('shield-blocked').textContent = fmt(d.counters.blocked);
+        document.getElementById('shield-quar').textContent = fmt(d.counters.quarantined);
+        document.getElementById('shield-mode').textContent = d.mode + ' · ' + d.thresholds.difficultyBits + '-bit proof-of-work';
+        var list = document.getElementById('shield-offenders');
+        var offs = (d.topOffenders || []).slice(0, 6);
+        list.textContent = offs.length
+          ? 'Top offenders: ' + offs.map(function (o) { return o.ip + ' (' + o.hits + '×, ' + o.reason + ')'; }).join(' · ')
+          : 'No offenders currently flagged.';
+      })
+      .catch(function () {});
+  }
+  if (document.getElementById('shield-state')) { poll(); setInterval(poll, 10000); }
+})();
+</script>
 </body>
 </html>
