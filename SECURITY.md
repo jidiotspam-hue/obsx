@@ -70,14 +70,24 @@ Tiers, cheapest first — every rule is O(1) and runs before any application wor
 | Proof of work | A browser solves a 16–22 bit proof-of-work once, gets an HttpOnly cookie | ~2 ms, once per 15 min |
 | Budgets | Per IP, per /24 or /64, and per user-agent class | a map increment |
 | Capacity shed | 503 + `Retry-After` when connections, in-flight work, latency, or RSS are saturated | a small JSON |
+| Fan-out detection | Engagement triggers on *distinct addresses* and *distinct /24s* per minute, not just rate | a set lookup |
+| Path and method guard | Paths longer than 256 characters and unsupported methods are closed before routing | a length check |
+| Socket posture | Keep-alive, header and request timeouts tighten while engaged (2 s / 6 s / 15 s) and relax when calm | nothing, it is Node's own timing |
 
 The shield engages automatically when the origin sees sustained pressure
-(default 120 req/s) and stands down when traffic settles (40 req/s for 45
-seconds), so ordinary visitors never see a challenge. Search engines are
-identified separately: they are budgeted, never JavaScript-challenged.
+(default 120 req/s), when 400 distinct addresses or 120 distinct /24s appear in
+a minute, or when its own work latency reaches the saturation threshold — and
+stands down when traffic settles (40 req/s for 45 seconds), so ordinary visitors
+never see a challenge. Search engines are identified separately: they are
+budgeted, never JavaScript-challenged.
 
 A user agent string is treated as a claim, not evidence: a browser-looking agent
-with no `Accept` or `Accept-Language` header is challenged as spoofed.
+with no `Accept` or `Accept-Language` header is challenged as spoofed. Quarantine
+is not a life sentence — an address with real browser headers is offered the
+hardest puzzle instead of a flat 403, capped at twelve attempts, so a person
+sharing a network with an attacker can work their way back in while a scripted
+client cannot. Wrong puzzle answers are charged to the same attempt budget, so
+the answer endpoint is not a free oracle.
 
 **Public endpoints.** `GET /api/v1/bot-protection` returns counters, thresholds and state sizes;
 offender addresses are masked (`203.0.*.*`) unless the operator key is

@@ -1326,6 +1326,11 @@ server.requestTimeout = 30000;
 // forever cannot pin an origin worker indefinitely.
 server.maxRequestsPerSocket = 100;
 
+// Header floods: a request with thousands of headers costs parsing time and
+// memory before it ever reaches a route. Sixty is far above anything a browser
+// or a normal client sends.
+server.maxHeadersCount = 60;
+
 const peerSockets = new Map();   // peer address -> open sockets
 
 // Idle timeouts follow the shield. Calm origin: browsers keep their connection.
@@ -1338,6 +1343,8 @@ function applyConnectionPosture() {
   if (signature === appliedPosture) return;   // no change: don't reset every socket's timer
   appliedPosture = signature;
   server.keepAliveTimeout = posture.keepAliveTimeoutMs;
+  server.headersTimeout = posture.headersTimeoutMs;
+  server.requestTimeout = posture.requestTimeoutMs;
   for (const socket of activeSockets) {
     try { socket.setTimeout(posture.idleTimeoutMs, () => socket.destroy()); } catch (err) { /* socket already gone */ }
   }

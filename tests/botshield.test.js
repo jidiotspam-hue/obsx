@@ -32,7 +32,7 @@ function fakeRes() {
   };
 }
 
-function makeReq(ua, cookie = '', extra = null) {
+function makeReq(ua, cookie = '', extra = null, method = 'GET') {
   const headers = { 'user-agent': ua, cookie };
   // Real browsers negotiate content and language. The shield uses that as
   // evidence that the user agent string is not just copied from Chrome.
@@ -42,14 +42,14 @@ function makeReq(ua, cookie = '', extra = null) {
   } else {
     Object.assign(headers, extra);
   }
-  return { headers };
+  return { headers, method };
 }
 
 /** One request through the shield. Returns the outcome plus what the shield said. */
-function hit(ip, pathname, ua, capacity, cookie = '') {
+function hit(ip, pathname, ua, capacity, cookie = '', method = 'GET') {
   const res = fakeRes();
   const url = new URL(pathname, 'http://obsx.tech');
-  const outcome = botshield.evaluate(makeReq(ua, cookie), res, ip, url.pathname,
+  const outcome = botshield.evaluate(makeReq(ua, cookie, null, method), res, ip, url.pathname,
     capacity && capacity.reqRate !== undefined ? capacity.reqRate : 10, url, capacity);
   return { handled: outcome.handled, verified: outcome.verified,
     status: res.out.status, body: res.out.body, headers: res.out.headers };
@@ -64,6 +64,7 @@ const DEFAULTS = {
   maxConnsPerIp: 120, maxConcurrentPerIp: 25, fanoutIpsPerMin: 400,
   verifiedBudget: 600, calmBudget: 400, statusBudget: 40, subnetBudget: 900,
   subnetQuarantinePerMin: 2400, uaFleetBudget: 1500, hardConnCeiling: 600,
+  fanoutSubnetsPerMin: 120, maxPathLen: 256, escapeMaxAttempts: 12,
   maxActiveConnections: 300, maxInFlight: 100, maxServedRps: 150,
   maxWorkLatencyMs: 250, maxRssMb: 620, maxEventLagMs: 200, maxMapSize: 20000,
   quarantineEscape: true,
@@ -499,17 +500,17 @@ test('capacity telemetry: the shield reports the sockets and rate the server mea
 test('connection posture: idle sockets are reclaimed fast while engaged, generously when calm', () => {
   fresh();
   assert.equal(botshield.isEngaged(), false, 'calm traffic does not engage the shield');
-  assert.deepEqual(botshield.connectionPosture(), { keepAliveTimeoutMs: 5000, idleTimeoutMs: 20000 });
+  assert.deepEqual(botshield.connectionPosture(), { keepAliveTimeoutMs: 5000, idleTimeoutMs: 20000, headersTimeoutMs: 10000, requestTimeoutMs: 30000 });
 
   fresh({ engageRps: 50 });
   hit('198.51.100.31', '/', BROWSER, { activeConnections: 300, inFlight: 40, reqRate: 200 });
   assert.equal(botshield.isEngaged(), true, 'load engages the shield');
-  assert.deepEqual(botshield.connectionPosture(), { keepAliveTimeoutMs: 2000, idleTimeoutMs: 8000 },
+  assert.deepEqual(botshield.connectionPosture(), { keepAliveTimeoutMs: 2000, idleTimeoutMs: 8000, headersTimeoutMs: 6000, requestTimeoutMs: 15000 },
     'an engaged origin churns idle sockets instead of holding them open');
 
   fresh({ mode: 'off' });
   assert.equal(botshield.isEngaged(), false, 'off mode can never be engaged');
-  assert.deepEqual(botshield.connectionPosture(), { keepAliveTimeoutMs: 5000, idleTimeoutMs: 20000 },
+  assert.deepEqual(botshield.connectionPosture(), { keepAliveTimeoutMs: 5000, idleTimeoutMs: 20000, headersTimeoutMs: 10000, requestTimeoutMs: 30000 },
     'a disabled shield keeps the generous timeouts');
 });
 
@@ -525,10 +526,13 @@ test('the server applies the shield connection posture and caps requests per soc
   hit('198.51.100.41', '/', BROWSER, { activeConnections: 500, inFlight: 60, reqRate: 400 });
   httpServer.applyConnectionPosture();
   assert.equal(httpServer.keepAliveTimeout, 2000, 'an engaged origin tightens keep-alive');
+  assert.equal(httpServer.headersTimeout, 6000, 'an engaged origin gives a half-sent header less room');
+  assert.equal(httpServer.requestTimeout, 15000, 'an engaged origin stops waiting for slow bodies');
 
   fresh({ mode: 'off' });
   httpServer.applyConnectionPosture();
   assert.equal(httpServer.keepAliveTimeout, 5000, 'the posture is restored when the shield stands down');
+  assert.equal(httpServer.requestTimeout, 30000, 'a calm origin is patient again');
 });
 
 test('a quarantined address is refused if it scripts, challenged if it looks like a browser', () => {
@@ -567,4 +571,117 @@ test('quarantine escape can be switched off for a hardened node', () => {
   hit(ip, '/', BOT, cap); hit(ip, '/', BOT, cap); hit(ip, '/', BOT, cap);
   const browser = hit(ip, '/', BROWSER, cap);
   assert.equal(browser.headers['X-OBSX-BotShield'], 'quarantine', 'with the escape disabled, everyone is refused');
+});
+
+test('a swarm of quiet addresses is caught by fan-out counting, not by per-IP budgets', () => {
+  fresh({ engageRps: 5000, fanoutIpsPerMin: 200, baseDifficulty: 8, maxDifficulty: 12,
+    ipBudget: 5000, subnetBudget: 100000, uaFleetBudget: 100000 });
+  const cap = { reqRate: 60, activeConnections: 40, inFlight: 2 };
+  for (let i = 0; i < 250; i++) hit(`198.51.100.${i + 1}`, '/', BOT, cap);
+  const st = botshield.stats(false);
+  assert.ok(st.engaged, 'fan-out alone must engage the shield even at 60 req/s');
+  assert.ok(st.counters.fanoutDetected >= 1, 'the swarm is recorded as an attack');
+  assert.equal(st.difficultyBits, 12, 'a swarm gets the hardest puzzle immediately');
+  assert.ok(st.counters.distinctIps >= 200, 'distinct addresses are counted per window');
+});
+
+/* ---------------- fan-out by range, path guards, answer budget ------------ */
+
+test('a fleet that rotates /24s is caught by subnet fan-out, not by per-IP rules', () => {
+  fresh({ engageRps: 100000, disengageRps: 0, fanoutIpsPerMin: 100000, fanoutSubnetsPerMin: 120,
+    ipBudget: 5000, subnetBudget: 100000, uaFleetBudget: 100000, subnetQuarantinePerMin: 100000,
+    baseDifficulty: 8, maxDifficulty: 12 });
+  const cap = { reqRate: 30, activeConnections: 20, inFlight: 1 };
+  for (let i = 0; i < 150; i++) hit(`203.0.${i}.100.1`, '/', BOT, cap);
+  const st = botshield.stats(false);
+  assert.ok(st.engaged, 'rotating ranges engage the shield even at 30 req/s');
+  assert.ok(st.attack.distinctSubnets >= 120, 'the ranges are counted as a fleet');
+  assert.equal(st.difficultyBits, 12, 'a range-rotating fleet gets the hardest puzzle');
+});
+
+test('an absurdly long request path is refused before any application work', () => {
+  fresh({ engageRps: 100000 });
+  const long = '/' + 'a'.repeat(400);
+  const r = hit('203.0.113.150', long, BROWSER, { reqRate: 5 });
+  assert.equal(r.status, 400, 'path-fuzz requests are closed with 400, not rendered');
+  assert.ok(botshield.stats(false).counters.byTier.path >= 1);
+  const normal = hit('203.0.113.150', '/' + 'a'.repeat(200), BROWSER, { reqRate: 5 });
+  assert.equal(normal.status, 0, 'a normal-length path is allowed through');
+});
+
+test('unsupported HTTP methods are refused by the shield', () => {
+  fresh({ engageRps: 100000 });
+  const r = hit('203.0.113.151', '/', BROWSER, { reqRate: 5 }, '', 'TRACE');
+  assert.equal(r.status, 405);
+  assert.ok(botshield.stats(false).counters.byTier.method >= 1);
+});
+
+test('guessing challenge answers is charged to the attempt budget and ends in quarantine', () => {
+  fresh({ engageRps: 100000, disengageRps: 0, maxAttempts: 3, quarantineMs: 60000,
+    baseDifficulty: 4, maxDifficulty: 6, ipBudget: 10000, uaFleetBudget: 100000,
+    subnetBudget: 100000, subnetQuarantinePerMin: 100000 });
+  const ip = '203.0.113.200';
+  const cap = { reqRate: 10, activeConnections: 10, inFlight: 1 };
+  const first = hit(ip, '/', BOT, cap);
+  const m = /var cid = "([^"]+)", challenge = "([^"]+)", bits = (\d+)/.exec(first.body);
+  assert.ok(m, 'a challenge page is served first');
+  const cid = m[1];
+  for (let i = 0; i < 6; i++) {
+    const bad = hit(ip, '/?__bs=' + cid + '&__bn=' + i, BOT, cap);
+    assert.ok(bad.status === 403, 'a wrong answer is refused');
+  }
+  const st = botshield.stats(false);
+  assert.ok(st.counters.quarantined >= 1, 'answer guessing gets the address quarantined');
+});
+
+test('the quarantine escape hatch is capped so it cannot be abused', () => {
+  fresh({ engageRps: 100000, disengageRps: 0, maxAttempts: 2, escapeMaxAttempts: 5,
+    quarantineMs: 120000, baseDifficulty: 4, maxDifficulty: 6,
+    ipBudget: 10000, uaFleetBudget: 100000, subnetBudget: 100000, subnetQuarantinePerMin: 100000 });
+  const ip = '203.0.113.201';
+  const cap = { reqRate: 10, activeConnections: 10, inFlight: 1 };
+  for (let i = 0; i < 3; i++) hit(ip, '/', BOT, cap);   // scripted client -> quarantined
+  const b1 = hit(ip, '/', BROWSER, cap);
+  const b2 = hit(ip, '/', BROWSER, cap);
+  const b3 = hit(ip, '/', BROWSER, cap);
+  assert.ok(b1.body.includes('proof-of-work'), 'a quarantined browser is offered the hardest puzzle');
+  assert.ok(b2.body.includes('proof-of-work'), 'it may try again');
+  assert.ok(b3.body.includes('bot_blocked'), 'the escape hatch closes after enough tries');
+});
+
+test('deep saturation tells clients to back off for thirty seconds, not five', () => {
+  fresh({ engageRps: 100, disengageRps: 0, maxInFlight: 10, hardConnCeiling: 600, maxActiveConnections: 300 });
+  const light = hit('203.0.113.202', '/', BROWSER, { reqRate: 200, activeConnections: 100, inFlight: 12 });
+  assert.equal(light.status, 503);
+  assert.equal(light.headers['Retry-After'], '5');
+  const deep = hit('203.0.113.203', '/', BROWSER, { reqRate: 200, activeConnections: 1300, inFlight: 60 });
+  assert.equal(deep.status, 503);
+  assert.equal(deep.headers['Retry-After'], '30', 'a drowning origin asks for a real pause');
+});
+
+test('per-address in-flight counts are released when the request finishes', () => {
+  fresh({ engageRps: 100000, disengageRps: 0, maxConcurrentPerIp: 3, ipBudget: 10000,
+    calmBudget: 10000, uaFleetBudget: 100000, subnetBudget: 100000, subnetQuarantinePerMin: 100000 });
+  const ip = '203.0.113.204';
+  const cap = { reqRate: 10, activeConnections: 10, inFlight: 1 };
+  for (let i = 0; i < 3; i++) {
+    const r = hit(ip, '/', BROWSER, cap);
+    assert.equal(r.handled, false, 'the first three requests are served');
+  }
+  const fourth = hit(ip, '/', BROWSER, cap);
+  assert.equal(fourth.status, 429, 'the fourth parallel request from one address is refused');
+  for (let i = 0; i < 3; i++) botshield.noteWorkLatency(5, ip);
+  const fifth = hit(ip, '/', BROWSER, cap);
+  assert.equal(fifth.handled, false, 'the address is free again once its requests are done');
+});
+
+test('the stats expose an attack signature an operator can read', () => {
+  fresh({ engageRps: 120, disengageRps: 0 });
+  hit('203.0.113.205', '/', BROWSER, { reqRate: 400, activeConnections: 50, inFlight: 5 });
+  const st = botshield.stats(false);
+  assert.equal(st.attack.peakReqRate, 400);
+  assert.ok(st.attack.engagedSeconds >= 0);
+  assert.ok(typeof st.attack.refusedRatio === 'number');
+  assert.ok(!Object.values(st.topOffenders).some((o) => o.ip.split('.').length === 4 && !o.ip.includes('*')),
+    'anonymous stats never publish a full offender address');
 });
