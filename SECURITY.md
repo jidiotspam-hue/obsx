@@ -102,4 +102,4 @@ header set to your `OBSX_SECRET`; without it the endpoint returns 401.
 thousands of IPs, each sending a few requests. Per-IP rules alone never trip, so
 the shield also budgets the subnet and the user-agent class the fleet shares.
 
-Run the tests: `OBSX_TEST_MODE=1 node --test tests/botshield.test.js` — 51 tests, no network, no server.
+Run the tests: `OBSX_TEST_MODE=1 node --test tests/botshield.test.js` — 57 tests for the shield, 141 for the whole repo, no network and no server needed.

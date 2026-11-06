@@ -18,7 +18,7 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/RELEASE-v2.2.0%20PUBLIC-ff79c6?style=flat-square" alt="Release: v2.2.0 Public"></a>
-  <a href="tests/"><img src="https://img.shields.io/badge/TESTS-116%2F116%20PASSING-50fa7b?style=flat-square" alt="Tests: 81/81 Passing"></a>
+  <a href="tests/"><img src="https://img.shields.io/badge/TESTS-141%2F141%20PASSING-50fa7b?style=flat-square" alt="Tests: 81/81 Passing"></a>
   <a href="package.json"><img src="https://img.shields.io/badge/DEPENDENCIES-ZERO-bd93f9?style=flat-square" alt="Zero Dependencies"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/LICENSE-MIT%20%2F%20ELv2-8be9fd?style=flat-square" alt="License: MIT / ELv2"></a>
   <a href="https://obsx.tech"><img src="https://img.shields.io/badge/LIVE%20NODE-OBSX.TECH-ffb86c?style=flat-square" alt="Live Node"></a>
@@ -253,7 +253,7 @@ Explore the live interactive sandbox, test simulated bot attacks in the **[OBSX 
 
 ## Origin Shield: layer-7 flood control (`lib/botshield.js`)
 
-The protocol above verifies *who* is calling. The origin shield protects the *machine that answers*. It sits in front of every request, before routing, before the page cache, before the Security Gate, and before any database or telemetry work, and it is the reason a 20-minute, 560,000-request flood against obsx.tech never reached the application.
+The protocol above verifies *who* is calling. The origin shield protects the *machine that answers*. It sits in front of every request, before routing, before the page cache, before the Security Gate, and before any database or telemetry work, and it is the reason a 20-minute, 604,895-request flood against obsx.tech never reached the application.
 
 It escalates through the cheapest defence that is working, in order:
 
@@ -268,7 +268,7 @@ It escalates through the cheapest defence that is working, in order:
 | Budgets | per-IP, per-subnet, per-user-agent-class and crawler request budgets per minute | a regex |
 | Capacity shed | 503 with `Retry-After` when the box is genuinely out of capacity | a regex |
 
-The shield engages automatically when the origin sees `OBSX_SHIELD_RPS` requests per second **or** `OBSX_FANOUT_IPS` distinct addresses in a minute, ramps challenge difficulty from 16 to 22 bits as the flood continues, and stands down after `OBSX_SHIELD_CALM_MS` of quiet traffic. Every internal map is capped (`OBSX_SHIELD_MAP_SIZE`) and pruned, so an attacker spoofing millions of addresses cannot grow the process out of memory.
+The shield engages automatically when the origin sees `OBSX_SHIELD_RPS` requests per second **or** `OBSX_FANOUT_IPS` distinct addresses, `OBSX_FANOUT_SUBNETS` distinct subnets or `OBSX_FANOUT_PATHS` distinct paths in a minute, ramps challenge difficulty from 16 to 22 bits as the flood continues, and stands down on a heartbeat once the rate settles for `OBSX_SHIELD_CALM_MS` — so the shield does not stay engaged after a flood that has already ended. Every internal map is capped (`OBSX_SHIELD_MAP_SIZE`) and pruned, so an attacker spoofing millions of addresses cannot grow the process out of memory.
 
 **Inspect it live:** `GET /api/v1/bot-protection` returns counters, engagement state, thresholds and health. Addresses in the offender lists are masked (`203.0.*.*`) unless you pass your operator key: `curl -H "x-obsx-key: $OBSX_SECRET" https://obsx.tech/api/v1/bot-protection`.
 

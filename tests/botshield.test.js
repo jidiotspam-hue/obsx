@@ -847,3 +847,46 @@ test('a trickle of ordinary traffic is enough to stand the shield down', () => {
   assert.strictEqual(botshield.isEngaged(), false, 'a minute of ordinary traffic releases the shield');
   assert.ok(botshield.stats().attack.engagedSeconds >= 0);
 });
+
+test('a forged forwarded header is refused before any budget is spent', () => {
+  fresh({ engageRps: 100000, ipBudget: 100000, calmBudget: 100000, maxAttempts: 50 });
+  const cap = { reqRate: 10, activeConnections: 5, inFlight: 1 };
+  const url = new URL('/some/page', 'http://obsx.tech');
+  const res = fakeRes();
+  const out = botshield.evaluate(
+    { headers: { 'user-agent': BROWSER, 'x-forwarded-for': '1.2.3.4, 5.6.7.8' }, method: 'GET' },
+    res, '203.0.113.55', url.pathname, 10, url, cap);
+  assert.strictEqual(out.handled, true, 'the shield answered it');
+  assert.strictEqual(res.out.status, 403, 'an address the proxy never saw is refused (got ' + res.out.status + ')');
+  assert.strictEqual(botshield.stats().counters.byTier.forged_forwarded_header, 1, 'counted exactly once');
+
+  // a normal proxy chain that does contain the real address is not punished
+  const api = new URL('/api/v1/ping', 'http://obsx.tech');
+  const res2 = fakeRes();
+  const out2 = botshield.evaluate(
+    { headers: { 'user-agent': BROWSER, 'accept': 'application/json',
+                 'accept-language': 'en-US,en;q=0.9', 'x-forwarded-for': '203.0.113.55, 10.0.0.1' },
+      method: 'GET' }, res2, '203.0.113.55', api.pathname, 10, api, cap);
+  assert.strictEqual(out2.handled, false, 'an honest chain reaches the application (got ' + res2.out.status + ')');
+  assert.strictEqual(botshield.stats().counters.byTier.forged_forwarded_header, 1, 'the honest chain was not counted as forged');
+});
+
+test('the public telemetry view never leaks full addresses when no operator key is set', () => {
+  fresh({ engageRps: 400, ipBudget: 30, maxAttempts: 6, statusBudget: 40 });
+  const cap = { reqRate: 500, activeConnections: 20, inFlight: 2 };
+  for (let i = 0; i < 20; i++) hit('203.0.113.80', '/', BOT, cap);
+  const res = fakeRes();
+  const url = new URL('/api/v1/bot-protection', 'http://obsx.tech');
+  const saved = process.env.OBSX_SECRET;
+  delete process.env.OBSX_SECRET;
+  try {
+    botshield.evaluate({ headers: { 'user-agent': BOT }, method: 'GET' }, res, '203.0.113.80',
+      url.pathname, 500, url, cap);
+    const json = JSON.parse(res.out.body);
+    assert.ok(json.topOffenders.length > 0, 'offenders are visible');
+    assert.ok(json.topOffenders[0].ip.includes('*'),
+      'without a configured key the address is masked (got ' + json.topOffenders[0].ip + ')');
+  } finally {
+    if (saved) process.env.OBSX_SECRET = saved;
+  }
+});
