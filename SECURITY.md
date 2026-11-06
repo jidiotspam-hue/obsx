@@ -72,6 +72,9 @@ Tiers, cheapest first — every rule is O(1) and runs before any application wor
 | Capacity shed | 503 + `Retry-After` when connections, in-flight work, latency, or RSS are saturated | a small JSON |
 | Fan-out detection | Engagement triggers on *distinct addresses* and *distinct /24s* per minute, not just rate | a set lookup |
 | Path and method guard | Paths longer than 256 characters and unsupported methods are closed before routing | a length check |
+| Path-fuzz close | Once a minute shows 800+ distinct paths, every *new* path is answered 404 without routing; it stands down after one calm minute | a map increment |
+| Body gate | Request bodies above 512 KB are refused (413) before anything is parsed | a header read |
+| Self-monitoring | `GET /api/v1/bot-protection` is answered by the shield itself, ~10 ms even while the origin is saturated | a JSON snapshot |
 | Socket posture | Keep-alive, header and request timeouts tighten while engaged (2 s / 6 s / 15 s) and relax when calm | nothing, it is Node's own timing |
 
 The shield engages automatically when the origin sees sustained pressure
@@ -89,7 +92,7 @@ sharing a network with an attacker can work their way back in while a scripted
 client cannot. Wrong puzzle answers are charged to the same attempt budget, so
 the answer endpoint is not a free oracle.
 
-**Public endpoints.** `GET /api/v1/bot-protection` returns counters, thresholds and state sizes;
+**Public endpoints.** `GET /api/v1/bot-protection` (answered by the shield, not the application, so it stays readable during a flood) returns counters, thresholds and state sizes;
 offender addresses are masked (`203.0.*.*`) unless the operator key is
 supplied, so the public endpoint cannot be used to fingerprint visitors.
 `POST /api/v1/bot-protection/mode` (auto | always | off) requires the `x-obsx-key`
@@ -99,4 +102,4 @@ header set to your `OBSX_SECRET`; without it the endpoint returns 401.
 thousands of IPs, each sending a few requests. Per-IP rules alone never trip, so
 the shield also budgets the subnet and the user-agent class the fleet shares.
 
-Run the tests: `OBSX_TEST_MODE=1 node --test tests/botshield.test.js`.
+Run the tests: `OBSX_TEST_MODE=1 node --test tests/botshield.test.js` — 51 tests, no network, no server.

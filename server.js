@@ -280,7 +280,6 @@ function recordPathHit(pathname) {
       .sort((a, b) => b[1] - a[1])
       .slice(0, 5)
       .map(([p, c]) => `${p}=${c}`)
-      .join(' ');
     console.log(
       `[OBSX Sentinel] ${new Date().toISOString()} reqRate=${reqRate} conns=${activeConnections} inFlight=${inFlight} latency=${botshield.stats(false).health.workLatencyMs}ms topPaths: ${topPaths}`
     );
@@ -328,12 +327,22 @@ function noteShed(ip, reason) {
     for (const [k, v] of shedOffenders) if (Date.now() - v.first > 120000) shedOffenders.delete(k);
   }
   if (shedCount % 50 === 0) {
-    const top = [...shedOffenders.entries()]
-      .sort((a, b) => b[1].count - a[1].count)
-      .slice(0, 6)
-      .map(([ip, e]) => `${ip}=${e.count}(${e.reason})`)
-      .join(' ');
-    console.log(`[OBSX Shed] ${new Date().toISOString()} shedding ${shedCount} total; top offenders: ${top}`);
+    // Bounded top-6 scan: sorting a 5000-entry table every 50 sheds is itself a
+    // cost the origin pays while it is being flooded.
+    const top = [];
+    for (const [ip, e] of shedOffenders) {
+      if (top.length < 6) {
+        top.push([ip, e]);
+        if (top.length === 6) top.sort((a, b) => b[1].count - a[1].count);
+      } else if (e.count > top[5][1].count) {
+        top[5] = [ip, e];
+        for (let k = 4; k >= 0 && top[k][1].count < top[k + 1][1].count; k--) {
+          const t = top[k]; top[k] = top[k + 1]; top[k + 1] = t;
+        }
+      }
+    }
+    const line = top.map(([ip, e]) => `${ip}=${e.count}(${e.reason})`).join(' ');
+    console.log(`[OBSX Shed] ${new Date().toISOString()} shedding ${shedCount} total; top offenders: ${line}`);
   }
 }
 
@@ -1384,8 +1393,9 @@ server.on('connection', (socket) => {
   if (!isLoopback && peerCount > botshield.config.maxConnsPerIp) {
     shedCount++;
     noteShed(peer, 'per_ip_conn_ceiling');
+    botshield.noteSocketShed(peer, 'per_ip_conn_ceiling');
     try {
-      socket.write('HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nRetry-After: 10\r\nConnection: close\r\nContent-Length: 46\r\n\r\n{"ok":false,"error":"too_many_connections","retryAfter":10}');
+      socket.write('HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nRetry-After: 10\r\nConnection: close\r\nX-OBSX-BotShield: shed:per_ip_conn_ceiling\r\nContent-Length: 46\r\n\r\n{"ok":false,"error":"too_many_connections","retryAfter":10}');
     } catch (err) { /* socket already gone */ }
     socket.destroy();
     return;
@@ -1394,8 +1404,9 @@ server.on('connection', (socket) => {
   if (activeConnections > botshield.config.hardConnCeiling) {
     shedCount++;
     noteShed(socket.remoteAddress || 'unknown', 'hard_conn_ceiling');
+    botshield.noteSocketShed(socket.remoteAddress || 'unknown', 'hard_conn_ceiling');
     try {
-      socket.write('HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nRetry-After: 5\r\nConnection: close\r\nContent-Length: 44\r\n\r\n{"ok":false,"error":"overloaded","retryAfter":5}');
+      socket.write('HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nRetry-After: 5\r\nConnection: close\r\nX-OBSX-BotShield: shed:hard_conn_ceiling\r\nContent-Length: 44\r\n\r\n{"ok":false,"error":"overloaded","retryAfter":5}');
     } catch (err) { /* socket already gone */ }
     socket.destroy();
   }

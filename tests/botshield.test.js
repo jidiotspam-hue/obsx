@@ -66,6 +66,7 @@ const DEFAULTS = {
   subnetQuarantinePerMin: 2400, uaFleetBudget: 1500, hardConnCeiling: 600,
   fanoutSubnetsPerMin: 120, maxPathLen: 256, escapeMaxAttempts: 12,
   maxActiveConnections: 300, maxInFlight: 100, maxServedRps: 150,
+  maxBodyBytes: 512 * 1024,
   maxWorkLatencyMs: 250, maxRssMb: 620, maxEventLagMs: 200, maxMapSize: 20000,
   quarantineEscape: true,
 };
@@ -432,7 +433,7 @@ test('one address cannot hold the origin open with unlimited parallel requests',
 
 test('a botnet of many polite addresses is detected by fan-out, not by rate', () => {
   // engageRps is deliberately unreachable, so only fan-out can engage the shield.
-  fresh({ engageRps: 100000, disengageRps: 0, ipBudget: 500, calmBudget: 100000, uaFleetBudget: 100000, subnetBudget: 100000, subnetQuarantinePerMin: 100000, fanoutIpsPerMin: 300 });
+  fresh({ engageRps: 100000, disengageRps: 0, ipBudget: 500, calmBudget: 100000, uaFleetBudget: 100000, subnetBudget: 100000, subnetQuarantinePerMin: 100000, fanoutIpsPerMin: 300, maxServedRps: 100000 });
   for (let i = 0; i < 400; i++) {
     hit('203.0.113.' + (i % 250) + '', '/', BROWSER, { activeConnections: 40, inFlight: 2, reqRate: 5 });
     hit('198.51.100.' + (i % 250), '/', BROWSER, { activeConnections: 40, inFlight: 2, reqRate: 5 });
@@ -441,7 +442,7 @@ test('a botnet of many polite addresses is detected by fan-out, not by rate', ()
   assert.ok(botshield.stats().engaged, 'fan-out alone engaged the shield');
   assert.ok(botshield.stats().counters.distinctIps >= 300, 'distinct addresses were counted');
   const r = hit('198.51.100.123', '/', BROWSER, { activeConnections: 40, inFlight: 2, reqRate: 5 });
-  assert.equal(r.status, 403, 'while engaged, an unproven client is challenged');
+  assert.equal(r.status, 403, 'while engaged, an unproven client is challenged (got ' + r.status + ')');
 });
 
 test('state stays bounded under a spoofed-IP flood', () => {
@@ -626,9 +627,15 @@ test('guessing challenge answers is charged to the attempt budget and ends in qu
   const m = /var cid = "([^"]+)", challenge = "([^"]+)", bits = (\d+)/.exec(first.body);
   assert.ok(m, 'a challenge page is served first');
   const cid = m[1];
-  for (let i = 0; i < 6; i++) {
+  // Pick nonces that are provably wrong for this challenge: a small integer can
+  // luckily satisfy a six-bit puzzle, which would make the test flaky.
+  const guesses = [];
+  for (let i = 0; i < 500 && guesses.length < 6; i++) {
+    if (!botshield.powOk(m[2], String(i), Number(m[3]))) guesses.push(i);
+  }
+  for (const i of guesses) {
     const bad = hit(ip, '/?__bs=' + cid + '&__bn=' + i, BOT, cap);
-    assert.ok(bad.status === 403, 'a wrong answer is refused');
+    assert.ok(bad.status === 403, 'a wrong answer is refused (got ' + bad.status + ': ' + bad.body.slice(0, 60) + ')');
   }
   const st = botshield.stats(false);
   assert.ok(st.counters.quarantined >= 1, 'answer guessing gets the address quarantined');
@@ -684,4 +691,159 @@ test('the stats expose an attack signature an operator can read', () => {
   assert.ok(typeof st.attack.refusedRatio === 'number');
   assert.ok(!Object.values(st.topOffenders).some((o) => o.ip.split('.').length === 4 && !o.ip.includes('*')),
     'anonymous stats never publish a full offender address');
+});
+
+test('a path-fuzz flood closes unseen paths without routing them', () => {
+  fresh({ engageRps: 4000, fanoutPathsPerMin: 50, maxAttempts: 200 });
+  for (let i = 0; i < 60; i++) hit('203.0.113.' + (i % 250), '/p' + i, 'curl/8.0.1', { reqRate: 4000, activeConnections: 20, inFlight: 1 });
+  assert.strictEqual(botshield.stats().attack.pathFuzz, true, 'the flood was recognised');
+  const fuzz = hit('198.51.100.9', '/never-seen-61', 'curl/8.0.1', { reqRate: 4000, activeConnections: 20, inFlight: 1 });
+  assert.strictEqual(fuzz.status, 404, 'a brand new path is closed without routing');
+  assert.ok(fuzz.body.includes('not_found'));
+  assert.ok(botshield.stats().counters.byTier.pathFuzz > 0);
+  // a path already seen keeps going through the normal tiers
+  const repeat = hit('198.51.100.9', '/p1', 'curl/8.0.1', { reqRate: 4000, activeConnections: 20, inFlight: 1 });
+  assert.notStrictEqual(repeat.status, 404);
+});
+
+test('a puzzle that real browsers take too long to solve is eased back to base', () => {
+  const slowBrowser = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36';
+  const cap = { reqRate: 900, activeConnections: 40, inFlight: 2 };
+  fresh({ engageRps: 120, baseDifficulty: 12, maxDifficulty: 16, maxSolveMs: 3000,
+    ipBudget: 10000, calmBudget: 10000, maxAttempts: 50 });
+  for (let i = 0; i < 3; i++) hit('203.0.113.7', '/', slowBrowser, cap);
+  assert.ok(botshield.stats().difficultyBits > 12, 'difficulty ramps with pressure');
+  const page = hit('203.0.113.7', '/', slowBrowser, cap);
+  assert.equal(page.status, 403, 'the client is challenged (got ' + page.status + ')');
+  const ch = parseChallenge(page.body);
+  const answer = hit('203.0.113.7', `/?__bs=${ch.cid}&__bn=${solve(ch.challenge, ch.bits)}&__ms=9000`, slowBrowser, cap);
+  assert.ok(answer.headers['Set-Cookie'], 'the slow browser is still let through');
+  assert.strictEqual(botshield.stats().difficultyBits, 12, 'difficulty drops back to base for real, struggling users');
+});
+
+test('a reported solve time out of range is ignored', () => {
+  fresh({ engageRps: 120, baseDifficulty: 12, maxDifficulty: 22 });
+  const cap = { reqRate: 400, activeConnections: 20, inFlight: 1 };
+  const page = hit('198.51.100.30', '/', BOT, cap);
+  const ch = parseChallenge(page.body);
+  const answer = hit('198.51.100.30', `/?__bs=${ch.cid}&__bn=${solve(ch.challenge, ch.bits)}&__ms=999999999`, BOT, cap);
+  assert.strictEqual(botshield.stats().attack.browserSolveMs, 0, 'an absurd reported time is not trusted (got ' + botshield.stats().attack.browserSolveMs + ', status ' + answer.status + ')');
+});
+
+test('the path guard stands down when the flood stops', () => {
+  fresh({ engageRps: 4000, fanoutPathsPerMin: 50, maxAttempts: 200 });
+  for (let i = 0; i < 60; i++) hit('203.0.113.1', '/q' + i, 'curl/8.0.1', { reqRate: 4000, activeConnections: 20, inFlight: 1 });
+  assert.strictEqual(botshield.stats().attack.pathFuzz, true, 'the flood was recognised');
+  botshield.reset();
+  hit('203.0.113.1', '/q1', 'curl/8.0.1', { reqRate: 4000, activeConnections: 20, inFlight: 1 });
+  const normal = hit('203.0.113.1', '/brand-new-page', 'curl/8.0.1', { reqRate: 4000, activeConnections: 20, inFlight: 1 });
+  assert.notStrictEqual(normal.status, 404, 'a new page is not closed after the flood is over (got ' + normal.status + ')');
+  assert.strictEqual(botshield.stats().attack.pathFuzz, false);
+});
+
+test('an oversized request body is refused before any parsing', () => {
+  fresh({ engageRps: 5000, maxBodyBytes: 1000 });
+  const res = fakeRes();
+  const url = new URL('/api/v1/session', 'http://obsx.tech');
+  const outcome = botshield.evaluate(
+    { headers: { 'user-agent': BROWSER, 'content-length': '2000000' }, method: 'POST' },
+    res, '203.0.113.50', url.pathname, 5000, url, { reqRate: 5000, activeConnections: 10, inFlight: 1 });
+  assert.strictEqual(outcome.handled, true, 'the shield answered, the application never ran');
+  assert.strictEqual(res.out.status, 413, 'a 2 MB body is refused (got ' + res.out.status + ')');
+  assert.ok(res.out.body.includes('payload_too_large'));
+  assert.strictEqual(botshield.stats().counters.byTier.body, 1);
+  // a body within the limit is not caught by this rule; it is still judged by
+  // the normal tiers (challenge/budget), never by the size gate.
+  const res2 = fakeRes();
+  const url2 = new URL('/api/v1/session', 'http://obsx.tech');
+  botshield.evaluate(
+    { headers: { 'user-agent': BROWSER, 'content-length': '900' }, method: 'POST' },
+    res2, '203.0.113.51', url2.pathname, 5000, url2, { reqRate: 5000, activeConnections: 10, inFlight: 1 });
+  assert.notStrictEqual(res2.out.status, 413, 'a 900-byte POST is not refused for size (got ' + res2.out.status + ')');
+});
+
+test('the shield serves its own telemetry while under attack', () => {
+  fresh({ engageRps: 400, ipBudget: 30, maxAttempts: 6, statusBudget: 40 });
+  for (let i = 0; i < 40; i++) hit('203.0.113.60', '/', BOT, { reqRate: 500, activeConnections: 20, inFlight: 2 });
+  const out = hit('203.0.113.60', '/api/v1/bot-protection', BOT, { reqRate: 500, activeConnections: 20, inFlight: 2 });
+  assert.strictEqual(out.status, 200, 'telemetry is readable even with the shield at maximum defence (got ' + out.status + ')');
+  assert.strictEqual(out.handled, true, 'answered inside the shield, not by the application layer');
+  const json = JSON.parse(out.body);
+  assert.strictEqual(json.ok, true);
+  assert.ok(json.attack.distinctAddresses >= 0, 'attack signature present');
+  assert.ok(json.topOffenders.length > 0, 'the offenders are visible to the operator');
+  assert.ok(json.topOffenders[0].ip.includes('*'), 'anonymous view masks addresses (got ' + json.topOffenders[0].ip + ')');
+  assert.ok(out.headers['X-OBSX-BotShield'] === 'telemetry');
+});
+
+test('the telemetry endpoint is budgeted like any other status path', () => {
+  fresh({ engageRps: 400, statusBudget: 3 });
+  const cap = { reqRate: 500, activeConnections: 20, inFlight: 1 };
+  const first = hit('203.0.113.70', '/api/v1/bot-protection', BOT, cap);
+  const second = hit('203.0.113.70', '/api/v1/bot-protection', BOT, cap);
+  const third = hit('203.0.113.70', '/api/v1/bot-protection', BOT, cap);
+  const fourth = hit('203.0.113.70', '/api/v1/bot-protection', BOT, cap);
+  assert.strictEqual(first.status, 200);
+  assert.strictEqual(second.status, 200);
+  assert.strictEqual(third.status, 200);
+  assert.strictEqual(fourth.status, 429, 'the monitoring endpoint cannot itself become the flood path');
+});
+
+test('the telemetry walk does not copy the whole offender table', () => {
+  fresh({ engageRps: 120, maxAttempts: 3, quarantineMs: 300000 });
+  for (let i = 0; i < 60; i++) hit('203.0.113.' + (i + 1), '/', BOT, { reqRate: 300, activeConnections: 10, inFlight: 1 });
+  const st = botshield.stats(false);
+  assert.ok(st.stateSizes.offenders > st.topOffenders.length, 'top offenders are a slice, not the whole map');
+  assert.ok(st.quarantinedIps.length <= 20, 'the quarantined list is capped');
+  assert.ok(st.topOffenders.length === 10);
+});
+
+test('the shield stands down on its own when the origin goes quiet', () => {
+  fresh({ engageRps: 100, disengageRps: 40, calmMs: 45000, ipBudget: 10000, maxAttempts: 20 });
+  const cap = { reqRate: 500, activeConnections: 30, inFlight: 2 };
+  for (let i = 0; i < 20; i++) hit('203.0.113.80', '/', BOT, cap);
+  assert.strictEqual(botshield.isEngaged(), true, 'the flood engaged the shield');
+  // a shield that has only just gone quiet is still defending
+  assert.strictEqual(botshield.checkIdle(Date.now() - 1000), false);
+  assert.strictEqual(botshield.isEngaged(), true);
+  // sixty seconds of silence, no requests at all: the heartbeat releases it
+  botshield.checkIdle(Date.now() + 46000);
+  assert.strictEqual(botshield.isEngaged(), false, 'engagement cannot outlive the flood');
+  const page = hit('203.0.113.81', '/', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36', { reqRate: 12, activeConnections: 3, inFlight: 1 });
+  assert.notStrictEqual(page.status, 403, 'the next real visitor is not challenged (got ' + page.status + ')');
+});
+
+test('an idle check releases the path guard so new pages are not 404 forever', () => {
+  fresh({ engageRps: 4000, fanoutPathsPerMin: 50, maxAttempts: 200 });
+  for (let i = 0; i < 60; i++) hit('203.0.113.90', '/z' + i, 'curl/8.0.1', { reqRate: 4000, activeConnections: 20, inFlight: 1 });
+  assert.strictEqual(botshield.stats().attack.pathFuzz, true, 'the flood closed unseen paths');
+  botshield.checkIdle(Date.now() + 61000);
+  const st = botshield.stats();
+  assert.strictEqual(st.attack.pathFuzz, false, 'a quiet origin releases the guard without a single request');
+  assert.strictEqual(st.attack.distinctPaths, 0);
+  assert.strictEqual(st.attack.fanout, false);
+});
+
+test('a socket refused at the TCP level is still counted by the shield', () => {
+  fresh({ engageRps: 100 });
+  for (let i = 0; i < 7; i++) botshield.noteSocketShed('203.0.113.' + (i % 3), 'hard_conn_ceiling');
+  const st = botshield.stats(false);
+  assert.strictEqual(st.counters.shed, 7, 'socket-level refusals show up in the shed counter');
+  assert.strictEqual(st.counters.byTier.capacity, 7);
+  assert.ok(st.topOffenders[0].hits >= 2, 'the worst socket offender is visible without scanning the whole table');
+});
+
+test('a trickle of ordinary traffic is enough to stand the shield down', () => {
+  fresh({ engageRps: 100, disengageRps: 40, calmMs: 45000, ipBudget: 100000, calmBudget: 100000, maxServedRps: 100000, maxAttempts: 50 });
+  const storm = { reqRate: 600, activeConnections: 60, inFlight: 3 };
+  for (let i = 0; i < 30; i++) hit('203.0.113.95', '/', BOT, storm);
+  assert.strictEqual(botshield.isEngaged(), true, 'the storm engaged the shield');
+  // a normal site: a few requests a second, never silent, never alarming
+  let now = Date.now();
+  for (let i = 0; i < 40; i++) hit('198.51.100.' + (i % 250), '/', BROWSER, { reqRate: 20, activeConnections: 5, inFlight: 1 });
+  botshield.checkIdle(now + 30000);
+  assert.strictEqual(botshield.isEngaged(), true, 'thirty seconds of calm is not yet a stand-down');
+  botshield.checkIdle(now + 90000);
+  assert.strictEqual(botshield.isEngaged(), false, 'a minute of ordinary traffic releases the shield');
+  assert.ok(botshield.stats().attack.engagedSeconds >= 0);
 });
