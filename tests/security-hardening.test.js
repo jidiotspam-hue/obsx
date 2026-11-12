@@ -759,7 +759,20 @@ test('hardening: recordSignals preserves invalid tsig, unions tamper flags, vali
   assert.ok(monoVerdict.reasons.some((r) => r.code === 'automation_webdriver'));
   assert.ok(monoVerdict.reasons.some((r) => r.code === 'automation_headless'));
 
-  // 4. Benign wrapped: entries with zero interaction still trigger missing_signals
+  // 3b. Single-beacon malformed non-array tampered triggers delete merged.tampered cleanly without TypeError
+  const sMalformed = await core.startSession(freshProj, { ip: '198.51.100.186', action: 'test' });
+  const nMalformed = solvePow(sMalformed.challenge, sMalformed.difficulty);
+  await core.recordSignals({
+    token: sMalformed.token,
+    signals: {
+      ...cleanSignals,
+      tampered: { length: 1 },
+    },
+  });
+  const malformedVerdict = await core.verify(freshProj, { token: sMalformed.token, nonce: nMalformed }, { ip: '198.51.100.186', ua: 'Mozilla/5.0' });
+  assert.equal(malformedVerdict.verdict, 'accept');
+
+  // 4. Benign wrapped: and unrecognized gpu: entries with zero interaction still trigger missing_signals
   const sWrapped = await core.startSession(freshProj, { ip: '198.51.100.184', action: 'test' });
   const nWrapped = solvePow(sWrapped.challenge, sWrapped.difficulty);
   await core.recordSignals({
@@ -769,6 +782,17 @@ test('hardening: recordSignals preserves invalid tsig, unions tamper flags, vali
   const wrappedVerdict = await core.verify(freshProj, { token: sWrapped.token, nonce: nWrapped }, { ip: '198.51.100.184', ua: 'Mozilla/5.0' });
   assert.equal(wrappedVerdict.verdict, 'reject');
   assert.ok(wrappedVerdict.reasons.some((r) => r.code === 'missing_signals'));
+
+  const sGpuFake = await core.startSession(freshProj, { ip: '198.51.100.187', action: 'test' });
+  const nGpuFake = solvePow(sGpuFake.challenge, sGpuFake.difficulty);
+  await core.recordSignals({
+    token: sGpuFake.token,
+    signals: { sh: 'trc_v1_live', tampered: ['gpu:fake'] },
+  });
+  const gpuFakeVerdict = await core.verify(freshProj, { token: sGpuFake.token, nonce: nGpuFake }, { ip: '198.51.100.187', ua: 'Mozilla/5.0' });
+  assert.equal(gpuFakeVerdict.verdict, 'reject');
+  assert.ok(gpuFakeVerdict.reasons.some((r) => r.code === 'tampered_builtins'));
+  assert.ok(gpuFakeVerdict.reasons.some((r) => r.code === 'missing_signals'));
 
   // 5. CHALLENGE_HTML ignores $' / placeholder tokens in UA & pathname
   botshield.reset();
@@ -787,6 +811,11 @@ test('hardening: recordSignals preserves invalid tsig, unions tamper flags, vali
     );
     assert.equal(trkRes.out.status, 403);
     assert.equal((trkRes.out.body.match(/<\/script>/g) || []).length, 1, 'Only the legitimate closing script tag should exist');
+    assert.ok(trkRes.out.body.includes("bot$'__TARGET____BITS__\""), 'Single-pass replacement must preserve placeholder literals in challenge');
+    assert.ok(
+      trkRes.out.body.includes('target = "/__TARGET__/ok/$\'/\\u003c/script\\u003e"'),
+      'Single-pass replacement must render escaped target JS assignment intact'
+    );
   } finally {
     restoreBotShield();
   }
