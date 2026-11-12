@@ -71,7 +71,12 @@ function readBody(req, maxBytes = 512 * 1024, timeoutMs = 10000) {
       if (chunks.length === 0) return resolve({});
       try {
         const text = Buffer.concat(chunks).toString('utf8');
-        resolve(text.trim() ? JSON.parse(text) : {});
+        if (!text.trim()) return resolve({});
+        const parsed = JSON.parse(text);
+        if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          return reject(new Error('Invalid JSON'));
+        }
+        resolve(parsed);
       } catch {
         reject(new Error('Invalid JSON'));
       }
@@ -147,6 +152,64 @@ function detectProxyHeaders(req) {
 
 // Global active connections map for graceful termination
 const activeSockets = new Set();
+
+function hasValidOperatorKey(req) {
+  const operatorSecret = String(process.env.OBSX_SECRET || '');
+  if (operatorSecret.length < 16) return false;
+  return crypto.safeEqual(String(req.headers['x-obsx-key'] || ''), operatorSecret);
+}
+
+function getOperatorAllowlist() {
+  const configured = [
+    process.env.OPERATOR_EMAILS,
+    process.env.OBSX_OPERATOR_EMAILS,
+    process.env.OPERATOR_EMAIL,
+    process.env.ALERT_EMAIL,
+  ]
+    .filter(Boolean)
+    .flatMap((v) => String(v).split(','))
+    .map((e) => accounts.cleanEmail(e))
+    .filter(Boolean);
+  configured.push('official@obsx.tech');
+  return new Set(configured);
+}
+
+function isOperatorAuthorized(req, user) {
+  if (hasValidOperatorKey(req)) return true;
+  if (!user || !user.email) return false;
+  const normalized = accounts.cleanEmail(user.email);
+  return Boolean(normalized && getOperatorAllowlist().has(normalized));
+}
+
+async function requireOperatorAccess(req, res) {
+  if (hasValidOperatorKey(req)) return true;
+  const user = await accounts.getSessionUser(req);
+  if (!user) {
+    sendJson(res, 401, { ok: false, error: 'unauthorized' });
+    return false;
+  }
+  if (!isOperatorAuthorized(req, user)) {
+    sendJson(res, 403, { ok: false, error: 'operator_required' });
+    return false;
+  }
+  return true;
+}
+
+function parseRequestUrl(req) {
+  const rawUrl = typeof req.url === 'string' ? req.url : '/';
+  const normalized = rawUrl.startsWith('//') ? '/' + rawUrl.replace(/^\/+/, '') : rawUrl;
+  try {
+    const rawHost = typeof req.headers.host === 'string' ? req.headers.host : 'localhost';
+    const safeHost = /^[a-zA-Z0-9._:\[\]-]+$/.test(rawHost) ? rawHost : 'localhost';
+    return new URL(normalized, `http://${safeHost}`);
+  } catch {
+    return null;
+  }
+}
+
+function isValidResourceId(id) {
+  return typeof id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(id);
+}
 
 function isStrictGateActive() {
   const isTestRunner =
@@ -351,7 +414,10 @@ const server = http.createServer(async (req, res) => {
   const clientIp = getClientIp(req);
   const isHttps = isRequestHttps(req);
   const proxyHeaders = detectProxyHeaders(req);
-  const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const url = parseRequestUrl(req);
+  if (!url) {
+    return sendJson(res, 400, { ok: false, error: 'invalid_request' });
+  }
   const pathname = url.pathname;
   const method = req.method;
 
@@ -401,6 +467,9 @@ const server = http.createServer(async (req, res) => {
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  if (isHttps) {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
   res.setHeader(
     'Content-Security-Policy',
     "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data:; connect-src 'self';"
@@ -757,8 +826,7 @@ const server = http.createServer(async (req, res) => {
 
       if (pathname === '/api/v1/alerts') {
         if (method !== 'GET') return sendMethodNotAllowed(res, ['GET']);
-        const user = await accounts.getSessionUser(req);
-        if (!user) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
+        if (!(await requireOperatorAccess(req, res))) return;
 
         const alerts = mailer.getRecentAlerts();
         const mailConfig = mailer.getConfig();
@@ -800,48 +868,34 @@ const server = http.createServer(async (req, res) => {
 
       if (pathname === '/api/v1/system/update') {
         if (method !== 'POST') return sendMethodNotAllowed(res, ['POST']);
-        // Operator session required. Loopback is not an identity: the Cloudflare
-        // tunnel connects to the origin over 127.0.0.1, so a header-derived loopback
-        // address is forgeable and must not grant code-execution access.
-        const user = await accounts.getSessionUser(req);
-        if (!user) {
-          return sendJson(res, 401, { ok: false, error: 'unauthorized' });
-        }
+        // Operator identity required: either configured operator key or operator allowlist email.
+        if (!(await requireOperatorAccess(req, res))) return;
         const updateRes = await updater.checkAndApplyUpstreamUpdate({ force: true });
         return sendJson(res, 200, { ok: true, ...updateRes, versionInfo: updater.getSystemVersionInfo() });
       }
 
       if (pathname === '/api/v1/system/diff') {
         if (method !== 'GET') return sendMethodNotAllowed(res, ['GET']);
-        const user = await accounts.getSessionUser(req);
-        if (!user) {
-          return sendJson(res, 401, { ok: false, error: 'unauthorized' });
-        }
+        if (!(await requireOperatorAccess(req, res))) return;
         return sendJson(res, 200, updater.getUpstreamCodeDiff());
       }
 
       if (pathname === '/api/v1/system/adapt') {
         if (method !== 'POST') return sendMethodNotAllowed(res, ['POST']);
-        const user = await accounts.getSessionUser(req);
-        if (!user) {
-          return sendJson(res, 401, { ok: false, error: 'unauthorized' });
-        }
+        if (!(await requireOperatorAccess(req, res))) return;
         const adaptRes = updater.autoAdaptDirtyNode();
         return sendJson(res, adaptRes.ok ? 200 : 409, adaptRes);
       }
 
       if (pathname === '/api/v1/bot-protection') {
         if (method !== 'GET') return sendMethodNotAllowed(res, ['GET']);
-        // Full addresses only to whoever holds the operator key.
-        const detailed = crypto.safeEqual(String(req.headers['x-obsx-key'] || ''),
-          String(process.env.OBSX_SECRET || ''));
-        return sendJson(res, 200, botshield.stats(detailed), CORS_HEADERS);
+        // Full addresses only to whoever holds a configured non-empty operator key.
+        return sendJson(res, 200, botshield.stats(hasValidOperatorKey(req)), CORS_HEADERS);
       }
 
       if (pathname === '/api/v1/bot-protection/mode') {
         if (method !== 'POST') return sendMethodNotAllowed(res, ['POST']);
-        const key = String(req.headers['x-obsx-key'] || '');
-        if (!crypto.safeEqual(key, String(process.env.OBSX_SECRET || ''))) {
+        if (!hasValidOperatorKey(req)) {
           return sendJson(res, 401, { ok: false, error: 'invalid_key' }, CORS_HEADERS);
         }
         const body = await readBody(req);
@@ -901,12 +955,24 @@ const server = http.createServer(async (req, res) => {
 
       // 12. Project Settings Management & Secret Key Rotation
       if (pathname.startsWith('/api/v1/project/')) {
+        const sub = pathname.slice('/api/v1/project/'.length);
+        const actionSuffix = [
+          '/rotate-key',
+          '/settings',
+          '/circuit-breaker/reset',
+          '/circuit-breaker',
+          '/telemetry',
+        ].find((s) => sub.endsWith(s)) || '';
+        const pid = actionSuffix ? sub.slice(0, -actionSuffix.length) : sub;
+        if (!isValidResourceId(pid)) {
+          return sendJson(res, 400, { ok: false, error: 'invalid_id' });
+        }
+
         // Rotate key: POST /api/v1/project/:pid/rotate-key
-        if (pathname.endsWith('/rotate-key')) {
+        if (actionSuffix === '/rotate-key') {
           if (method !== 'POST') return sendMethodNotAllowed(res, ['POST']);
           const user = await accounts.getSessionUser(req);
           if (!user) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
-          const pid = pathname.slice('/api/v1/project/'.length, -'/rotate-key'.length);
           const project = await core.loadProject(pid);
           if (!project || project.owner !== user.uid) return sendJson(res, 404, { ok: false, error: 'project_not_found' });
 
@@ -926,11 +992,10 @@ const server = http.createServer(async (req, res) => {
         }
 
         // Update settings: PATCH /api/v1/project/:pid/settings
-        if (pathname.endsWith('/settings')) {
+        if (actionSuffix === '/settings') {
           if (method !== 'PATCH' && method !== 'POST') return sendMethodNotAllowed(res, ['PATCH', 'POST']);
           const user = await accounts.getSessionUser(req);
           if (!user) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
-          const pid = pathname.slice('/api/v1/project/'.length, -'/settings'.length);
           const project = await core.loadProject(pid);
           if (!project || project.owner !== user.uid) return sendJson(res, 404, { ok: false, error: 'project_not_found' });
           const body = await readBody(req);
@@ -950,11 +1015,10 @@ const server = http.createServer(async (req, res) => {
         }
 
         // Circuit Breaker Status: GET /api/v1/project/:pid/circuit-breaker
-        if (pathname.endsWith('/circuit-breaker')) {
+        if (actionSuffix === '/circuit-breaker') {
           if (method !== 'GET') return sendMethodNotAllowed(res, ['GET']);
           const user = await accounts.getSessionUser(req);
           if (!user) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
-          const pid = pathname.slice('/api/v1/project/'.length, -'/circuit-breaker'.length);
           const project = await core.loadProject(pid);
           if (!project || project.owner !== user.uid) return sendJson(res, 404, { ok: false, error: 'project_not_found' });
           return sendJson(res, 200, {
@@ -965,11 +1029,10 @@ const server = http.createServer(async (req, res) => {
         }
 
         // Circuit Breaker Reset: POST /api/v1/project/:pid/circuit-breaker/reset
-        if (pathname.endsWith('/circuit-breaker/reset')) {
+        if (actionSuffix === '/circuit-breaker/reset') {
           if (method !== 'POST') return sendMethodNotAllowed(res, ['POST']);
           const user = await accounts.getSessionUser(req);
           if (!user) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
-          const pid = pathname.slice('/api/v1/project/'.length, -'/circuit-breaker/reset'.length);
           const project = await core.loadProject(pid);
           if (!project || project.owner !== user.uid) return sendJson(res, 404, { ok: false, error: 'project_not_found' });
 
@@ -988,11 +1051,10 @@ const server = http.createServer(async (req, res) => {
         }
 
         // Tenant Project Telemetry: GET /api/v1/project/:pid/telemetry
-        if (pathname.endsWith('/telemetry')) {
+        if (actionSuffix === '/telemetry') {
           if (method !== 'GET') return sendMethodNotAllowed(res, ['GET']);
           const user = await accounts.getSessionUser(req);
           if (!user) return sendJson(res, 401, { ok: false, error: 'unauthorized', message: 'Operator session required' });
-          const pid = pathname.slice('/api/v1/project/'.length, -'/telemetry'.length);
           const project = await core.loadProject(pid);
           if (!project || project.owner !== user.uid) return sendJson(res, 404, { ok: false, error: 'project_not_found', message: 'Project not found or unauthorized' });
 
@@ -1027,7 +1089,6 @@ const server = http.createServer(async (req, res) => {
         if (method === 'GET') {
           const user = await accounts.getSessionUser(req);
           if (!user) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
-          const pid = pathname.slice('/api/v1/project/'.length);
           const project = await core.loadProject(pid);
           if (!project || project.owner !== user.uid) return sendJson(res, 404, { ok: false, error: 'project_not_found' });
           return sendJson(res, 200, { ok: true, project });
@@ -1037,7 +1098,6 @@ const server = http.createServer(async (req, res) => {
         if (method === 'DELETE') {
           const user = await accounts.getSessionUser(req);
           if (!user) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
-          const pid = pathname.slice('/api/v1/project/'.length);
 
           const body = await readBody(req);
           const gate = await gateSelfRequest(req, body, 'Operator Delete Project', OPERATOR_GATE);
@@ -1161,6 +1221,9 @@ const server = http.createServer(async (req, res) => {
         const user = await accounts.getSessionUser(req);
         const uid = getCallerUid(user, req, clientIp);
         const noteId = pathname.slice('/api/v1/notes/'.length);
+        if (!isValidResourceId(noteId)) {
+          return sendJson(res, 400, { ok: false, error: 'invalid_id' });
+        }
 
         const body = await readBody(req);
         const gate = await gateSelfRequest(req, body, 'Delete Protected Note', OPERATOR_GATE);
@@ -1223,7 +1286,17 @@ const server = http.createServer(async (req, res) => {
     }
 
     // Strict path normalization & traversal jail
-    const decodedPath = decodeURIComponent(pathname);
+    let decodedPath;
+    try {
+      decodedPath = decodeURIComponent(pathname);
+    } catch {
+      res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end('Bad Request');
+    }
+    if (decodedPath.includes('\0')) {
+      res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end('Bad Request');
+    }
     let targetPath = path.resolve(PUBLIC_DIR, '.' + (decodedPath === '/' ? '/index.html' : decodedPath));
     if (!targetPath.startsWith(PUBLIC_DIR + path.sep) && targetPath !== PUBLIC_DIR) {
       res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });

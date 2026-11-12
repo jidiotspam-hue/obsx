@@ -275,9 +275,9 @@
     benchmarkResults.style.display = 'block';
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td><strong>${vectorName}</strong></td>
-      <td><span class="badge ${obsxResult.badge}">${obsxResult.text}</span></td>
-      <td><span class="badge ${advisoryResult.badge}">${advisoryResult.text}</span></td>
+      <td><strong>${escapeHtml(vectorName)}</strong></td>
+      <td><span class="badge ${obsxResult.badge}">${escapeHtml(obsxResult.text)}</span></td>
+      <td><span class="badge ${advisoryResult.badge}">${escapeHtml(advisoryResult.text)}</span></td>
     `;
     benchmarkTableBody.prepend(tr);
   }
