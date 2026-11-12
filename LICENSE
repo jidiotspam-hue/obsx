@@ -12,8 +12,7 @@ The most up-to-date version of this license supersedes, replaces, and governs al
 
 ---
 
-This repository is distributed under a dual-licensing framework modeled after the
-open-core standard used by industry-leading infrastructure platforms (e.g., Sentry, Elastic).
+This repository is distributed under a dual-licensing framework modeled after the open-core standard used by industry-leading infrastructure platforms (e.g., Sentry, Elastic).
 
 The repository is divided into two distinct legal zones:
 
@@ -26,11 +25,13 @@ The repository is divided into two distinct legal zones:
    - `public/obsx.min.js`, `public/veritas.min.js`, `public/tracer.min.js`
    - `tests/` (Protocol compliance and verification test suites)
 
-2. **ZONE 2: Node Operator Scaffolding, Accounts & Dashboard** — Licensed under the **Elastic License 2.0 (ELv2)**.
+2. **ZONE 2: Node Operator Scaffolding, Bot Protection & Dashboard** — Licensed under the **Elastic License 2.0 (ELv2)**.
    Includes:
    - `public/dashboard.html` & `public/dashboard.js` (Node operator management interface)
    - `lib/accounts.js` (Multi-tenant user and project key administration)
    - `lib/mailer.js` (Automated security incident notifications and email delivery)
+   - `lib/botshield.js` (Origin shield, adaptive load shedding, body gating, and connection posture engine)
+   - `tools/flood.js` (Load shedding verification and origin stress test harness)
    - `server.js` (Operator HTTP server harness & metrics telemetry broadcaster)
 
 ---
@@ -43,6 +44,19 @@ The **OBSX Sentinel™ Adaptive Vector Circuit Breaker Engine** (autonomous vect
 - **Private Repository & Cloud Exclusive:** Sentinel™ is maintained exclusively in a private, proprietary repository (`jidiotspam-hue/obsx-sentinel`) under the *OBSX Sentinel™ Enterprise Proprietary Software License* and is deployed exclusively as a managed service powering the official cloud platform at **https://obsx.tech**.
 - **Strict Prohibition on Emulation, Shimming & Clean-Room Replication:** You may **NOT** decompile, reverse-engineer, clean-room implement, emulate, shim, or duplicate the Sentinel™ architecture, algorithms, interface contracts, vector classifications, or methods, nor create drop-in replacement modules or shims purporting to substitute for or replicate OBSX Sentinel™. The MIT license covering Zone 1 applies solely to the standalone core protocol engine operating in baseline open-source mode and explicitly **DOES NOT** grant any right to recreate, shim, or simulate Sentinel™.
 - **Self-Hosting Independence:** Self-hosted deployments from this repository execute the complete, fully functional, zero-dependency OBSX Core verification engine (Zone 1) with operator scaffolding (Zone 2) in baseline open-source mode.
+
+---
+
+## TRANSITION & GRANDFATHERING POLICY (RELEASE v2.2.0 & POST-CUTOFF)
+
+1. **Grandfathered Community Instances (Installed on or prior to November 15, 2026):**
+   - Operators of existing self-hosted community instances installed on or before the transition cutoff date of **November 15, 2026** are fully entitled to continue executing release **v2.2.0** indefinitely under their existing open-source terms.
+   - Grandfathered deployments must migrate to local self-hosted keys and are not entitled to consume cloud resources or closed-source Sentinel™ intelligence without an enterprise license.
+2. **Post-Transition Repositories & Clones (Cloned subsequent to November 15, 2026):**
+   - Deployments and forks created or cloned subsequent to November 15, 2026 are subject to the revised proprietary and enterprise policies. Commercial SaaS redistribution and unauthorized extraction of Zone 2 components remain strictly prohibited.
+3. **Autonomous Safe Mode Discrepancy & Bug Bounty Guarantee:**
+   - If an operator's local environment experiences an unexpected integrity discrepancy, the system enters defensive Safe Mode.
+   - Bona fide security researchers and developers discovering genuine edge cases, false positives, or discrepancies are eligible for contributor immortalization in git and permanent Sentinel node cloud rewards via `security@obsx.tech`.
 
 ---
 
@@ -72,7 +86,7 @@ SOFTWARE.
 
 ### 1. Acceptance
 By using, copying, modifying, or distributing any software, algorithms, or files designated under
-Zone 2—specifically including the node operator dashboard, server harness, and account administration modules—you agree to all of the terms and conditions below.
+Zone 2—specifically including the node operator dashboard, server harness, origin bot shield, and account administration modules—you agree to all of the terms and conditions below.
 
 ### 2. Right to Use
 You may copy, distribute, modify, and create derivative works of the Zone 2 software,
@@ -86,9 +100,11 @@ subject to the non-negotiable limitations in Section 3.
 ### 3. Limitations (Anti-Competition & Non-Harvesting Clauses)
 You may not:
 - **(a) Hosted SaaS Service Prohibition**: Provide the software, or any portion, feature, or functionality derived from Zone 2, to third parties as a hosted, managed, or software-as-a-service (SaaS) offering;
-- **(b) Component & Algorithm Extraction Prohibition**: Extract, copy, adapt, or incorporate any portion, component, module, algorithm, or snippet of Zone 2 (specifically including without limitation the node operator dashboard, metrics broadcaster, or account administration modules) into any competing product, framework, library, or distribution;
+- **(b) Component & Algorithm Extraction Prohibition**: Extract, copy, adapt, or incorporate any portion, component, module, algorithm, or snippet of Zone 2 (specifically including without limitation the node operator dashboard, metrics broadcaster, bot protection origin shield, or account administration modules) into any competing product, framework, library, or distribution;
 - **(c) Notice Removal**: Move, change, disable, or obscure any licensing, copyright, attribution, or legal notices of the licensor;
-- **(d) Sentinel™ Circumvention & Shimming Prohibition**: Create, distribute, or incorporate any shim, mock, emulation, or derivative module designed to mimic, replicate, or circumvent the proprietary OBSX Sentinel™ interface, algorithms, or circuit breaker architecture.
+- **(d) Sentinel™ Circumvention & Shimming Prohibition**: Create, distribute, or incorporate any shim, mock, emulation, or derivative module designed to mimic, replicate, or circumvent the proprietary OBSX Sentinel™ interface, algorithms, or circuit breaker architecture;
+- **(e) Origin Shield Circumvention & Scraping Prohibition**: Circumvent, disable, spoof, or harvest the origin shield telemetry endpoints (`/api/v1/bot-protection`, `/api/v1/sentinel/ring`), forwarding header integrity checks, or connection posture algorithms for the purpose of constructing unauthorized scraping proxies, IP reputation bypass tooling, or commercial traffic relays;
+- **(f) License Integrity & Safe Mode Anti-Tamper**: Remove, tamper with, or intentionally alter the license integrity verification routines, tree fingerprint validation, or Safe Mode recovery mechanisms in `lib/updater.js`.
 
 ### 4. Termination
 The rights granted to you under this license terminate immediately if you violate any part of this agreement.
