@@ -166,7 +166,8 @@ test('hardening: empty or short OBSX_SECRET is rejected on operator bot-protecti
     );
     assert.equal(r.out.status, 403);
 
-    // Direct evaluate() check with empty or short operatorSecret must NOT grant operator status
+    // Direct evaluate() check with empty or short OBSX_SECRET must NOT grant operator status
+    process.env.OBSX_SECRET = '';
     const statsResEmpty = makeFakeRes();
     const statsUrl = new URL('/api/v1/bot-protection', 'http://obsx.tech');
     botshield.evaluate(
@@ -176,12 +177,14 @@ test('hardening: empty or short OBSX_SECRET is rejected on operator bot-protecti
       statsUrl.pathname,
       10,
       statsUrl,
-      { operatorSecret: '' }
+      { activeConnections: 1, inFlight: 1 }
     );
     assert.equal(statsResEmpty.out.status, 200);
     const statsBodyEmpty = JSON.parse(statsResEmpty.out.body);
+    assert.ok(statsBodyEmpty.topOffenders.length > 0, 'Expected at least one recorded offender');
     assert.equal(statsBodyEmpty.topOffenders[0].ip.includes('*'), true, 'Empty secret must keep offender IPs masked');
 
+    process.env.OBSX_SECRET = 'short_key_123';
     const statsResShort = makeFakeRes();
     botshield.evaluate(
       { method: 'GET', headers: { 'user-agent': 'curl/8.0', 'x-obsx-key': 'short_key_123' } },
@@ -190,9 +193,10 @@ test('hardening: empty or short OBSX_SECRET is rejected on operator bot-protecti
       statsUrl.pathname,
       10,
       statsUrl,
-      { operatorSecret: 'short_key_123' }
+      { activeConnections: 1, inFlight: 1 }
     );
     const statsBodyShort = JSON.parse(statsResShort.out.body);
+    assert.ok(statsBodyShort.topOffenders.length > 0, 'Expected at least one recorded offender');
     assert.equal(statsBodyShort.topOffenders[0].ip.includes('*'), true, 'Short (<16) secret must keep offender IPs masked');
 
     // HTTP endpoint check when process.env.OBSX_SECRET is empty or too short
@@ -209,9 +213,8 @@ test('hardening: empty or short OBSX_SECRET is rejected on operator bot-protecti
         headers: { 'x-obsx-key': candidate },
       });
       assert.equal(getRes.status, 200);
-      if (getRes.json.topOffenders.length > 0) {
-        assert.equal(getRes.json.topOffenders[0].ip.includes('*'), true);
-      }
+      assert.ok(getRes.json.topOffenders.length > 0, 'Expected offender entries on stats response');
+      assert.equal(getRes.json.topOffenders[0].ip.includes('*'), true);
     }
 
     // Valid >= 16 char secret succeeds
@@ -229,17 +232,28 @@ test('hardening: empty or short OBSX_SECRET is rejected on operator bot-protecti
   }
 });
 
-test('hardening: non-operator accounts are denied access to operator/system routes while allowlisted operators succeed', async () => {
+test('hardening: non-operator and unauthenticated callers are denied operator/system routes while allowlisted operators succeed', async () => {
   const prevSecret = process.env.OBSX_SECRET;
   const prevOps = process.env.OPERATOR_EMAILS;
+  const prevAlertEmail = process.env.ALERT_EMAIL;
   process.env.OBSX_SECRET = 'valid_operator_secret_key_abcdef';
   process.env.OPERATOR_EMAILS = 'ops-admin@obsx.tech';
+  process.env.ALERT_EMAIL = 'alert-recipient@example.com';
 
   try {
     const regEmail = `regular_${crypto.randomId(6)}@example.com`;
     const regStart = await accounts.startEmailAuth(regEmail, '198.51.100.141');
     const regSession = await accounts.verifyEmailAuth(regEmail, regStart.devCode);
     const regCookie = `obsx_session=${regSession.sid}`;
+
+    // Neither official@obsx.tech nor ALERT_EMAIL is granted implicit operator access when omitted from OPERATOR_EMAILS
+    const defaultStart = await accounts.startEmailAuth('official@obsx.tech', '198.51.100.143');
+    const defaultSession = await accounts.verifyEmailAuth('official@obsx.tech', defaultStart.devCode);
+    const defaultCookie = `obsx_session=${defaultSession.sid}`;
+
+    const alertOnlyStart = await accounts.startEmailAuth('alert-recipient@example.com', '198.51.100.144');
+    const alertOnlySession = await accounts.verifyEmailAuth('alert-recipient@example.com', alertOnlyStart.devCode);
+    const alertOnlyCookie = `obsx_session=${alertOnlySession.sid}`;
 
     const opStart = await accounts.startEmailAuth('ops-admin@obsx.tech', '198.51.100.142');
     const opSession = await accounts.verifyEmailAuth('ops-admin@obsx.tech', opStart.devCode);
@@ -251,12 +265,20 @@ test('hardening: non-operator accounts are denied access to operator/system rout
       ['POST', '/api/v1/system/update'],
       ['POST', '/api/v1/system/adapt'],
     ]) {
-      const denied = await request(method, endpoint, {
-        headers: { Cookie: regCookie },
+      const unauthed = await request(method, endpoint, {
         body: method === 'POST' ? {} : undefined,
       });
-      assert.equal(denied.status, 403, `Expected 403 for regular user on ${method} ${endpoint}`);
-      assert.equal(denied.json.error, 'operator_required');
+      assert.equal(unauthed.status, 401, `Expected 401 without session or key on ${method} ${endpoint}`);
+      assert.equal(unauthed.json.error, 'unauthorized');
+
+      for (const nonOpCookie of [regCookie, defaultCookie, alertOnlyCookie]) {
+        const denied = await request(method, endpoint, {
+          headers: { Cookie: nonOpCookie },
+          body: method === 'POST' ? {} : undefined,
+        });
+        assert.equal(denied.status, 403, `Expected 403 for non-allowlisted user on ${method} ${endpoint}`);
+        assert.equal(denied.json.error, 'operator_required');
+      }
     }
 
     const opAlerts = await request('GET', '/api/v1/alerts', { headers: { Cookie: opCookie } });
@@ -279,6 +301,8 @@ test('hardening: non-operator accounts are denied access to operator/system rout
     else process.env.OBSX_SECRET = prevSecret;
     if (prevOps === undefined) delete process.env.OPERATOR_EMAILS;
     else process.env.OPERATOR_EMAILS = prevOps;
+    if (prevAlertEmail === undefined) delete process.env.ALERT_EMAIL;
+    else process.env.ALERT_EMAIL = prevAlertEmail;
   }
 });
 
@@ -471,6 +495,10 @@ test('hardening: malformed URLs, bad encodings, NUL bytes, non-object JSON, inva
   const nulPath = await request('GET', '/%00');
   assert.equal(nulPath.status, 400);
 
+  const protoRel = await request('GET', '//evil.com');
+  assert.equal(protoRel.status, 404, 'Protocol-relative path must normalize internally without redirecting');
+  assert.equal(protoRel.headers.location, undefined);
+
   const delBadId = await request('DELETE', '/api/v1/notes/%ZZ');
   assert.equal(delBadId.status, 400);
   assert.equal(delBadId.json.error, 'invalid_id');
@@ -490,33 +518,74 @@ test('hardening: malformed URLs, bad encodings, NUL bytes, non-object JSON, inva
     assert.equal(res.json.error, 'invalid_json');
   }
 
-  // Raw HTTP request with malformed Host header must not crash or hang socket
+  // Raw HTTP request with malformed Host header falls back to localhost cleanly
   const rawResp = await new Promise((resolve, reject) => {
     const sock = net.connect(port, '127.0.0.1', () => {
-      sock.write('GET /health HTTP/1.1\r\nHost: bad host:!!\r\nConnection: close\r\n\r\n');
+      sock.write('GET /api/v1/health HTTP/1.1\r\nHost: bad host:!!\r\nConnection: close\r\n\r\n');
     });
     const chunks = [];
     sock.on('data', (c) => chunks.push(c));
     sock.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
     sock.on('error', reject);
   });
-  assert.ok(rawResp.startsWith('HTTP/1.1 '), 'Malformed Host should return a clean HTTP response');
+  assert.ok(rawResp.startsWith('HTTP/1.1 200 '), 'Malformed Host should fall back to localhost and return 200 OK');
 
-  // Project settings bounds clamping & origins list cap
-  const proj = await core.createProject({ name: 'bounds_proj' }, 'u_bounds');
-  const oversizeOrigins = Array.from({ length: 70 }, (_, i) => `https://origin${i}.example.com`);
-  oversizeOrigins.push('x'.repeat(500));
-  const updated = await core.updateProjectSettings(proj.pid, {
+  // Raw unparseable request target triggers 400 invalid_request from parseRequestUrl()
+  const rawBadUrl = await new Promise((resolve, reject) => {
+    const sock = net.connect(port, '127.0.0.1', () => {
+      sock.write('GET http://[::1 HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n');
+    });
+    const chunks = [];
+    sock.on('data', (c) => chunks.push(c));
+    sock.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    sock.on('error', reject);
+  });
+  assert.ok(rawBadUrl.startsWith('HTTP/1.1 400 '), 'Unparseable URL should return 400 Bad Request');
+  assert.ok(rawBadUrl.includes('invalid_request'));
+
+  // HSTS header is emitted on HTTPS proxy traffic and omitted on plain HTTP
+  const plainMetrics = await request('GET', '/api/v1/metrics');
+  assert.equal(plainMetrics.status, 200);
+  assert.equal(plainMetrics.headers['strict-transport-security'], undefined);
+
+  const httpsMetrics = await request('GET', '/api/v1/metrics', {
+    headers: { 'x-forwarded-proto': 'https' },
+  });
+  assert.equal(httpsMetrics.status, 200);
+  assert.equal(httpsMetrics.headers['strict-transport-security'], 'max-age=31536000; includeSubDomains');
+
+  // Both createProject and updateProjectSettings enforce schema/bounds & origin caps
+  const longFirstOrigins = ['https://' + 'x'.repeat(500), ...Array.from({ length: 70 }, (_, i) => `https://origin${i}.example.com`)];
+  const createdProj = await core.createProject({
+    name: 'bounds_proj',
+    origins: longFirstOrigins,
+    settings: {
+      mode: 'bogus_mode',
+      powDifficulty: -4,
+      sessionTtlSec: 10,
+      minDurationMs: -10,
+      reviewAt: 500,
+    },
+  }, 'u_bounds');
+  assert.equal(createdProj.settings.mode, 'enforce');
+  assert.equal(createdProj.settings.powDifficulty, 1);
+  assert.equal(createdProj.settings.sessionTtlSec, 60);
+  assert.equal(createdProj.settings.minDurationMs, 0);
+  assert.equal(createdProj.settings.reviewAt, 100);
+  assert.equal(createdProj.settings.origins.length, 50);
+  assert.equal(createdProj.settings.origins[0].length, 200);
+
+  const updated = await core.updateProjectSettings(createdProj.pid, {
     powDifficulty: 999,
     sessionTtlSec: -50,
-    minDurationMs: -10,
-    origins: oversizeOrigins,
+    minDurationMs: 0,
+    origins: longFirstOrigins,
   });
   assert.equal(updated.settings.powDifficulty, 8);
-  assert.ok(updated.settings.minDurationMs >= 0);
-  assert.ok(updated.settings.sessionTtlSec >= 60);
-  assert.ok(updated.settings.origins.length <= 50);
-  assert.ok(updated.settings.origins.every((o) => typeof o === 'string' && o.length <= 200));
+  assert.equal(updated.settings.minDurationMs, 0);
+  assert.equal(updated.settings.sessionTtlSec, 60);
+  assert.equal(updated.settings.origins.length, 50);
+  assert.equal(updated.settings.origins[0].length, 200);
 });
 
 test('hardening: crypto.isTestRuntime ignores substring "test" and respects NODE_ENV=production', () => {
@@ -561,9 +630,9 @@ test('hardening: crypto.isTestRuntime ignores substring "test" and respects NODE
   }
 });
 
-test('hardening: concurrent startEmailAuth calls enforce atomic 45s cooldown lock', async () => {
+test('hardening: concurrent startEmailAuth calls enforce atomic 45s cooldown lock and subnet-first limits', async () => {
   const raceEmail = `race_${crypto.randomId(6)}@example.com`;
-  const callerIp = '198.51.100.210';
+  const callerIp = '100.64.10.1';
 
   const settled = await Promise.allSettled(
     Array.from({ length: 5 }, () => accounts.startEmailAuth(raceEmail, callerIp))
@@ -574,12 +643,22 @@ test('hardening: concurrent startEmailAuth calls enforce atomic 45s cooldown loc
   assert.equal(fulfilled.length, 1, 'Exactly one concurrent OTP request should win the atomic lock');
   assert.equal(rejected.length, 4, 'All competing parallel OTP requests must fail cooldown');
   assert.ok(rejected.every((r) => /Please wait/i.test(r.reason && r.reason.message)));
+
+  // Subnet limit (> 10) executes before acquiring victim mailbox cooldown lock
+  const floodedIp = '100.64.20.1';
+  for (let i = 0; i < 10; i++) {
+    await accounts.startEmailAuth(`flood_${i}_${crypto.randomId(4)}@example.com`, floodedIp);
+  }
+  const victimEmail = `victim_${crypto.randomId(6)}@example.com`;
+  await assert.rejects(() => accounts.startEmailAuth(victimEmail, floodedIp), /Too many requests/i);
+  const victimFresh = await accounts.startEmailAuth(victimEmail, '100.64.30.1');
+  assert.equal(victimFresh.ok, true, 'Rate-limited IP must not burn victim mailbox cooldown');
 });
 
-test('hardening: mailer formats security alerts with escaped HTML and safe HTTP URLs only', () => {
+test('hardening: mailer formats security alerts with escaped HTML, preserved alert newlines, and safe HTTP URLs only', () => {
   const rendered = mailer.formatSecurityAlertMessage({
     title: '<script>alert(1)</script>\r\nInjectedHeader: yes',
-    summary: 'Host <img src=x onerror=alert(2)> & payload',
+    summary: 'Line1: <img src=x onerror=alert(2)>\nLine2: & payload',
     severity: '<b>CRITICAL</b>',
     actionUrl: 'javascript:alert(3)',
   });
@@ -590,7 +669,9 @@ test('hardening: mailer formats security alerts with escaped HTML and safe HTTP 
   assert.ok(!rendered.html.includes('<b>CRITICAL</b>'), 'HTML tags in severity must be escaped');
   assert.ok(!rendered.html.includes('javascript:'), 'javascript: URLs must be blocked in HTML button');
   assert.ok(!rendered.text.includes('javascript:'), 'javascript: URLs must be blocked in plain text body');
+  assert.ok(rendered.text.includes('Line1: <img src=x onerror=alert(2)>\nLine2: & payload'));
   assert.ok(rendered.html.includes('&lt;script&gt;alert(1)&lt;/script&gt;'));
+  assert.ok(rendered.html.includes('Line1: &lt;img src=x onerror=alert(2)&gt;<br>Line2: &amp; payload'));
   assert.ok(rendered.html.includes('https://obsx.tech/dashboard.html'));
 
   const validHttps = mailer.formatSecurityAlertMessage({
@@ -599,4 +680,114 @@ test('hardening: mailer formats security alerts with escaped HTML and safe HTTP 
     actionUrl: 'https://obsx.tech/dashboard.html?tab=alerts',
   });
   assert.ok(validHttps.html.includes('https://obsx.tech/dashboard.html?tab=alerts'));
+});
+
+test('hardening: recordSignals preserves invalid tsig, unions tamper flags, validates tampered shape, rejects expired/bad inputs, and resists CHALLENGE_HTML replacer tokens', async () => {
+  const { getKv } = require('../lib/kv');
+  const kv = getKv();
+  const proj = await core.createProject({ name: 'sticky_seal_proj' }, 'u_sticky');
+  await core.updateProjectSettings(proj.pid, { minDurationMs: 0 });
+  const freshProj = await core.loadProject(proj.pid);
+
+  const cleanSignals = {
+    sh: 'trc_v1_live',
+    gpuRenderer: 'Apple M2',
+    mousePoints: NATURAL_CURVE,
+    elapsedMs: 1200,
+    keyIntervals: [95, 132, 88, 114],
+    rum: { dns: 12, tcp: 18, ttfb: 45, domReady: 180 },
+    audio: 0.00012345,
+  };
+
+  // 1. Expired token and malformed signal arrays/objects rejected at recordSignals()
+  const expiredTok = await crypto.signToken({ p: freshProj.pid, s: 's_exp', e: Date.now() - 1000 }, kv);
+  assert.deepEqual(await core.recordSignals({ token: expiredTok, signals: cleanSignals }), { ok: false, error: 'expired' });
+
+  const sBadInput = await core.startSession(freshProj, { ip: '198.51.100.181', action: 'test' });
+  assert.deepEqual(await core.recordSignals({ token: sBadInput.token, signals: ['not', 'obj'] }), { ok: false, error: 'bad_signals' });
+  assert.deepEqual(await core.recordSignals({ token: sBadInput.token, vitals: 'not_obj' }), { ok: false, error: 'bad_signals' });
+
+  // 2. Sticky tsig='invalid' cannot be cleared by a subsequent valid tsig beacon
+  const sSticky = await core.startSession(freshProj, { ip: '198.51.100.182', action: 'test' });
+  const nSticky = solvePow(sSticky.challenge, sSticky.difficulty);
+  await core.recordSignals({
+    token: sSticky.token,
+    nonce: nSticky,
+    signals: cleanSignals,
+    tsig: 'bad_first_tsig',
+  });
+  const validFollowupTsig = crypto.hmac(
+    crypto.unb64u(sSticky.rk),
+    `obsx.sig.v1\n${sSticky.session}\n${nSticky}\n${crypto.canon(cleanSignals)}`
+  );
+  await core.recordSignals({
+    token: sSticky.token,
+    nonce: nSticky,
+    signals: cleanSignals,
+    tsig: validFollowupTsig,
+  });
+  const stickyVerdict = await core.verify(freshProj, { token: sSticky.token, nonce: nSticky }, { ip: '198.51.100.182', ua: 'Mozilla/5.0' });
+  assert.equal(stickyVerdict.verdict, 'reject');
+  assert.ok(stickyVerdict.reasons.some((r) => r.code === 'bad_signature'));
+
+  // 3. Monotonic preservation of tampered/webdriver flags and non-throwing malformed tampered types
+  const sMono = await core.startSession(freshProj, { ip: '198.51.100.183', action: 'test' });
+  const nMono = solvePow(sMono.challenge, sMono.difficulty);
+  await core.recordSignals({
+    token: sMono.token,
+    signals: {
+      sh: 'trc_v1_live',
+      mousePoints: NATURAL_CURVE,
+      keyIntervals: [100, 120, 95],
+      elapsedMs: 1200,
+      webdriver: true,
+      tampered: ['env_custom_flag', 123, null],
+    },
+  });
+  await core.recordSignals({
+    token: sMono.token,
+    signals: {
+      sh: 'trc_v1_live',
+      mousePoints: NATURAL_CURVE,
+      keyIntervals: [100, 120, 95],
+      elapsedMs: 1300,
+      webdriver: false,
+      tampered: { length: 1 },
+    },
+  });
+  const monoVerdict = await core.verify(freshProj, { token: sMono.token, nonce: nMono }, { ip: '198.51.100.183', ua: 'Mozilla/5.0' });
+  assert.ok(monoVerdict.reasons.some((r) => r.code === 'automation_webdriver'));
+  assert.ok(monoVerdict.reasons.some((r) => r.code === 'automation_headless'));
+
+  // 4. Benign wrapped: entries with zero interaction still trigger missing_signals
+  const sWrapped = await core.startSession(freshProj, { ip: '198.51.100.184', action: 'test' });
+  const nWrapped = solvePow(sWrapped.challenge, sWrapped.difficulty);
+  await core.recordSignals({
+    token: sWrapped.token,
+    signals: { sh: 'trc_v1_live', tampered: ['wrapped:console'] },
+  });
+  const wrappedVerdict = await core.verify(freshProj, { token: sWrapped.token, nonce: nWrapped }, { ip: '198.51.100.184', ua: 'Mozilla/5.0' });
+  assert.equal(wrappedVerdict.verdict, 'reject');
+  assert.ok(wrappedVerdict.reasons.some((r) => r.code === 'missing_signals'));
+
+  // 5. CHALLENGE_HTML ignores $' / placeholder tokens in UA & pathname
+  botshield.reset();
+  botshield.configure({ enabled: true, mode: 'auto', engageRps: 100, baseDifficulty: 8, maxDifficulty: 12 });
+  try {
+    const trkRes = makeFakeRes();
+    const trkPath = "/__TARGET__/ok/$'/</script>";
+    botshield.evaluate(
+      { method: 'GET', headers: { 'user-agent': "bot$'__TARGET____BITS__" } },
+      trkRes,
+      '198.51.100.185',
+      trkPath,
+      10,
+      new URL(`http://obsx.tech${trkPath}`),
+      { activeConnections: 1, inFlight: 1 }
+    );
+    assert.equal(trkRes.out.status, 403);
+    assert.equal((trkRes.out.body.match(/<\/script>/g) || []).length, 1, 'Only the legitimate closing script tag should exist');
+  } finally {
+    restoreBotShield();
+  }
 });

@@ -11,14 +11,14 @@
 │  STAGE 1: DEFEAT ADVISORY BOTS        [ CLEARED • 100% BLOCKED ]  │
 │  DIFFICULTY: CRYPTOGRAPHIC HARD       [ SHA-256 MICRO-POW ]       │
 │  PARTY MEMBERS: ZERO RUNTIME DEPS     [ 100% PURE NATIVE NODE ]   │
-│  STATUS: 81 / 81 TESTS PASSING        [ ALL SYSTEMS GREEN ]       │
+│  STATUS: 153 / 153 TESTS PASSING      [ ALL SYSTEMS GREEN ]       │
 │  LIVE NODE: OBSX.TECH                 [ PRODUCTION OPERATIONAL ]  │
 ╰───────────────────────────────────────────────────────────────────╯
 ```
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/RELEASE-v2.2.0%20PUBLIC-ff79c6?style=flat-square" alt="Release: v2.2.0 Public"></a>
-  <a href="tests/"><img src="https://img.shields.io/badge/TESTS-141%2F141%20PASSING-50fa7b?style=flat-square" alt="Tests: 81/81 Passing"></a>
+  <a href="tests/"><img src="https://img.shields.io/badge/TESTS-153%2F153%20PASSING-50fa7b?style=flat-square" alt="Tests: 153/153 Passing"></a>
   <a href="package.json"><img src="https://img.shields.io/badge/DEPENDENCIES-ZERO-bd93f9?style=flat-square" alt="Zero Dependencies"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/LICENSE-MIT%20%2F%20ELv2-8be9fd?style=flat-square" alt="License: MIT / ELv2"></a>
   <a href="https://obsx.tech"><img src="https://img.shields.io/badge/LIVE%20NODE-OBSX.TECH-ffb86c?style=flat-square" alt="Live Node"></a>
@@ -270,7 +270,7 @@ It escalates through the cheapest defence that is working, in order:
 
 The shield engages automatically when the origin sees `OBSX_SHIELD_RPS` requests per second **or** `OBSX_FANOUT_IPS` distinct addresses, `OBSX_FANOUT_SUBNETS` distinct subnets or `OBSX_FANOUT_PATHS` distinct paths in a minute, ramps challenge difficulty from 16 to 22 bits as the flood continues, and stands down on a heartbeat once the rate settles for `OBSX_SHIELD_CALM_MS` — so the shield does not stay engaged after a flood that has already ended. Every internal map is capped (`OBSX_SHIELD_MAP_SIZE`) and pruned, so an attacker spoofing millions of addresses cannot grow the process out of memory.
 
-**Inspect it live:** `GET /api/v1/bot-protection` returns counters, engagement state, thresholds and health. Addresses in the offender lists are masked (`203.0.*.*`) unless you pass your operator key: `curl -H "x-obsx-key: $OBSX_SECRET" https://obsx.tech/api/v1/bot-protection`.
+**Inspect it live:** `GET /api/v1/bot-protection` returns counters, engagement state, thresholds and health. Addresses in the offender lists are masked (`203.0.*.*`) unless you pass your operator key (`OBSX_SECRET` must be at least 16 characters; unset or shorter secrets fail closed): `curl -H "x-obsx-key: $OBSX_SECRET" https://obsx.tech/api/v1/bot-protection`. Authenticated dashboard sessions on `/api/v1/alerts` and `/api/v1/system/*` require an email allowlisted via `OPERATOR_EMAILS`, `OBSX_OPERATOR_EMAILS`, or `OPERATOR_EMAIL`.
 
 **Prove it on your own node:**
 

@@ -164,13 +164,11 @@ function getOperatorAllowlist() {
     process.env.OPERATOR_EMAILS,
     process.env.OBSX_OPERATOR_EMAILS,
     process.env.OPERATOR_EMAIL,
-    process.env.ALERT_EMAIL,
   ]
     .filter(Boolean)
     .flatMap((v) => String(v).split(','))
     .map((e) => accounts.cleanEmail(e))
     .filter(Boolean);
-  configured.push('official@obsx.tech');
   return new Set(configured);
 }
 

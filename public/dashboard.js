@@ -271,7 +271,7 @@
               <div>
                 <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Operational Gate Mode</div>
                 <div style="display: flex; align-items: center; gap: 8px; margin-top: 3px;">
-                  <span class="badge ${isPassive ? 'badge-warn' : 'badge-good'}" id="mode-badge-${p.pid}">
+                  <span class="badge ${isPassive ? 'badge-warn' : 'badge-good'}" id="mode-badge-${escapeHtml(p.pid)}">
                     ${isPassive ? '○ Passive (Audit / Observability)' : '● Enforcing (Active Cryptographic Gate)'}
                   </span>
                   <span style="font-size: 11.5px; color: var(--text-muted);">
@@ -280,7 +280,7 @@
                 </div>
               </div>
               <div>
-                <button type="button" class="btn btn-secondary btn-toggle-mode" data-pid="${p.pid}" data-mode="${isPassive ? 'passive' : 'enforce'}" style="font-size: 11.5px; padding: 4px 10px;">
+                <button type="button" class="btn btn-secondary btn-toggle-mode" data-pid="${escapeHtml(p.pid)}" data-mode="${isPassive ? 'passive' : 'enforce'}" style="font-size: 11.5px; padding: 4px 10px;">
                   ${isPassive ? 'Switch to Enforce' : 'Switch to Passive'}
                 </button>
               </div>
@@ -291,17 +291,17 @@
               <div>
                 <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Autonomous Vector Circuit Breaker</div>
                 <div style="display: flex; align-items: center; gap: 8px; margin-top: 3px;">
-                  <span class="badge ${p.settings && p.settings.adaptiveCircuitBreaker ? 'badge-good' : 'badge-secondary'}" id="cb-badge-${p.pid}">
+                  <span class="badge ${p.settings && p.settings.adaptiveCircuitBreaker ? 'badge-good' : 'badge-secondary'}" id="cb-badge-${escapeHtml(p.pid)}">
                     ${p.settings && p.settings.adaptiveCircuitBreaker ? '● Active (Auto-Shedding)' : '○ Inactive (Off by default)'}
                   </span>
-                  <span id="cb-details-${p.pid}" style="font-size: 11.5px; color: var(--text-muted);"></span>
+                  <span id="cb-details-${escapeHtml(p.pid)}" style="font-size: 11.5px; color: var(--text-muted);"></span>
                 </div>
               </div>
               <div style="display: flex; gap: 8px;">
-                <button type="button" class="btn btn-secondary btn-toggle-cb" data-pid="${p.pid}" data-enabled="${p.settings && p.settings.adaptiveCircuitBreaker ? 'true' : 'false'}" style="font-size: 11.5px; padding: 4px 10px;">
+                <button type="button" class="btn btn-secondary btn-toggle-cb" data-pid="${escapeHtml(p.pid)}" data-enabled="${p.settings && p.settings.adaptiveCircuitBreaker ? 'true' : 'false'}" style="font-size: 11.5px; padding: 4px 10px;">
                   ${p.settings && p.settings.adaptiveCircuitBreaker ? 'Disable' : 'Enable'}
                 </button>
-                <button type="button" class="btn btn-secondary btn-reset-cb" data-pid="${p.pid}" id="btn-reset-cb-${p.pid}" style="font-size: 11.5px; padding: 4px 10px; display: none;">
+                <button type="button" class="btn btn-secondary btn-reset-cb" data-pid="${escapeHtml(p.pid)}" id="btn-reset-cb-${escapeHtml(p.pid)}" style="font-size: 11.5px; padding: 4px 10px; display: none;">
                   Reset Vectors
                 </button>
               </div>
@@ -322,7 +322,7 @@
                 </div>
               </div>
               <div>
-                <button type="button" class="btn btn-secondary btn-toggle-openai" data-pid="${p.pid}" data-enabled="${(p.settings && p.settings.blockOpenAiScrapers !== false) ? 'true' : 'false'}" style="font-size: 11.5px; padding: 4px 10px;">
+                <button type="button" class="btn btn-secondary btn-toggle-openai" data-pid="${escapeHtml(p.pid)}" data-enabled="${(p.settings && p.settings.blockOpenAiScrapers !== false) ? 'true' : 'false'}" style="font-size: 11.5px; padding: 4px 10px;">
                   ${(p.settings && p.settings.blockOpenAiScrapers !== false) ? 'Allow OpenAI' : 'Block OpenAI ("get your own ram")'}
                 </button>
               </div>
