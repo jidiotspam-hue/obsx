@@ -58,11 +58,18 @@
   let activeTelemetryPid = null;
   let cachedUserProjects = [];
 
-  function showMsg(text, isError = false) {
+  function showMsg(text, isError = false, devCode = '') {
     if (!authMsg) return;
     authMsg.style.display = 'block';
     authMsg.style.color = isError ? 'var(--bad)' : 'var(--good)';
-    authMsg.innerHTML = text;
+    if (devCode) {
+      authMsg.textContent = text + ' ';
+      const strong = document.createElement('strong');
+      strong.textContent = devCode;
+      authMsg.appendChild(strong);
+      return;
+    }
+    authMsg.textContent = text;
   }
 
   // 1. Check Session State on Load
@@ -86,7 +93,7 @@
     if (viewLoggedIn) viewLoggedIn.style.display = 'block';
     if (userEmailDisplay) userEmailDisplay.textContent = user.email;
     if (navAuthStatus) {
-      navAuthStatus.innerHTML = `<span class="badge badge-good" style="margin-left: 8px;">Operator: ${user.email.split('@')[0]}</span>`;
+      navAuthStatus.innerHTML = `<span class="badge badge-good" style="margin-left: 8px;">Operator: ${escapeHtml(String(user.email || '').split('@')[0])}</span>`;
     }
 
     loadProjects();
@@ -227,8 +234,8 @@
                 <span style="font-size: 11.5px; color: var(--text-muted); margin-left: 8px;">Created ${createdDate}</span>
               </div>
               <div style="display: flex; gap: 8px;">
-                <button type="button" class="btn btn-secondary btn-rotate-sk" data-pid="${p.pid}" style="font-size: 11.5px; padding: 4px 10px;">Rotate Secret Key</button>
-                <button type="button" class="btn btn-secondary btn-delete-proj" data-pid="${p.pid}" data-name="${escapeHtml(p.name)}" style="font-size: 11.5px; padding: 4px 10px; color: var(--bad);">Delete</button>
+                <button type="button" class="btn btn-secondary btn-rotate-sk" data-pid="${escapeHtml(p.pid)}" style="font-size: 11.5px; padding: 4px 10px;">Rotate Secret Key</button>
+                <button type="button" class="btn btn-secondary btn-delete-proj" data-pid="${escapeHtml(p.pid)}" data-name="${escapeHtml(p.name)}" style="font-size: 11.5px; padding: 4px 10px; color: var(--bad);">Delete</button>
               </div>
             </div>
 
@@ -246,7 +253,7 @@
               <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; margin-bottom: 4px;">Secret Verification Key (Backend API)</div>
               <div style="display: flex; gap: 8px; align-items: center;">
                 <input type="text" readonly value="sk_••••••••••••••••••••••••••••••••" class="form-input" style="flex: 1; font-family: var(--font-mono); font-size: 12px; padding: 6px 10px; margin-bottom: 0; color: var(--text-muted);" />
-                <button type="button" class="btn btn-secondary btn-rotate-inline" data-pid="${p.pid}" style="font-size: 11.5px; padding: 4px 10px;">Rotate</button>
+                <button type="button" class="btn btn-secondary btn-rotate-inline" data-pid="${escapeHtml(p.pid)}" style="font-size: 11.5px; padding: 4px 10px;">Rotate</button>
               </div>
             </div>
 
@@ -264,7 +271,7 @@
               <div>
                 <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Operational Gate Mode</div>
                 <div style="display: flex; align-items: center; gap: 8px; margin-top: 3px;">
-                  <span class="badge ${isPassive ? 'badge-warn' : 'badge-good'}" id="mode-badge-${p.pid}">
+                  <span class="badge ${isPassive ? 'badge-warn' : 'badge-good'}" id="mode-badge-${escapeHtml(p.pid)}">
                     ${isPassive ? '○ Passive (Audit / Observability)' : '● Enforcing (Active Cryptographic Gate)'}
                   </span>
                   <span style="font-size: 11.5px; color: var(--text-muted);">
@@ -273,7 +280,7 @@
                 </div>
               </div>
               <div>
-                <button type="button" class="btn btn-secondary btn-toggle-mode" data-pid="${p.pid}" data-mode="${isPassive ? 'passive' : 'enforce'}" style="font-size: 11.5px; padding: 4px 10px;">
+                <button type="button" class="btn btn-secondary btn-toggle-mode" data-pid="${escapeHtml(p.pid)}" data-mode="${isPassive ? 'passive' : 'enforce'}" style="font-size: 11.5px; padding: 4px 10px;">
                   ${isPassive ? 'Switch to Enforce' : 'Switch to Passive'}
                 </button>
               </div>
@@ -284,17 +291,17 @@
               <div>
                 <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Autonomous Vector Circuit Breaker</div>
                 <div style="display: flex; align-items: center; gap: 8px; margin-top: 3px;">
-                  <span class="badge ${p.settings && p.settings.adaptiveCircuitBreaker ? 'badge-good' : 'badge-secondary'}" id="cb-badge-${p.pid}">
+                  <span class="badge ${p.settings && p.settings.adaptiveCircuitBreaker ? 'badge-good' : 'badge-secondary'}" id="cb-badge-${escapeHtml(p.pid)}">
                     ${p.settings && p.settings.adaptiveCircuitBreaker ? '● Active (Auto-Shedding)' : '○ Inactive (Off by default)'}
                   </span>
-                  <span id="cb-details-${p.pid}" style="font-size: 11.5px; color: var(--text-muted);"></span>
+                  <span id="cb-details-${escapeHtml(p.pid)}" style="font-size: 11.5px; color: var(--text-muted);"></span>
                 </div>
               </div>
               <div style="display: flex; gap: 8px;">
-                <button type="button" class="btn btn-secondary btn-toggle-cb" data-pid="${p.pid}" data-enabled="${p.settings && p.settings.adaptiveCircuitBreaker ? 'true' : 'false'}" style="font-size: 11.5px; padding: 4px 10px;">
+                <button type="button" class="btn btn-secondary btn-toggle-cb" data-pid="${escapeHtml(p.pid)}" data-enabled="${p.settings && p.settings.adaptiveCircuitBreaker ? 'true' : 'false'}" style="font-size: 11.5px; padding: 4px 10px;">
                   ${p.settings && p.settings.adaptiveCircuitBreaker ? 'Disable' : 'Enable'}
                 </button>
-                <button type="button" class="btn btn-secondary btn-reset-cb" data-pid="${p.pid}" id="btn-reset-cb-${p.pid}" style="font-size: 11.5px; padding: 4px 10px; display: none;">
+                <button type="button" class="btn btn-secondary btn-reset-cb" data-pid="${escapeHtml(p.pid)}" id="btn-reset-cb-${escapeHtml(p.pid)}" style="font-size: 11.5px; padding: 4px 10px; display: none;">
                   Reset Vectors
                 </button>
               </div>
@@ -315,7 +322,7 @@
                 </div>
               </div>
               <div>
-                <button type="button" class="btn btn-secondary btn-toggle-openai" data-pid="${p.pid}" data-enabled="${(p.settings && p.settings.blockOpenAiScrapers !== false) ? 'true' : 'false'}" style="font-size: 11.5px; padding: 4px 10px;">
+                <button type="button" class="btn btn-secondary btn-toggle-openai" data-pid="${escapeHtml(p.pid)}" data-enabled="${(p.settings && p.settings.blockOpenAiScrapers !== false) ? 'true' : 'false'}" style="font-size: 11.5px; padding: 4px 10px;">
                   ${(p.settings && p.settings.blockOpenAiScrapers !== false) ? 'Allow OpenAI' : 'Block OpenAI ("get your own ram")'}
                 </button>
               </div>
@@ -537,8 +544,8 @@
           if (projectTelemetryContainer) projectTelemetryContainer.style.display = 'none';
         } else {
           selectTelemetryProject.innerHTML = cachedUserProjects.map((p) => `
-            <option value="${p.pid}" ${p.pid === (prev || activeTelemetryPid) ? 'selected' : ''}>
-              ${escapeHtml(p.name || 'Untitled')} (${p.publicKey})
+            <option value="${escapeHtml(p.pid)}" ${p.pid === (prev || activeTelemetryPid) ? 'selected' : ''}>
+              ${escapeHtml(p.name || 'Untitled')} (${escapeHtml(p.publicKey)})
             </option>
           `).join('');
 
@@ -596,11 +603,11 @@
             inpCode.focus();
           }
 
-          let note = 'Verification code sent from official@obsx.tech to your email!';
           if (data.devMode && data.devCode) {
-            note = `Verification code generated! (Dev/Test mode: <strong>${data.devCode}</strong>)`;
+            showMsg('Verification code generated! Dev/Test mode code:', false, data.devCode);
+          } else {
+            showMsg('Verification code sent from official@obsx.tech to your email!', false);
           }
-          showMsg(note, false);
         } else {
           showMsg(data.error || 'Failed to dispatch verification code.', true);
         }
@@ -865,9 +872,9 @@
                   <div style="display:flex; justify-content:space-between; align-items:center;">
                     <div>
                       <strong>${escapeHtml(ev.action)}</strong>
-                      <span style="color:var(--text-muted); margin-left:6px; font-size:11.5px;">(${ev.maskedIp})</span>
+                      <span style="color:var(--text-muted); margin-left:6px; font-size:11.5px;">(${escapeHtml(ev.maskedIp)})</span>
                     </div>
-                    <span class="badge ${pillClass}">${labelText}</span>
+                    <span class="badge ${pillClass}">${escapeHtml(labelText)}</span>
                   </div>
                   <div style="font-size:11.5px; color:var(--text-muted); margin-top:3px;">
                     ${ev.reasons && ev.reasons.length ? ev.reasons.map(escapeHtml).join(' · ') : 'All cryptographic invariants satisfied'}
@@ -1165,9 +1172,9 @@
                 <div style="display:flex; justify-content:space-between; align-items:center;">
                   <div>
                     <strong style="color:var(--text);">${escapeHtml(alt.title)}</strong>
-                    <span style="color:var(--text-muted); margin-left:6px; font-size:11px;">(${alt.clientIp})</span>
+                    <span style="color:var(--text-muted); margin-left:6px; font-size:11px;">(${escapeHtml(alt.clientIp)})</span>
                   </div>
-                  <span class="badge ${badgeClass}">${statusLabel}</span>
+                  <span class="badge ${badgeClass}">${escapeHtml(statusLabel)}</span>
                 </div>
                 <div style="font-size:11px; color:var(--text-muted); margin-top:3px;">
                   <span>${escapeHtml(alt.detail)} &bull; Target: <code>${escapeHtml(alt.recipient)}</code></span>

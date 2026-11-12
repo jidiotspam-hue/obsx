@@ -14,6 +14,12 @@
     return window.OBSX || window.Veritas || window.Tracer;
   }
 
+  function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, (ch) => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]
+    ));
+  }
+
   function addLog(title, verdict, risk, reasons = []) {
     eventCounter++;
     logCount.textContent = `${eventCounter} Events`;
@@ -24,11 +30,11 @@
     item.style.borderBottom = '1px solid var(--border)';
     item.innerHTML = `
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-        <strong>${title}</strong>
-        <span class="badge ${pillClass}">${verdict.toUpperCase()} (Risk ${risk})</span>
+        <strong>${escapeHtml(title)}</strong>
+        <span class="badge ${pillClass}">${escapeHtml(String(verdict || '').toUpperCase())} (Risk ${escapeHtml(risk)})</span>
       </div>
       <div style="color:var(--text-muted); font-size:12px;">
-        ${reasons.length ? reasons.map((r) => `• ${r.text || r.code || r}`).join('<br>') : 'All cryptographic & behavioral checks passed.'}
+        ${reasons.length ? reasons.map((r) => `• ${escapeHtml(r.text || r.code || r)}`).join('<br>') : 'All cryptographic & behavioral checks passed.'}
       </div>
     `;
 
@@ -362,12 +368,12 @@
 
             return `
               <tr>
-                <td style="font-family:var(--font-mono); font-size:12px; color:var(--text-muted); white-space:nowrap;">${timeStr}</td>
-                <td style="font-weight:600;">${ev.action}</td>
-                <td><code style="font-size:12px;">${ev.maskedIp}</code></td>
-                <td><span class="badge ${pillClass}">${ev.verdict.toUpperCase()}</span></td>
-                <td style="font-family:var(--font-mono); font-weight:600;">${ev.risk}</td>
-                <td style="font-size:12.5px; color:var(--text-muted);">${reasonsStr}</td>
+                <td style="font-family:var(--font-mono); font-size:12px; color:var(--text-muted); white-space:nowrap;">${escapeHtml(timeStr)}</td>
+                <td style="font-weight:600;">${escapeHtml(ev.action)}</td>
+                <td><code style="font-size:12px;">${escapeHtml(ev.maskedIp)}</code></td>
+                <td><span class="badge ${pillClass}">${escapeHtml(String(ev.verdict || '').toUpperCase())}</span></td>
+                <td style="font-family:var(--font-mono); font-weight:600;">${escapeHtml(ev.risk)}</td>
+                <td style="font-size:12.5px; color:var(--text-muted);">${escapeHtml(reasonsStr)}</td>
               </tr>
             `;
           }).join('');
