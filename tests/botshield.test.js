@@ -888,5 +888,7 @@ test('the public telemetry view never leaks full addresses when no operator key 
       'without a configured key the address is masked (got ' + json.topOffenders[0].ip + ')');
   } finally {
     if (saved) process.env.OBSX_SECRET = saved;
+    botshield.reset();
+    botshield.config.enabled = false;
   }
 });

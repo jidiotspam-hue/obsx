@@ -182,3 +182,9 @@ test('engine: priority-tiered eviction purges ephemeral bot keys while preservin
   assert.ok(human && human.p === 'p1', 'Verified human session must be preserved');
   assert.ok(human && human.sig, 'Human session telemetry must be intact');
 });
+
+test('updater: hashFileSha256 normalizes CRLF to LF to prevent false-positive Safe Mode lockouts', () => {
+  const { hashFileSha256 } = require('../lib/updater');
+  const hash = hashFileSha256('lib/core.js');
+  assert.ok(hash && hash.length === 64, 'SHA-256 hash must be 64 hex characters');
+});

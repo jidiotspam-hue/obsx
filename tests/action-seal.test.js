@@ -162,3 +162,35 @@ test('action-seal: stale signature timestamp (> 5 minutes) is rejected with stal
     'Must explicitly flag stale_signature'
   );
 });
+
+test('action-seal: delimiter collision via newline injection is rejected', () => {
+  const rk = 'secret_rk_test_key_12345';
+  const payload = { action: 'transfer', amount: 1000 };
+
+  // Attempt to sign with newline injected into session
+  assert.throws(
+    () => {
+      crypto.signActionSeal(rk, 'sess_victim\n1700000000', 1700000000, 'nonce', payload);
+    },
+    { code: 'INVALID_SEAL_SESSION' }
+  );
+
+  // Attempt to sign with newline injected into nonce
+  assert.throws(
+    () => {
+      crypto.signActionSeal(rk, 'sess_valid', 1700000000, 'nonce\nattack', payload);
+    },
+    { code: 'INVALID_SEAL_NONCE' }
+  );
+
+  // verifyActionSeal fails closed (returns false) without unhandled exception
+  const isValid = crypto.verifyActionSeal(
+    rk,
+    'sess_victim\n1700000000',
+    1700000000,
+    'nonce',
+    payload,
+    'fake_sig'
+  );
+  assert.strictEqual(isValid, false);
+});
