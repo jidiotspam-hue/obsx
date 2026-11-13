@@ -12,6 +12,7 @@ coverage/
 dist/
 .kv-snapshot.json
 .*-snapshot-*.json
+.obsx-license-state.json
 *.tmp.*
 
 

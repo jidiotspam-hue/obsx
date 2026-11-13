@@ -1,5 +1,11 @@
 'use strict';
 
+/**
+ * OBSX Security — HTTP Operator Server Harness & Telemetry Broadcaster
+ * Copyright (c) 2026 Alexis Grimmace.
+ * Licensed under the Elastic License 2.0 + OBSX Zone 2 Terms — See LICENSE file.
+ */
+
 // Load local environment configuration if present (.env)
 require('./lib/config');
 
@@ -180,17 +186,17 @@ function isOperatorAuthorized(req, user) {
 }
 
 async function requireOperatorAccess(req, res) {
-  if (hasValidOperatorKey(req)) return true;
+  if (hasValidOperatorKey(req)) return { via: 'key', email: null };
   const user = await accounts.getSessionUser(req);
   if (!user) {
     sendJson(res, 401, { ok: false, error: 'unauthorized' });
-    return false;
+    return null;
   }
   if (!isOperatorAuthorized(req, user)) {
     sendJson(res, 403, { ok: false, error: 'operator_required' });
-    return false;
+    return null;
   }
-  return true;
+  return { via: 'session', email: accounts.cleanEmail(user.email) };
 }
 
 function parseRequestUrl(req) {
@@ -883,6 +889,20 @@ const server = http.createServer(async (req, res) => {
         if (!(await requireOperatorAccess(req, res))) return;
         const adaptRes = updater.autoAdaptDirtyNode();
         return sendJson(res, adaptRes.ok ? 200 : 409, adaptRes);
+      }
+
+      if (pathname === '/api/v1/system/license') {
+        if (method !== 'GET') return sendMethodNotAllowed(res, ['GET']);
+        if (!(await requireOperatorAccess(req, res))) return;
+        return sendJson(res, 200, updater.getLicenseStatus());
+      }
+
+      if (pathname === '/api/v1/system/license/accept') {
+        if (method !== 'POST') return sendMethodNotAllowed(res, ['POST']);
+        const op = await requireOperatorAccess(req, res);
+        if (!op) return;
+        const result = updater.acceptLicenseTerms({ acceptedBy: op.email || 'operator-key' });
+        return sendJson(res, result.ok ? 200 : 409, result);
       }
 
       if (pathname === '/api/v1/bot-protection') {

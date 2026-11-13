@@ -11,16 +11,16 @@
 │  STAGE 1: DEFEAT ADVISORY BOTS        [ CLEARED • 100% BLOCKED ]  │
 │  DIFFICULTY: CRYPTOGRAPHIC HARD       [ SHA-256 MICRO-POW ]       │
 │  PARTY MEMBERS: ZERO RUNTIME DEPS     [ 100% PURE NATIVE NODE ]   │
-│  STATUS: 153 / 153 TESTS PASSING      [ ALL SYSTEMS GREEN ]       │
+│  STATUS: 156 / 156 TESTS PASSING      [ ALL SYSTEMS GREEN ]       │
 │  LIVE NODE: OBSX.TECH                 [ PRODUCTION OPERATIONAL ]  │
 ╰───────────────────────────────────────────────────────────────────╯
 ```
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/RELEASE-v2.2.0%20PUBLIC-ff79c6?style=flat-square" alt="Release: v2.2.0 Public"></a>
-  <a href="tests/"><img src="https://img.shields.io/badge/TESTS-153%2F153%20PASSING-50fa7b?style=flat-square" alt="Tests: 153/153 Passing"></a>
+  <a href="tests/"><img src="https://img.shields.io/badge/TESTS-156%2F156%20PASSING-50fa7b?style=flat-square" alt="Tests: 156/156 Passing"></a>
   <a href="package.json"><img src="https://img.shields.io/badge/DEPENDENCIES-ZERO-bd93f9?style=flat-square" alt="Zero Dependencies"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/LICENSE-MIT%20%2F%20ELv2-8be9fd?style=flat-square" alt="License: MIT / ELv2"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/LICENSE-Dual%20(MIT%20%2B%20ELv2)-8be9fd?style=flat-square" alt="License: Dual (MIT + Zone 2 ELv2)"></a>
   <a href="https://obsx.tech"><img src="https://img.shields.io/badge/LIVE%20NODE-OBSX.TECH-ffb86c?style=flat-square" alt="Live Node"></a>
 </p>
 
@@ -284,11 +284,11 @@ That opens 300 keep-alive connections of scripted bot traffic and prints the sta
 
 ## License
 
-Dual-licensed under the **MIT License** (Core Protocol Engine & Client SDK) and the **Elastic License 2.0 (ELv2)** (Node Operator Dashboard & Multi-Tenant Scaffolding):
+Dual-licensed under the **MIT License** (Zone 1: Core Protocol Engine, Client SDK, Tests & Public Docs) and **Elastic License 2.0 + Additional OBSX Zone 2 Terms** (Zone 2: Operator Server, Dashboard, Origin Shield, Auto-Updater & Accounts/Mailer):
 
-- **Universal & Retroactive Applicability**: The most up-to-date version of the [LICENSE](LICENSE) applies unconditionally and retroactively to **ALL** versions, releases, commits, and distributions of this software, past and present.
-- **Zone 1 (Core Protocol & SDK)**: 100% Permissive MIT — free for anyone to embed, verify, and build upon with zero restrictions.
-- **Zone 2 (Operator Dashboard & Scaffolding)**: Covers the node operator dashboard, accounts, and mailer under ELv2. Free to download, run, and modify internally for private infrastructure. Commercial SaaS hosting, component extraction into competing products, and unauthorized shimming are strictly prohibited.
-- **Proprietary & Closed-Source (Sentinel™)**: The **OBSX Sentinel™ Adaptive Vector Circuit Breaker Engine** is **strictly closed source and proprietary**, maintained separately in `obsx-sentinel` and exclusive to the managed cloud platform at [obsx.tech](https://obsx.tech). It is not licensed under MIT or ELv2. Reverse-engineering, emulating, or creating drop-in replacement shims for Sentinel™ is strictly prohibited.
+- **Prospective Applicability & Prior Releases**: The updated Dual License governs **v2.2.0 onward**. Earlier commits distributed solely under MIT retain MIT terms for those historical versions, while v2.2.0+ releases and upgrades incorporating Zone 2 modules follow [LICENSE](LICENSE).
+- **Zone 1 (Core Protocol, SDK & Docs)**: Permissive MIT — free for anyone to embed, verify, and build upon.
+- **Zone 2 (Operator Dashboard, Shield, Updater & Scaffolding)**: Source-available under ELv2 + OBSX Zone 2 terms (`server.js`, `lib/botshield.js`, `lib/updater.js`, `lib/accounts.js`, `lib/mailer.js`, `tools/flood.js`, `public/dashboard.*`). Free to run and modify internally for self-hosted infrastructure; hosted SaaS redistribution and extraction into competing products are prohibited.
+- **Proprietary & Closed-Source (Sentinel™)**: The **OBSX Sentinel™ Adaptive Vector Circuit Breaker Engine** is **strictly closed source and proprietary**, maintained separately in `obsx-sentinel` for [obsx.tech](https://obsx.tech), and is not licensed under MIT or ELv2.
 
-See the full [LICENSE](LICENSE) file for complete legal terms and zone mappings.
+See the full [LICENSE](LICENSE) file for complete zone mappings, the November 15, 2026 transition policy, and Safe Mode integrity details.

@@ -7,6 +7,8 @@ const test = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
 const net = require('node:net');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const server = require('../server');
 const core = require('../lib/core');
@@ -236,6 +238,9 @@ test('hardening: non-operator and unauthenticated callers are denied operator/sy
   const prevSecret = process.env.OBSX_SECRET;
   const prevOps = process.env.OPERATOR_EMAILS;
   const prevAlertEmail = process.env.ALERT_EMAIL;
+  const licStatePath = path.join(__dirname, '..', '.obsx-license-state.json');
+  const hadLicState = fs.existsSync(licStatePath);
+  const prevLicState = hadLicState ? fs.readFileSync(licStatePath, 'utf8') : null;
   process.env.OBSX_SECRET = 'valid_operator_secret_key_abcdef';
   process.env.OPERATOR_EMAILS = 'ops-admin@obsx.tech';
   process.env.ALERT_EMAIL = 'alert-recipient@example.com';
@@ -264,6 +269,8 @@ test('hardening: non-operator and unauthenticated callers are denied operator/sy
       ['GET', '/api/v1/system/diff'],
       ['POST', '/api/v1/system/update'],
       ['POST', '/api/v1/system/adapt'],
+      ['GET', '/api/v1/system/license'],
+      ['POST', '/api/v1/system/license/accept'],
     ]) {
       const unauthed = await request(method, endpoint, {
         body: method === 'POST' ? {} : undefined,
@@ -296,7 +303,34 @@ test('hardening: non-operator and unauthenticated callers are denied operator/sy
     });
     assert.equal(keyDiff.status, 200);
     assert.equal(keyDiff.json.ok, true);
+
+    const acceptRes = await request('POST', '/api/v1/system/license/accept', {
+      headers: { Cookie: opCookie },
+      body: {},
+    });
+    assert.equal(acceptRes.status, 200);
+    assert.equal(acceptRes.json.ok, true);
+    assert.equal(acceptRes.json.accepted, true);
+    assert.equal(acceptRes.json.acceptedBy, 'ops-admin@obsx.tech');
+
+    const opLicRes = await request('GET', '/api/v1/system/license', {
+      headers: { 'x-obsx-key': process.env.OBSX_SECRET },
+    });
+    assert.equal(opLicRes.status, 200);
+    assert.equal(opLicRes.json.ok, true);
+    assert.equal(opLicRes.json.accepted, true);
+
+    const pubVer = await request('GET', '/api/v1/system/version');
+    assert.equal(pubVer.status, 200);
+    assert.equal(pubVer.json.safeMode, false);
+    assert.ok(pubVer.json.licenseFingerprint && pubVer.json.licenseFingerprint.length === 16);
+    assert.equal('acceptedBy' in pubVer.json, false);
+    assert.equal(pubVer.json.license, undefined);
+    assert.equal(pubVer.json.autoUpdate.httpSyncEnabled, false);
+    assert.equal(pubVer.json.autoUpdate.autoRestartEnabled, false);
   } finally {
+    if (hadLicState) fs.writeFileSync(licStatePath, prevLicState, 'utf8');
+    else if (fs.existsSync(licStatePath)) fs.unlinkSync(licStatePath);
     if (prevSecret === undefined) delete process.env.OBSX_SECRET;
     else process.env.OBSX_SECRET = prevSecret;
     if (prevOps === undefined) delete process.env.OPERATOR_EMAILS;

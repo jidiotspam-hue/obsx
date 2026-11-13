@@ -3,8 +3,8 @@
 /**
  * OBSX Security — Node Operator Dashboard
  * Copyright (c) 2026 Alexis Grimmace.
- * Licensed under the Elastic License 2.0 (ELv2) — See LICENSE file.
- * Free for self-hosted and internal use; commercial SaaS hosting and snippet extraction prohibited.
+ * Licensed under the Elastic License 2.0 + OBSX Zone 2 Terms — See LICENSE file.
+ * Free for self-hosted internal use; commercial SaaS hosting and competing extraction prohibited.
  */
 
 (function () {
@@ -761,6 +761,14 @@
         const overlapWarn = (adv.overlappingFiles && adv.overlappingFiles.length)
           ? `<div style="margin-top:4px; color:#f59e0b;"><strong>Adaptation Overlap Detected:</strong> Both your local node and official upstream modified ${adv.overlappingFiles.map((f) => `<code>${escapeHtml(f)}</code>`).join(', ')}.</div>`
           : '';
+        const lic = adv.licenseStatus;
+        const licenseNotice = lic && (lic.safeMode || lic.licenseChanged)
+          ? `<div style="margin-top:6px; padding:8px 10px; border-radius:6px; border:1px solid rgba(245, 158, 11, 0.35); background:rgba(0,0,0,0.2);">
+              <strong>License Integrity Status:</strong> ${lic.safeMode ? `Safe Mode (${escapeHtml(lic.safeModeReason || 'integrity_check')})` : 'Updated LICENSE detected'}
+              ${lic.missingCriticalFiles && lic.missingCriticalFiles.length ? ` · Missing: ${lic.missingCriticalFiles.map((f) => `<code>${escapeHtml(f)}</code>`).join(', ')}` : ''}
+              ${!lic.accepted && !lic.missingCriticalFiles?.length ? ' · <button type="button" id="btn-accept-license" class="btn btn-secondary" style="font-size:11px; padding:2px 8px; margin-left:4px;">Accept Current LICENSE</button>' : ''}
+            </div>`
+          : '';
         driftBanner.innerHTML = `
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
             <strong style="color:#f59e0b;">[PRIVATE OPERATOR ADVISORY] Local Node Customization &amp; Upstream Sync Paused</strong>
@@ -769,6 +777,7 @@
           <div style="color:var(--text-muted);">
             Auto-updater paused fast-forward sync to protect your local changes. Only you (authenticated operator) can see this notice.
           </div>
+          ${licenseNotice}
           <div style="margin-top:6px;"><strong>Your Modified Files:</strong> ${modFiles}</div>
           ${upCommits}
           ${upFiles}
@@ -816,6 +825,26 @@
               btnAdapt.textContent = aData.ok ? `Adapted to ${aData.commit}!` : (aData.message || 'Conflict detected');
             } catch (e) {
               btnAdapt.textContent = 'Adapt failed';
+            }
+          };
+        }
+        const btnAcceptLic = document.getElementById('btn-accept-license');
+        if (btnAcceptLic) {
+          btnAcceptLic.onclick = async () => {
+            btnAcceptLic.disabled = true;
+            btnAcceptLic.textContent = 'Recording acceptance...';
+            try {
+              const lRes = await fetch('/api/v1/system/license/accept', { method: 'POST' });
+              const lData = await lRes.json();
+              if (lRes.ok && lData.ok) {
+                btnAcceptLic.textContent = 'LICENSE Accepted';
+              } else {
+                btnAcceptLic.disabled = false;
+                btnAcceptLic.textContent = lData.error || 'Acceptance failed';
+              }
+            } catch (e) {
+              btnAcceptLic.disabled = false;
+              btnAcceptLic.textContent = 'Acceptance failed';
             }
           };
         }
