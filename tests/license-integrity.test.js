@@ -112,7 +112,7 @@ test('updater: tree fingerprint includes LICENSE/shield/updater and normalizes C
     const fpCrlf = updater.computeTreeFingerprint(tmpDir);
     assert.equal(fpCrlf, fpLf, 'CRLF normalization must preserve fingerprint across platforms');
 
-    writeTreeFiles(tmpDir, { LICENSE: 'line1\nchanged\n' });
+    writeTreeFiles(tmpDir, { LICENSE: 'line1\nchanged-line2\n' });
     const fpLicChanged = updater.computeTreeFingerprint(tmpDir);
     assert.notEqual(fpLicChanged, fpLf, 'LICENSE changes must alter engine tree fingerprint');
 
@@ -229,9 +229,15 @@ test('updater: getLicenseStatus and acceptLicenseTerms detect missing files, dri
     assert.equal(missingAccept.ok, false);
     assert.equal(missingAccept.error, 'missing_license_file');
 
-    // 9. Unwritable state path returns structured 500 without leaking raw host filesystem errors
+    // 9. Nested OBSX_LICENSE_STATE_FILE creates parent directories; unwritable state path returns 500 without leaking raw host errors
     writeTreeFiles(tmpDir);
-    const badStatePath = path.join(tmpDir, 'nonexistent-parent-dir', '.obsx-license-state.json');
+    const nestedStatePath = path.join(tmpDir, 'nested', 'state-dir', '.obsx-license-state.json');
+    const nestedOk = updater.acceptLicenseTerms({ acceptedBy: 'ops' }, { rootDir: tmpDir, statePath: nestedStatePath, env: {} });
+    assert.equal(nestedOk.ok, true);
+    assert.equal(nestedOk.accepted, true);
+    assert.ok(fs.existsSync(nestedStatePath));
+
+    const badStatePath = path.join(tmpDir, 'LICENSE', '.obsx-license-state.json');
     const writeFail = updater.acceptLicenseTerms({ acceptedBy: 'ops' }, { rootDir: tmpDir, statePath: badStatePath, env: {} });
     assert.equal(writeFail.ok, false);
     assert.equal(writeFail.error, 'license_state_write_failed');
@@ -372,12 +378,27 @@ test('updater: autoAdaptDirtyNode preserves conflicting edits in stash and keeps
     fs.writeFileSync(path.join(cloneDir, 'conflict.txt'), 'line1\nlocal-custom\n', 'utf8');
     fs.writeFileSync(path.join(cloneDir, 'clean.txt'), 'base\nlocal-clean-edit\n', 'utf8');
 
+    execFileSync('git', ['fetch', 'origin', 'main', '--quiet'], { cwd: cloneDir });
+    const upstreamHead = execFileSync('git', ['rev-parse', 'origin/main'], { cwd: cloneDir }).toString().trim();
+
+    // Pre-warm gitInfoCache and gitDriftCache before conflict attempt
+    const preAdvisory = updater.getOperatorDriftAdvisory({ rootDir: cloneDir, branch: 'main' });
+    assert.equal(preAdvisory.dirtyWorkingTree, true);
+    assert.equal(preAdvisory.commitsBehind, 1);
+
     const adaptRes = updater.autoAdaptDirtyNode({ rootDir: cloneDir, branch: 'main' });
     assert.equal(adaptRes.ok, false);
     assert.equal(adaptRes.conflict, true);
 
     const statusAfter = execFileSync('git', ['status', '--porcelain'], { cwd: cloneDir }).toString().trim();
     assert.equal(statusAfter, '', 'Conflict rollback must leave working tree cleanly at HEAD');
+
+    // Conflict rollback must immediately invalidate gitInfoCache and gitDriftCache
+    const postAdvisory = updater.getOperatorDriftAdvisory({ rootDir: cloneDir, branch: 'main' });
+    assert.equal(postAdvisory.dirtyWorkingTree, false);
+    assert.equal(postAdvisory.commitsBehind, 0);
+    assert.equal(postAdvisory.edition, 'official');
+    assert.equal(postAdvisory.localCommit, upstreamHead.slice(0, 7));
 
     const stashList = execFileSync('git', ['stash', 'list'], { cwd: cloneDir }).toString();
     assert.ok(stashList.includes('obsx-operator-auto-adapt'), 'User edits must remain safely in stash');
@@ -386,6 +407,33 @@ test('updater: autoAdaptDirtyNode preserves conflicting edits in stash and keeps
     const stashedClean = execFileSync('git', ['show', 'stash@{0}:clean.txt'], { cwd: cloneDir }).toString();
     assert.ok(stashedConflict.includes('local-custom'));
     assert.ok(stashedClean.includes('local-clean-edit'));
+
+    // Non-fatal stash drop error must NOT discard cleanly applied local edits
+    execFileSync('git', ['stash', 'drop', 'stash@{0}'], { cwd: cloneDir });
+    fs.writeFileSync(path.join(cloneDir, 'clean.txt'), 'base\nnon-conflicting-edit\n', 'utf8');
+    const adaptDropErrRes = updater.autoAdaptDirtyNode({
+      rootDir: cloneDir,
+      branch: 'main',
+      execFileSync: (cmd, args, opts) => {
+        if (cmd === 'git' && args[0] === 'stash' && args[1] === 'drop') {
+          throw new Error('simulated stash drop permission warning');
+        }
+        return execFileSync(cmd, args, opts);
+      },
+    });
+    assert.equal(adaptDropErrRes.ok, true);
+    assert.equal(adaptDropErrRes.adapted, true);
+    assert.ok(fs.readFileSync(path.join(cloneDir, 'clean.txt'), 'utf8').includes('non-conflicting-edit'));
+
+    // gitDriftCache serves warm advisory snapshots without spawning git, and honors { fresh: true }
+    const warmCached = updater.getOperatorDriftAdvisory({ rootDir: cloneDir, branch: 'main' });
+    assert.deepEqual(warmCached.locallyModifiedFiles, ['clean.txt']);
+    fs.writeFileSync(path.join(cloneDir, 'conflict.txt'), 'line1\nlocal-second-edit\n', 'utf8');
+    const cachedHit = updater.getOperatorDriftAdvisory({ rootDir: cloneDir, branch: 'main' });
+    assert.deepEqual(cachedHit.locallyModifiedFiles, ['clean.txt'], 'Expected TTL cache hit to avoid spawning git');
+    const freshHit = updater.getOperatorDriftAdvisory({ rootDir: cloneDir, branch: 'main', fresh: true });
+    assert.ok(freshHit.locallyModifiedFiles.includes('conflict.txt'));
+    assert.ok(freshHit.locallyModifiedFiles.includes('clean.txt'));
   } finally {
     fs.rmSync(baseDir, { recursive: true, force: true });
   }
