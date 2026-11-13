@@ -2,7 +2,17 @@
   "name": "obsx-security",
   "version": "2.2.1",
   "description": "OBSX Security: Next-generation client integrity attestation, anti-automation, and tamper-resistant request verification.",
-  "main": "server.js",
+  "main": "lib/index.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": "./lib/index.js",
+    "./package.json": "./package.json",
+    "./server": "./server.js",
+    "./core": "./lib/core.js",
+    "./crypto": "./lib/crypto.js",
+    "./telemetry": "./lib/telemetry.js",
+    "./kv": "./lib/kv.js"
+  },
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",

@@ -694,7 +694,17 @@ const server = http.createServer(async (req, res) => {
         }
 
         const body = await readBody(req);
-        const verdict = await core.verify(project, body, { ip: clientIp, proxyHeaders, headers: req.headers, ua: req.headers['user-agent'] });
+        const forwardedClientUa =
+          typeof req.headers['x-obsx-client-ua'] === 'string'
+            ? req.headers['x-obsx-client-ua'].replace(/[\r\n\0]+/g, ' ').trim().slice(0, 512)
+            : '';
+        const verdict = await core.verify(project, body, {
+          ip: clientIp,
+          proxyHeaders,
+          headers: req.headers,
+          ua: forwardedClientUa,
+          serverToServer: true,
+        });
         res.setHeader('X-OBSX-Mode', verdict.mode || 'enforce');
         if (verdict.shadowVerdict) res.setHeader('X-OBSX-Shadow-Verdict', verdict.shadowVerdict);
         return sendJson(res, 200, verdict, CORS_HEADERS);

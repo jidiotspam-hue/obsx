@@ -291,21 +291,21 @@
           </div>
           <button type="button" class="btn-copy" data-copy="code-client">Copy Snippet</button>
         </div>
-        <pre class="code-content" id="code-client"><code>&lt;!-- 1. Include the OBSX Client SDK in &lt;head&gt; --&gt;
-&lt;script src="https://obsx.tech/obsx.min.js" data-obsx-site="pk_YOUR_SITE_KEY"&gt;&lt;/script&gt;
+        <pre class="code-content" id="code-client"><code>&lt;!-- 1. Zero-JS Form Protection: add script + data-obsx-protect --&gt;
+&lt;script src="https://obsx.tech/obsx.min.js" data-obsx-site="pk_YOUR_SITE_KEY" defer&gt;&lt;/script&gt;
+&lt;form action="/api/action" method="POST" data-obsx-protect&gt;
+  &lt;input type="email" name="email" required /&gt;
+  &lt;button type="submit"&gt;Submit&lt;/button&gt;
+&lt;/form&gt;
 
+&lt;!-- Or programmatic SPA attestation --&gt;
 &lt;script&gt;
-  // 2. Automatically solve PoW and collect biometric attestation
-  const verdict = await OBSX.verify({ score: 100 });
-
-  if (verdict.verdict === 'accept') {
-    // 3. Submit attested token with your payload
-    await fetch('/api/action', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token: verdict.token, data: 'payload' })
-    });
-  }
+  const { token, nonce } = await OBSX.getAttestation();
+  await fetch('/api/action', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token, nonce, data: 'payload' })
+  });
 &lt;/script&gt;</code></pre>
       </div>
 
@@ -313,7 +313,7 @@
       <div class="code-block">
         <div class="code-tabs">
           <div class="tabs-group">
-            <button type="button" class="tab-btn active" data-tab="tab-node">Node.js (Native / Express)</button>
+            <button type="button" class="tab-btn active" data-tab="tab-node">Node.js (Express Middleware)</button>
             <button type="button" class="tab-btn" data-tab="tab-next">Next.js App Router</button>
             <button type="button" class="tab-btn" data-tab="tab-python">Python (FastAPI)</button>
           </div>
@@ -321,24 +321,19 @@
         </div>
 
         <div class="code-pane" id="tab-node">
-          <pre class="code-content" id="active-server-code"><code>const { verifyToken } = require('obsx-security');
+          <pre class="code-content" id="active-server-code"><code>const obsx = require('obsx-security');
 
-app.post('/api/action', async (req, res) => {
-  const { token, data } = req.body;
+// 1-line middleware: populates req.obsx and fails closed with 403 on bots
+app.post('/api/action', obsx.middleware({ secretKey: process.env.OBSX_SECRET_KEY }), (req, res) => {
+  res.json({ ok: true, risk: req.obsx.risk });
+});
 
-  // Zero-dependency HMAC and replay verification (<1ms)
-  const result = await verifyToken(token, {
-    secret: process.env.OBSX_SECRET,
-    clientIp: req.ip
-  });
-
-  if (result.verdict === 'reject') {
-    return res.status(403).json({ ok: false, error: 'gate_rejected', reasons: result.reasons });
-  }
-
-  // Action verified — proceed with business logic
-  res.json({ ok: true, status: 'success' });
-});</code></pre>
+// Or manual verifyToken() control:
+// const result = await obsx.verifyToken(req.body, {
+//   secretKey: process.env.OBSX_SECRET_KEY,
+//   clientUa: req.headers['user-agent']
+// });
+// if (!result.allowed) return res.status(403).json({ ok: false, reasons: result.reasons });</code></pre>
         </div>
 
         <div class="code-pane" id="tab-next" style="display: none;">
@@ -346,15 +341,14 @@ app.post('/api/action', async (req, res) => {
 import { verifyToken } from 'obsx-security';
 
 export async function POST(request: Request) {
-  const { token, data } = await request.json();
-  const clientIp = request.headers.get('x-forwarded-for') || '127.0.0.1';
+  const body = await request.json();
 
-  const result = await verifyToken(token, {
-    secret: process.env.OBSX_SECRET!,
-    clientIp
+  const result = await verifyToken(body, {
+    secretKey: process.env.OBSX_SECRET_KEY!,
+    clientUa: request.headers.get('user-agent') || undefined
   });
 
-  if (result.verdict === 'reject') {
+  if (!result.allowed) {
     return NextResponse.json({ ok: false, reasons: result.reasons }, { status: 403 });
   }
 
@@ -364,7 +358,7 @@ export async function POST(request: Request) {
 
         <div class="code-pane" id="tab-python" style="display: none;">
           <pre class="code-content"><code>from fastapi import FastAPI, HTTPException, Request
-from obsx import verify_token
+import httpx
 import os
 
 app = FastAPI()
@@ -372,13 +366,21 @@ app = FastAPI()
 @app.post("/api/action")
 async def handle_action(request: Request):
     body = await request.json()
-    verdict = verify_token(
-        token=body.get("token"),
-        secret=os.environ["OBSX_SECRET"],
-        client_ip=request.client.host
-    )
-    if verdict["verdict"] == "reject":
-        raise HTTPException(status_code=403, detail=verdict["reasons"])
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        resp = await client.post(
+            "https://obsx.tech/api/v1/verify",
+            headers={
+                "Authorization": f"Bearer {os.environ['OBSX_SECRET_KEY']}",
+                "X-OBSX-Client-UA": request.headers.get("user-agent", ""),
+            },
+            json={
+                "token": body.get("token") or body.get("obsx-token"),
+                "nonce": body.get("nonce") or body.get("obsx-nonce"),
+            },
+        )
+    verdict = resp.json() if resp.status_code == 200 else {"allowed": False, "reasons": ["verify_failed"]}
+    if not verdict.get("allowed"):
+        raise HTTPException(status_code=403, detail=verdict.get("reasons", []))
     return {"ok": True}</code></pre>
         </div>
       </div>

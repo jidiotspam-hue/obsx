@@ -9,7 +9,7 @@
   - `OBSX_AUTO_RESTART` now defaults to `false` (previously enabled unless set to `'false'`). Set `OBSX_AUTO_RESTART=true` in `.env` if you want automated worker respawns after pulls.
   - `OBSX_HTTP_SYNC` now defaults to `false` for non-Git Strategy B HTTP raw-file sync (returning `http_sync_opt_in_required_<sha>` unless opted in via `OBSX_HTTP_SYNC=true`).
   - Conflict rollback in `autoAdaptDirtyNode()` preserves stashed user changes cleanly via `git stash apply` + `git reset --hard HEAD`.
-- **Verification**: **158 / 158 tests passing** (`0` failures, `0` skipped) via `npm run build && npm test`.
+- **Verification**: **165 / 165 tests passing** (`0` failures, `0` skipped) via `npm run build && npm test`.
 
 ---
 
