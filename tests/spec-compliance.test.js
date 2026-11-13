@@ -6,6 +6,7 @@ const core = require('../lib/core');
 const crypto = require('../lib/crypto');
 const accounts = require('../lib/accounts');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 test('engine: behavioral telemetry is mandatory; empty signals reject with risk 100', async () => {
@@ -130,26 +131,28 @@ test('engine: SDK widget embeds dual token and challenge nonce hidden inputs', (
 });
 
 test('engine: MemoryStore snapshot persistence restores session state across restarts', async () => {
-  const tmpSnapshot = path.join(__dirname, `../.test-snapshot-${Date.now()}.json`);
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'obsx-snap-'));
+  const tmpSnapshot = path.join(tmpDir, 'snapshot.json');
   const { MemoryStore } = require('../lib/kv');
 
-  const store1 = new MemoryStore(1000, tmpSnapshot);
-  await store1.set('test:key', 'persistent_value');
-  await store1.hset('test:hash', 'field1', 'hash_value');
-  store1.saveSnapshot();
-  store1.close();
+  try {
+    const store1 = new MemoryStore(1000, tmpSnapshot);
+    await store1.set('test:key', 'persistent_value');
+    await store1.hset('test:hash', 'field1', 'hash_value');
+    store1.saveSnapshot();
+    store1.close();
 
-  // New instance simulates restarted daemon
-  const store2 = new MemoryStore(1000, tmpSnapshot);
-  const val = await store2.get('test:key');
-  const hval = await store2.hget('test:hash', 'field1');
-  store2.close();
+    // New instance simulates restarted daemon
+    const store2 = new MemoryStore(1000, tmpSnapshot);
+    const val = await store2.get('test:key');
+    const hval = await store2.hget('test:hash', 'field1');
+    store2.close();
 
-  // Cleanup test snapshot
-  if (fs.existsSync(tmpSnapshot)) fs.unlinkSync(tmpSnapshot);
-
-  assert.equal(val, 'persistent_value');
-  assert.equal(hval, 'hash_value');
+    assert.equal(val, 'persistent_value');
+    assert.equal(hval, 'hash_value');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 });
 
 test('engine: SDK rehandshake method produces fresh attestation with rolling entropy', () => {

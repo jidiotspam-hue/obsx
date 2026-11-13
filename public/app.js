@@ -324,7 +324,17 @@
   document.querySelectorAll('.btn-copy').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const targetId = btn.getAttribute('data-copy');
-      const targetEl = document.getElementById(targetId);
+      let targetEl = document.getElementById(targetId);
+      if (targetId === 'active-server-code') {
+        const block = btn.closest('.code-block');
+        const visiblePane = block
+          ? Array.from(block.querySelectorAll('.code-pane')).find((pane) => pane.style.display !== 'none')
+          : null;
+        if (visiblePane) {
+          const pre = visiblePane.querySelector('pre');
+          if (pre) targetEl = pre;
+        }
+      }
       if (!targetEl) return;
       try {
         await navigator.clipboard.writeText(targetEl.textContent.trim());

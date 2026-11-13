@@ -19,8 +19,16 @@
   const _getOwnPropertyDescriptor = _Object.getOwnPropertyDescriptor;
 
   const SDK_HASH = 'trc_v1_live';
+  const _initialScriptEl = typeof document !== 'undefined' ? document.currentScript : null;
   const pageInitTime = _now.call(_Date);
   let activeSession = null;
+  let initPromise = null;
+  let initKey = '';
+  let sessionEpoch = 0;
+  let flushTimer = null;
+  let autoRefreshTimer = null;
+  let attestQueue = Promise.resolve();
+  let lastInitOptions = null;
   const mouseBuffer = [];
   const touchBuffer = [];
   const keyIntervals = [];
@@ -600,33 +608,120 @@
     );
   }
 
-  function resolveAssetOrigin(endpoint) {
-    if (typeof endpoint === 'string' && /^https?:\/\//i.test(endpoint)) {
-      return endpoint.replace(/\/api\/v1\/?$/, '').replace(/\/+$/, '');
+  function findSdkScript() {
+    if (_initialScriptEl) return _initialScriptEl;
+    if (typeof document === 'undefined') return null;
+    return (
+      document.querySelector('script[data-obsx-site]') ||
+      document.querySelector('script[data-site]') ||
+      document.querySelector('script[data-veritas-site]') ||
+      document.querySelector('script[data-tracer-site]') ||
+      document.querySelector('script[src*="obsx.min.js"]') ||
+      document.querySelector('script[src*="veritas.min.js"]') ||
+      document.querySelector('script[src*="tracer.min.js"]') ||
+      document.querySelector('script[src*="tracer.js"]') ||
+      document.querySelector('script[src*="/sdk/"]')
+    );
+  }
+
+  function getScriptConfig() {
+    const el = findSdkScript();
+    if (!el || typeof el.getAttribute !== 'function') {
+      return { site: null, mode: null, endpoint: null, auto: null, src: '' };
     }
-    if (typeof document !== 'undefined') {
-      const scriptEl =
-        document.querySelector('script[data-obsx-site]') ||
-        document.querySelector('script[src*="obsx.min.js"]') ||
-        document.querySelector('script[src*="tracer.js"]');
-      if (scriptEl && scriptEl.src && /^https?:\/\//i.test(scriptEl.src)) {
-        try {
-          return new URL(scriptEl.src).origin;
-        } catch {}
+    return {
+      site:
+        el.getAttribute('data-obsx-site') ||
+        el.getAttribute('data-site') ||
+        el.getAttribute('data-veritas-site') ||
+        el.getAttribute('data-tracer-site') ||
+        null,
+      mode: el.getAttribute('data-obsx-mode') || el.getAttribute('data-mode') || null,
+      endpoint: el.getAttribute('data-obsx-endpoint') || el.getAttribute('data-endpoint') || null,
+      auto: el.getAttribute('data-obsx-auto') || el.getAttribute('data-auto') || null,
+      src: el.src || el.getAttribute('src') || '',
+    };
+  }
+
+  function escapeAttr(val) {
+    return String(val || '').replace(/[&<>"']/g, (ch) => (
+      ch === '&' ? '&amp;' :
+      ch === '<' ? '&lt;' :
+      ch === '>' ? '&gt;' :
+      ch === '"' ? '&quot;' : '&#39;'
+    ));
+  }
+
+  function resolveEndpoint(explicitEndpoint, cfg) {
+    const chosen = explicitEndpoint || (cfg && cfg.endpoint);
+    if (typeof chosen === 'string' && chosen.trim()) {
+      const trimmed = chosen.trim().replace(/\/+$/, '');
+      if (trimmed.startsWith('/')) {
+        if (!trimmed.startsWith('//') && !/[\s"'<>\\]/.test(trimmed)) {
+          return trimmed;
+        }
+        throw new Error('[OBSX] Invalid endpoint path.');
       }
+      let parsed;
+      try {
+        parsed = new URL(trimmed);
+      } catch {
+        throw new Error('[OBSX] Invalid endpoint URL.');
+      }
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        throw new Error('[OBSX] Unsupported endpoint protocol.');
+      }
+      return `${parsed.origin}${parsed.pathname}`.replace(/\/+$/, '');
+    }
+    const scriptSrc = cfg && cfg.src;
+    if (scriptSrc && typeof location !== 'undefined') {
+      try {
+        const parsed = new URL(scriptSrc, location.href);
+        if ((parsed.protocol === 'http:' || parsed.protocol === 'https:') && parsed.origin !== location.origin) {
+          return `${parsed.origin}/api/v1`;
+        }
+      } catch {}
+    } else if (typeof scriptSrc === 'string' && /^https?:\/\//i.test(scriptSrc)) {
+      try {
+        const parsed = new URL(scriptSrc);
+        if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+          return `${parsed.origin}/api/v1`;
+        }
+      } catch {}
+    }
+    return '/api/v1';
+  }
+
+  function resolveAssetOrigin(endpoint) {
+    if (typeof endpoint === 'string' && endpoint.trim()) {
+      try {
+        const baseHref = typeof location !== 'undefined' && location.href ? location.href : undefined;
+        const parsed = new URL(endpoint.trim(), baseHref);
+        if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+          return parsed.origin;
+        }
+      } catch {}
+    }
+    const cfg = getScriptConfig();
+    if (cfg.src && /^https?:\/\//i.test(cfg.src)) {
+      try {
+        const parsed = new URL(cfg.src);
+        if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+          return parsed.origin;
+        }
+      } catch {}
     }
     return '';
   }
 
   // 5. Public OBSX Client API
   const OBSX = {
-    version: '2.3.0',
-    _autoRefreshTimer: null,
+    version: '2.3.1',
 
     showDramBlockScreen(originBase) {
       if (typeof document === 'undefined' || !document.body) return false;
       if (document.getElementById('obsx-dram-sovereignty-overlay')) return true;
-      const base = typeof originBase === 'string' ? originBase.replace(/\/+$/, '') : resolveAssetOrigin();
+      const base = escapeAttr(originBase ? resolveAssetOrigin(originBase) : resolveAssetOrigin());
       const overlay = document.createElement('div');
       overlay.id = 'obsx-dram-sovereignty-overlay';
       overlay.style.cssText =
@@ -671,61 +766,100 @@
     },
 
     async init(options = {}) {
-      const siteKey = options.site || 
-        (typeof document !== 'undefined' ? (
-          document.querySelector('script[data-obsx-site]')?.getAttribute('data-obsx-site') ||
-          document.querySelector('script[data-veritas-site]')?.getAttribute('data-veritas-site') ||
-          document.querySelector('script[data-tracer-site]')?.getAttribute('data-tracer-site')
-        ) : null);
+      const cfg = getScriptConfig();
+      const siteKey = options.site || cfg.site || (lastInitOptions && lastInitOptions.site);
       if (!siteKey) throw new Error('[OBSX] Missing public site key.');
 
-      const mode = options.mode || 
-        (typeof document !== 'undefined' ? (
-          document.querySelector('script[data-obsx-mode]')?.getAttribute('data-obsx-mode') || 'enforce'
-        ) : 'enforce');
+      const mode = options.mode || cfg.mode || (lastInitOptions && lastInitOptions.mode) || 'enforce';
+      const endpoint = resolveEndpoint(options.endpoint || (lastInitOptions && lastInitOptions.endpoint), cfg);
+      const reqKey = `${siteKey}|${endpoint}|${mode}`;
+      const now = _now.call(_Date);
 
-      const endpoint = options.endpoint || '/api/v1';
-
-      // Start authenticated session
-      const res = await _fetch(`${endpoint}/session`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ site: siteKey, mode }),
-      });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || 'Failed to initialize OBSX session.');
-
-      // Solve Proof of Work challenge
-      const nonce = await solveProofOfWork(data.challenge, data.difficulty);
-
-      if (data.blockOpenAiScrapers !== false && isClientOpenAiScraper()) {
-        this.showDramBlockScreen(resolveAssetOrigin(endpoint));
+      if (
+        !options.force &&
+        activeSession &&
+        activeSession.siteKey === siteKey &&
+        activeSession.endpoint === endpoint &&
+        (activeSession.mode || 'enforce') === mode &&
+        (!activeSession.expiresAt || now < activeSession.expiresAt - 15000)
+      ) {
+        return activeSession;
       }
 
-      activeSession = {
-        token: data.token,
-        session: data.session,
-        endpoint,
-        siteKey,
-        mode: data.mode || mode,
-        blockOpenAiScrapers: data.blockOpenAiScrapers !== false,
-        nonce,
-        rk: data.rk,
-        startTime: _now.call(_Date),
-        expiresAt: data.expiresAt || (_now.call(_Date) + 3600 * 1000),
-      };
+      if (!options.force && initPromise && initKey === reqKey) {
+        return initPromise;
+      }
 
-      // Periodic initial telemetry dispatch
-      _setTimeout(() => this.flush(), 600);
+      const self = this;
+      const opEpoch = sessionEpoch;
+      lastInitOptions = { site: siteKey, mode, endpoint };
+      initKey = reqKey;
+      const runPromise = (async () => {
+        // Start authenticated session
+        const res = await _fetch(`${endpoint}/session`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ site: siteKey, mode }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.error || 'Failed to initialize OBSX session.');
+        if (opEpoch !== sessionEpoch) throw new Error('[OBSX] Session reset during initialization.');
 
-      // Auto-refresh token 60s before expiration for long-running pages
-      if (this._autoRefreshTimer) clearTimeout(this._autoRefreshTimer);
-      const renewMs = Math.max(10000, (activeSession.expiresAt - _now.call(_Date)) - 60000);
-      this._autoRefreshTimer = _setTimeout(() => {
-        this.init(options).catch(() => {});
-      }, renewMs);
+        // Solve Proof of Work challenge
+        const nonce = await solveProofOfWork(data.challenge, data.difficulty);
+        if (opEpoch !== sessionEpoch) throw new Error('[OBSX] Session reset during initialization.');
 
-      return activeSession;
+        if (data.blockOpenAiScrapers !== false && isClientOpenAiScraper()) {
+          self.showDramBlockScreen(resolveAssetOrigin(endpoint));
+        }
+
+        activeSession = {
+          token: data.token,
+          session: data.session,
+          endpoint,
+          siteKey,
+          mode: data.mode || mode,
+          blockOpenAiScrapers: data.blockOpenAiScrapers !== false,
+          nonce,
+          rk: data.rk,
+          startTime: _now.call(_Date),
+          expiresAt: data.expiresAt || (_now.call(_Date) + 3600 * 1000),
+        };
+
+        // Periodic initial telemetry dispatch
+        if (flushTimer) {
+          clearTimeout(flushTimer);
+          flushTimer = null;
+        }
+        flushTimer = _setTimeout(() => {
+          flushTimer = null;
+          if (opEpoch === sessionEpoch) self.flush();
+        }, 600);
+        if (flushTimer && typeof flushTimer.unref === 'function') flushTimer.unref();
+
+        // Auto-refresh token 60s before expiration for long-running pages
+        if (autoRefreshTimer) clearTimeout(autoRefreshTimer);
+        const renewMs = Math.max(10000, (activeSession.expiresAt - _now.call(_Date)) - 60000);
+        autoRefreshTimer = _setTimeout(() => {
+          autoRefreshTimer = null;
+          if (opEpoch === sessionEpoch) {
+            self.init({ ...(lastInitOptions || { site: siteKey, mode, endpoint }), force: true }).catch(() => {});
+          }
+        }, renewMs);
+        if (autoRefreshTimer && typeof autoRefreshTimer.unref === 'function') autoRefreshTimer.unref();
+
+        return activeSession;
+      })();
+
+      initPromise = runPromise;
+      try {
+        return await runPromise;
+      } finally {
+        if (initPromise === runPromise) {
+          initPromise = null;
+          initKey = '';
+        }
+      }
     },
 
     async flush() {
@@ -801,10 +935,18 @@
     },
 
     reset() {
+      sessionEpoch++;
       activeSession = null;
-      if (this._autoRefreshTimer) {
-        clearTimeout(this._autoRefreshTimer);
-        this._autoRefreshTimer = null;
+      initPromise = null;
+      initKey = '';
+      lastInitOptions = null;
+      if (flushTimer) {
+        clearTimeout(flushTimer);
+        flushTimer = null;
+      }
+      if (autoRefreshTimer) {
+        clearTimeout(autoRefreshTimer);
+        autoRefreshTimer = null;
       }
     },
 
@@ -816,7 +958,7 @@
         : containerOrSelector;
       if (!el) return;
 
-      const theme = options.theme || 'dark';
+      const theme = options.theme || (el.getAttribute && el.getAttribute('data-theme')) || 'dark';
       const isDark = theme === 'dark';
       const bg = isDark ? '#111827' : '#ffffff';
       const border = isDark ? '#1f2937' : '#e5e7eb';
@@ -847,9 +989,23 @@
       const label = el.querySelector('.obsx-widget-label');
       const icon = el.querySelector('.obsx-widget-icon');
 
-      this.getAttestation().then((attestation) => {
-        if (input) input.value = attestation.token;
-        if (inputNonce) inputNonce.value = attestation.nonce;
+      const attestOpts = {};
+      const attrSite = options.site || (el.getAttribute && (el.getAttribute('data-obsx-site') || el.getAttribute('data-site')));
+      const attrEndpoint = options.endpoint || (el.getAttribute && (el.getAttribute('data-obsx-endpoint') || el.getAttribute('data-endpoint')));
+      const attrMode = options.mode || (el.getAttribute && (el.getAttribute('data-obsx-mode') || el.getAttribute('data-mode')));
+      if (attrSite) attestOpts.site = attrSite;
+      if (attrEndpoint) attestOpts.endpoint = attrEndpoint;
+      if (attrMode) attestOpts.mode = attrMode;
+
+      this.getAttestation(attestOpts).then((attestation) => {
+        if (!attestation || !attestation.token) {
+          throw new Error('[OBSX] Attestation returned empty token.');
+        }
+        if (input) {
+          input.value = attestation.token;
+          if (input.dataset) input.dataset.obsxReady = '1';
+        }
+        if (inputNonce) inputNonce.value = attestation.nonce !== null && attestation.nonce !== undefined ? String(attestation.nonce) : '';
         if (label) {
           label.textContent = 'Success! Attestation verified';
           label.style.color = '#10b981';
@@ -858,14 +1014,116 @@
           icon.innerHTML = `<svg viewBox="0 0 20 20" fill="#10b981" style="width:20px; height:20px;"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>`;
         }
         if (typeof options.callback === 'function') {
-          options.callback(attestation.token);
+          options.callback(attestation.token, attestation);
         }
-      }).catch((err) => {
+      }).catch(() => {
+        if (input) {
+          input.value = '';
+          if (input.dataset) delete input.dataset.obsxReady;
+        }
+        if (inputNonce) inputNonce.value = '';
         if (label) {
           label.textContent = 'Verification failed';
           label.style.color = '#ef4444';
         }
       });
+    },
+
+    // Declarative Zero-JS Form Protection (`<form data-obsx-protect>`)
+    protectForm(formOrSelector, options = {}) {
+      if (typeof document === 'undefined') return null;
+      const form = typeof formOrSelector === 'string'
+        ? document.querySelector(formOrSelector)
+        : formOrSelector;
+      if (!form || typeof form.addEventListener !== 'function') return null;
+      if (form.dataset && form.dataset.obsxBound === '1') return form;
+      if (form.dataset) form.dataset.obsxBound = '1';
+
+      let tokenInput = form.querySelector('input[name="obsx-token"]');
+      if (!tokenInput) {
+        tokenInput = document.createElement('input');
+        tokenInput.type = 'hidden';
+        tokenInput.name = 'obsx-token';
+        form.appendChild(tokenInput);
+      }
+
+      let nonceInput = form.querySelector('input[name="obsx-nonce"]');
+      if (!nonceInput) {
+        nonceInput = document.createElement('input');
+        nonceInput.type = 'hidden';
+        nonceInput.name = 'obsx-nonce';
+        form.appendChild(nonceInput);
+      }
+
+      const attestOpts = {};
+      const fSite = options.site || (form.getAttribute && (form.getAttribute('data-obsx-site') || form.getAttribute('data-site')));
+      const fEndpoint = options.endpoint || (form.getAttribute && (form.getAttribute('data-obsx-endpoint') || form.getAttribute('data-endpoint')));
+      const fMode = options.mode || (form.getAttribute && (form.getAttribute('data-obsx-mode') || form.getAttribute('data-mode')));
+      if (fSite) attestOpts.site = fSite;
+      if (fEndpoint) attestOpts.endpoint = fEndpoint;
+      if (fMode) attestOpts.mode = fMode;
+
+      const warmSession = () => {
+        this.init(attestOpts).catch(() => {});
+      };
+      form.addEventListener('focusin', warmSession, { once: true });
+      form.addEventListener('pointerenter', warmSession, { once: true });
+
+      const self = this;
+      const submitNativeForm = (submitterEl) => {
+        if (form.dataset) form.dataset.obsxSubmitting = '1';
+        if (submitterEl && typeof form.requestSubmit === 'function') {
+          form.requestSubmit(submitterEl);
+        } else if (global.HTMLFormElement && global.HTMLFormElement.prototype && typeof global.HTMLFormElement.prototype.submit === 'function') {
+          global.HTMLFormElement.prototype.submit.call(form);
+        } else if (typeof form.submit === 'function') {
+          form.submit();
+        }
+      };
+
+      form.addEventListener('submit', async (e) => {
+        if (form.dataset && form.dataset.obsxSubmitting === '1') return;
+        if (e.defaultPrevented) return;
+
+        if (tokenInput.value && tokenInput.dataset && tokenInput.dataset.obsxReady === '1') {
+          delete tokenInput.dataset.obsxReady;
+          return;
+        }
+
+        e.preventDefault();
+        if (form.dataset && form.dataset.obsxPending === '1') return;
+        if (form.dataset) form.dataset.obsxPending = '1';
+        const submitter = e.submitter || null;
+
+        try {
+          const attestation = await self.getAttestation(attestOpts);
+          if (!attestation || !attestation.token) {
+            throw new Error('[OBSX] Empty attestation token');
+          }
+          tokenInput.value = attestation.token;
+          nonceInput.value = attestation.nonce !== null && attestation.nonce !== undefined ? String(attestation.nonce) : '';
+          if (typeof options.onAttested === 'function') {
+            options.onAttested(attestation);
+          }
+          if (typeof global.CustomEvent === 'function') {
+            form.dispatchEvent(new global.CustomEvent('obsx:attested', { detail: attestation }));
+          }
+          submitNativeForm(submitter);
+        } catch {
+          // Clear stale values and submit fail-closed without attested token if initialization failed
+          tokenInput.value = '';
+          nonceInput.value = '';
+          if (tokenInput.dataset) delete tokenInput.dataset.obsxReady;
+          submitNativeForm(null);
+        } finally {
+          if (form.dataset) {
+            delete form.dataset.obsxPending;
+            delete form.dataset.obsxSubmitting;
+          }
+        }
+      });
+
+      return form;
     },
 
     _debugOverride() {
@@ -889,23 +1147,76 @@
       };
     },
 
-    async getAttestation(options = {}) {
-      const now = _now.call(_Date);
-      if (!activeSession || options.fresh || (activeSession.expiresAt && now >= activeSession.expiresAt)) {
-        this.reset();
-        await this.init(options);
-      }
-      await this.flush();
-      const current = {
-        token: activeSession ? activeSession.token : null,
-        nonce: activeSession ? activeSession.nonce : null,
-        mode: activeSession ? (activeSession.mode || 'enforce') : 'enforce',
-      };
-      if (options.consume !== false) {
-        activeSession = null;
-        this.init(options).catch(() => {});
-      }
-      return current;
+    getAttestation(options = {}) {
+      const effectiveOpts = options && typeof options === 'object' ? { ...options } : {};
+      const run = () => (async () => {
+        const cfg = getScriptConfig();
+        const targetSite =
+          effectiveOpts.site ||
+          (activeSession && activeSession.siteKey) ||
+          (lastInitOptions && lastInitOptions.site) ||
+          cfg.site;
+        const targetEndpoint = resolveEndpoint(
+          effectiveOpts.endpoint || (lastInitOptions && lastInitOptions.endpoint),
+          cfg
+        );
+        const targetMode =
+          effectiveOpts.mode ||
+          (lastInitOptions && lastInitOptions.mode) ||
+          cfg.mode ||
+          'enforce';
+        const now = _now.call(_Date);
+        const expired = Boolean(activeSession && activeSession.expiresAt && now >= activeSession.expiresAt);
+        const mismatch = Boolean(
+          activeSession &&
+          ((targetSite && activeSession.siteKey !== targetSite) ||
+            activeSession.endpoint !== targetEndpoint ||
+            (activeSession.mode || 'enforce') !== targetMode)
+        );
+
+        if (effectiveOpts.fresh || expired || mismatch) {
+          this.reset();
+        }
+        if (!activeSession || effectiveOpts.fresh || expired || mismatch) {
+          await this.init({
+            site: targetSite,
+            endpoint: targetEndpoint,
+            mode: targetMode,
+            force: Boolean(effectiveOpts.fresh),
+          });
+        }
+
+        await this.flush();
+        if (!activeSession || !activeSession.token) {
+          throw new Error('[OBSX] Attestation unavailable.');
+        }
+
+        const current = {
+          token: activeSession.token,
+          nonce: activeSession.nonce,
+          mode: activeSession.mode || 'enforce',
+        };
+        if (effectiveOpts.consume !== false) {
+          const nextOpts = {
+            site: activeSession.siteKey,
+            endpoint: activeSession.endpoint,
+            mode: activeSession.mode || 'enforce',
+          };
+          if (flushTimer) {
+            clearTimeout(flushTimer);
+            flushTimer = null;
+          }
+          activeSession = null;
+          if (typeof _fetch === 'function') {
+            this.init(nextOpts).catch(() => {});
+          }
+        }
+        return current;
+      })();
+
+      const queued = attestQueue.then(run, run);
+      attestQueue = queued.catch(() => {});
+      return queued;
     },
 
     async sign(payload = {}) {
@@ -994,4 +1305,36 @@
   global.OBSX = OBSX;
   global.Veritas = OBSX;
   global.Tracer = OBSX;
+
+  function autoMountSdk() {
+    if (typeof window === 'undefined' || typeof document === 'undefined' || typeof _fetch !== 'function') return;
+    const cfg = getScriptConfig();
+    if (cfg.auto === 'false') return;
+
+    const widgets = document.querySelectorAll('.obsx-widget');
+    for (let i = 0; i < widgets.length; i++) {
+      if (!widgets[i].querySelector('.obsx-widget-box')) {
+        OBSX.render(widgets[i]);
+      }
+    }
+
+    const forms = document.querySelectorAll('form[data-obsx-protect]');
+    for (let i = 0; i < forms.length; i++) {
+      if (forms[i].getAttribute('data-obsx-protect') !== 'false') {
+        OBSX.protectForm(forms[i]);
+      }
+    }
+
+    if (cfg.site && !activeSession && !initPromise) {
+      OBSX.init().catch(() => {});
+    }
+  }
+
+  if (typeof window !== 'undefined' && typeof document !== 'undefined' && typeof _fetch === 'function') {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', autoMountSdk, { once: true });
+    } else {
+      _setTimeout(autoMountSdk, 0);
+    }
+  }
 })(typeof window !== 'undefined' ? window : globalThis);

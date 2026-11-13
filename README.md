@@ -6,19 +6,19 @@
 
 ```text
 ╭───────────────────────────────────────────────────────────────────╮
-│  * * *  OBSX PROTOCOL v2.2.1 • WORLD PREMIERE LAUNCH  * * *       │
+│  * * *  OBSX PROTOCOL v2.3.0 • WORLD PREMIERE LAUNCH  * * *       │
 │                                                                   │
 │  STAGE 1: DEFEAT ADVISORY BOTS        [ CLEARED • 100% BLOCKED ]  │
 │  DIFFICULTY: CRYPTOGRAPHIC HARD       [ SHA-256 MICRO-POW ]       │
 │  PARTY MEMBERS: ZERO RUNTIME DEPS     [ 100% PURE NATIVE NODE ]   │
-│  STATUS: 158 / 158 TESTS PASSING      [ ALL SYSTEMS GREEN ]       │
+│  STATUS: 168 / 168 TESTS PASSING      [ ALL SYSTEMS GREEN ]       │
 │  LIVE NODE: OBSX.TECH                 [ PRODUCTION OPERATIONAL ]  │
 ╰───────────────────────────────────────────────────────────────────╯
 ```
 
 <p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/RELEASE-v2.2.1%20PUBLIC-ff79c6?style=flat-square" alt="Release: v2.2.1 Public"></a>
-  <a href="tests/"><img src="https://img.shields.io/badge/TESTS-158%2F158%20PASSING-50fa7b?style=flat-square" alt="Tests: 158/158 Passing"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/RELEASE-v2.3.0%20PUBLIC-ff79c6?style=flat-square" alt="Release: v2.3.0 Public"></a>
+  <a href="tests/"><img src="https://img.shields.io/badge/TESTS-168%2F168%20PASSING-50fa7b?style=flat-square" alt="Tests: 168/168 Passing"></a>
   <a href="package.json"><img src="https://img.shields.io/badge/DEPENDENCIES-ZERO-bd93f9?style=flat-square" alt="Zero Dependencies"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/LICENSE-Dual%20(MIT%20%2B%20ELv2%2FZone%202)-8be9fd?style=flat-square" alt="License: Dual (MIT + ELv2/Zone 2)"></a>
   <a href="https://obsx.tech"><img src="https://img.shields.io/badge/LIVE%20NODE-OBSX.TECH-ffb86c?style=flat-square" alt="Live Node"></a>
@@ -29,7 +29,7 @@
 OBSX is now public as an **open-core** platform (MIT Core Engine & SDK + ELv2/Zone 2 Operator Scaffolding)! We built this protocol to prove that high-assurance client attestation doesn't require intrusive third-party CAPTCHAs, bloated vendor SDKs, or fragile advisory client JSON.
 
 - **0 Runtime Dependencies**: Pure Node.js standard library (`crypto`, `http`, `fs`).
-- **Client SDK Footprint**: 24.2 KB uncompressed (7.8 KB gzip) with Web Crypto.
+- **Client SDK Footprint**: 41.9 KB uncompressed (11.9 KB gzip) with Web Crypto & zero-JS auto-mount.
 - **Sub-Millisecond Verification**: Local token decryption and verification in <1ms.
 - **Full Attack Resistance**: Validated under saturation blitzes with zero leaked memory.
 - **Origin Shield**: tiered L7 flood control that engages under attack and stands down when quiet (`lib/botshield.js`).
@@ -86,11 +86,11 @@ Protect expensive inference endpoints (OpenAI, Anthropic, local Ollama) from aut
 
 ```javascript
 // Client: Attest user prompt before submitting to /api/chat
-const attestation = await OBSX.verify({ promptLen: prompt.length });
+const { token, nonce } = await OBSX.getAttestation();
 await fetch('/api/chat', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ token: attestation.token, message: prompt })
+  body: JSON.stringify({ token, nonce, message: prompt })
 });
 ```
 
@@ -98,10 +98,11 @@ await fetch('/api/chat', {
 Eliminate race conditions and automated PIN brute-forcing on limited reward pools while ensuring genuine customers never hit false positive blocks.
 
 ```javascript
-// Server: Verify cryptographic token before deducting voucher pool
-const verdict = await verifyToken(req.body.token, { secret: process.env.OBSX_SECRET });
-if (verdict.verdict === 'reject') {
-  return res.status(403).json({ error: 'Automated claim rejected' });
+// Server: Verify cryptographic token & nonce before deducting voucher pool
+const { verifyToken } = require('obsx-security');
+const verdict = await verifyToken(req.body, { secretKey: process.env.OBSX_SECRET_KEY });
+if (!verdict.allowed) {
+  return res.status(403).json({ error: 'Automated claim rejected', reasons: verdict.reasons });
 }
 await claimVoucher(req.body.pin);
 ```
@@ -121,46 +122,67 @@ Atomic single-use token burn prevents duplicate submissions, double checkouts, a
 
 ### 1. Browser Client SDK
 
-Add the official lightweight SDK to your page:
+#### Option A — Zero-JS Form Protection (Fastest)
+Add one `<script>` tag and `data-obsx-protect` to any `<form>`. OBSX automatically resolves your API origin, solves the micro-PoW in the background, and attaches hidden `obsx-token` and `obsx-nonce` fields on submit:
 
+```html
+<script src="https://obsx.tech/obsx.min.js" data-obsx-site="pk_YOUR_SITE_KEY" defer></script>
+
+<form action="/api/submit" method="POST" data-obsx-protect>
+  <input type="email" name="email" required />
+  <button type="submit">Continue</button>
+</form>
+```
+
+#### Option B — Programmatic SPA / `fetch()` Integration
 ```html
 <script src="https://obsx.tech/obsx.min.js" data-obsx-site="pk_YOUR_SITE_KEY"></script>
 ```
 
-When a user triggers a protected action:
-
 ```javascript
-// Solves ephemeral PoW and harvests biometric attestation (~15ms)
-const attestation = await OBSX.verify({ action: 'submit_score' });
+// Collects behavioral entropy and solves the ephemeral SHA-256 micro-PoW (~15ms)
+async function submitProtected(score) {
+  const { token, nonce } = await OBSX.getAttestation();
 
-if (attestation.verdict === 'accept') {
-  // Send single-use token with your request
   await fetch('/api/submit', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ token: attestation.token, score: 500 })
+    body: JSON.stringify({ token, nonce, score })
   });
 }
 ```
+
+Or bind every payload field to an HMAC action seal using `OBSX.seal({ score: 500 })`.
 
 ---
 
 ### 2. Backend Verification
 
-#### Node.js (Native `http` / Express)
+#### Express / Connect (1-Line Middleware)
+```javascript
+const express = require('express');
+const obsx = require('obsx-security');
+
+const app = express();
+app.use(express.json());
+app.use(express.urlencoded({ extended: false }));
+
+app.post('/api/submit', obsx.middleware({ secretKey: process.env.OBSX_SECRET_KEY }), (req, res) => {
+  res.json({ ok: true, risk: req.obsx.risk });
+});
+```
+
+#### Node.js (`verifyToken` Manual Control)
 ```javascript
 const { verifyToken } = require('obsx-security');
 
 app.post('/api/submit', async (req, res) => {
-  const { token, score } = req.body;
-
-  // Zero-dependency local verification (<1ms)
-  const result = await verifyToken(token, {
-    secret: process.env.OBSX_SECRET,
-    clientIp: req.ip
+  const result = await verifyToken(req.body, {
+    secretKey: process.env.OBSX_SECRET_KEY,
+    clientUa: req.headers['user-agent']
   });
 
-  if (result.verdict === 'reject') {
+  if (!result.allowed) {
     return res.status(403).json({ ok: false, reasons: result.reasons });
   }
 
@@ -174,15 +196,14 @@ import { NextResponse } from 'next/server';
 import { verifyToken } from 'obsx-security';
 
 export async function POST(request: Request) {
-  const { token, score } = await request.json();
-  const clientIp = request.headers.get('x-forwarded-for') || '127.0.0.1';
+  const body = await request.json();
 
-  const result = await verifyToken(token, {
-    secret: process.env.OBSX_SECRET!,
-    clientIp
+  const result = await verifyToken(body, {
+    secretKey: process.env.OBSX_SECRET_KEY!,
+    clientUa: request.headers.get('user-agent') || undefined
   });
 
-  if (result.verdict === 'reject') {
+  if (!result.allowed) {
     return NextResponse.json({ ok: false, reasons: result.reasons }, { status: 403 });
   }
 
@@ -190,10 +211,10 @@ export async function POST(request: Request) {
 }
 ```
 
-#### Python (FastAPI)
+#### Python (FastAPI — HTTP Verification API)
 ```python
 from fastapi import FastAPI, HTTPException, Request
-from obsx import verify_token
+import httpx
 import os
 
 app = FastAPI()
@@ -201,13 +222,21 @@ app = FastAPI()
 @app.post("/api/submit")
 async def submit(request: Request):
     body = await request.json()
-    verdict = verify_token(
-        token=body.get("token"),
-        secret=os.environ["OBSX_SECRET"],
-        client_ip=request.client.host
-    )
-    if verdict["verdict"] == "reject":
-        raise HTTPException(status_code=403, detail=verdict["reasons"])
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        resp = await client.post(
+            "https://obsx.tech/api/v1/verify",
+            headers={
+                "Authorization": f"Bearer {os.environ['OBSX_SECRET_KEY']}",
+                "X-OBSX-Client-UA": request.headers.get("user-agent", ""),
+            },
+            json={
+                "token": body.get("token") or body.get("obsx-token"),
+                "nonce": body.get("nonce") or body.get("obsx-nonce"),
+            },
+        )
+    verdict = resp.json() if resp.status_code == 200 else {"allowed": False, "reasons": ["verify_failed"]}
+    if not verdict.get("allowed"):
+        raise HTTPException(status_code=403, detail=verdict.get("reasons", []))
     return {"ok": True}
 ```
 

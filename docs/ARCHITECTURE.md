@@ -84,7 +84,7 @@ OBSX eliminates this entire attack surface by transforming client integrity into
 
 ## 4. Production Readiness & Quality Assurance
 
-* **Codebase Coverage**: 100% test pass rate across unit and integration suites (158/158 tests, 0 failures).
+* **Codebase Coverage**: 100% test pass rate across unit and integration suites (168/168 tests, 0 failures).
 * **Dependencies**: 0 external runtime dependencies.
 * **Standards Compliance**: Zero zizmor pedantic CI findings.
 * **Licensing**: Dual-licensed under Zone 1 MIT (Core Protocol & SDK) and Zone 2 ELv2 + Additional OBSX Zone 2 Terms (Operator Scaffolding); see [LICENSE](../LICENSE).

@@ -18,6 +18,7 @@ This repository is organized into two explicit license zones modeled after open-
 
 1. **ZONE 1: Core Protocol Engine, Client SDK, Tests & Public Documentation** — Licensed under the **MIT License**.
    Includes:
+   - `lib/index.js` (Zero-dependency Node.js verification SDK entry point & Express/HTTP middleware)
    - `lib/crypto.js` (Proof-of-work generator, HMAC seals, canonicalization, shared runtime/escaping helpers)
    - `lib/core.js` (Core verification engine, telemetry validation, rate limiting, replay defense)
    - `lib/telemetry.js` (Kinematic jerk entropy & pointer dynamics evaluation)

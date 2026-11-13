@@ -54,23 +54,35 @@
         <pre class="code-content"><code>&lt;script src="https://obsx.tech/obsx.min.js" data-obsx-site="pk_YOUR_SITE_KEY"&gt;&lt;/script&gt;</code></pre>
       </div>
 
-      <h4 style="margin: 24px 0 8px; font-size: 15px;">Programmatic Verification</h4>
+      <h4 style="margin: 24px 0 8px; font-size: 15px;">Zero-JS Form Protection (Fastest)</h4>
+      <p style="color: var(--text-muted); font-size: 13.5px; margin-bottom: 12px;">
+        Add <code>data-obsx-protect</code> to any HTML form to inject hidden <code>obsx-token</code> and <code>obsx-nonce</code> inputs automatically on submit:
+      </p>
+      <div class="code-block" style="margin-bottom: 20px;">
+        <pre class="code-content"><code>&lt;script src="https://obsx.tech/obsx.min.js" data-obsx-site="pk_YOUR_SITE_KEY" defer&gt;&lt;/script&gt;
+
+&lt;form action="/api/checkout" method="POST" data-obsx-protect&gt;
+  &lt;input type="email" name="email" required /&gt;
+  &lt;button type="submit"&gt;Complete Order&lt;/button&gt;
+&lt;/form&gt;</code></pre>
+      </div>
+
+      <h4 style="margin: 24px 0 8px; font-size: 15px;">Programmatic SPA Verification</h4>
       <p style="color: var(--text-muted); font-size: 13.5px; margin-bottom: 12px;">
         When a sensitive user action is triggered (checkout, prompt generation, voucher claim, or sign-up):
       </p>
       <div class="code-block">
         <pre class="code-content"><code>// Automatically harvests biometric entropy and solves the SHA-256 micro-PoW (~15ms)
-const attestation = await OBSX.verify({ action: 'checkout' });
+async function handleCheckout(cartItems) {
+  const { token, nonce } = await OBSX.getAttestation();
 
-if (attestation.verdict === 'accept') {
-  // Submit single-use token with your request
+  // Submit single-use token &amp; PoW nonce with your request (or use await OBSX.seal({ items: cartItems }))
   const response = await fetch('/api/checkout', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ token: attestation.token, items: cartItems })
+    body: JSON.stringify({ token, nonce, items: cartItems })
   });
-} else {
-  console.warn('Action blocked by client gate:', attestation.reasons);
+  return response.json();
 }</code></pre>
       </div>
     </div>
@@ -79,42 +91,33 @@ if (attestation.verdict === 'accept') {
     <div class="card" style="margin-bottom: 32px;">
       <div class="card-title">
         <span>2. Server-Side Verification Gate</span>
-        <span class="badge badge-good">&lt;1ms Local Verification</span>
+        <span class="badge badge-good">Zero External Dependencies</span>
       </div>
       <p class="card-sub">
         Verify the client session token and single-use replay nonce before processing business logic:
       </p>
 
       <div class="code-block">
-        <pre class="code-content"><code>// Node.js Native / Express Middleware
-const { verifyToken } = require('obsx-security');
+        <pre class="code-content"><code>// Express 1-Line Middleware
+const obsx = require('obsx-security');
 
-app.post('/api/checkout', async (req, res) => {
-  const { token, items } = req.body;
-
-  // Verify HMAC signature, single-use token burn, and tamper checks
-  const verdict = await verifyToken(token, {
-    secret: process.env.OBSX_SECRET,
-    clientIp: req.ip
-  });
-
-  if (verdict.verdict === 'reject') {
-    return res.status(403).json({
-      ok: false,
-      error: 'security_gate_rejected',
-      reasons: verdict.reasons
-    });
-  }
-
-  // Request is cryptographically attested — execute transaction
-  const order = await processOrder(items);
+app.post('/api/checkout', obsx.middleware({ secretKey: process.env.OBSX_SECRET_KEY }), async (req, res) => {
+  // Attestation passed (req.obsx holds { ok, verdict, risk, reasons })
+  const order = await processOrder(req.body.items);
   res.json({ ok: true, orderId: order.id });
-});</code></pre>
+});
+
+// Or verify manually in any Node handler:
+// const verdict = await obsx.verifyToken(req.body, {
+//   secretKey: process.env.OBSX_SECRET_KEY,
+//   clientUa: req.headers['user-agent']
+// });
+// if (!verdict.allowed) return res.status(403).json({ ok: false, reasons: verdict.reasons });</code></pre>
       </div>
 
       <h4 style="margin: 24px 0 8px; font-size: 15px;">Standalone Direct HTTP Verification</h4>
       <p style="color: var(--text-muted); font-size: 13.5px; margin-bottom: 12px;">
-        If you are using Go, Ruby, or Rust, verify directly via HTTP against your OBSX self-hosted node:
+        If you are using Python, Go, Ruby, or Rust, verify directly via HTTPS against <code>https://obsx.tech/api/v1/verify</code> (or your self-hosted node):
       </p>
       <div class="code-block">
         <pre class="code-content"><code>curl -X POST https://obsx.tech/api/v1/verify \
@@ -126,7 +129,7 @@ app.post('/api/checkout', async (req, res) => {
   }'
 
 # Response:
-# { "ok": true, "verdict": "accept", "risk": 0, "reasons": [] }</code></pre>
+# { "ok": true, "verdict": "accept", "allowed": true, "risk": 0, "reasons": [] }</code></pre>
       </div>
     </div>
 
