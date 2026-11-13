@@ -707,6 +707,7 @@
     lastAdvJson: '',
     adapting: false,
     acceptingLicense: false,
+    stickyAdaptNotice: false,
     adaptStatusText: '',
     licenseStatusText: '',
     diffOpen: false,
@@ -729,7 +730,8 @@
 
   function renderOperatorDriftBanner(adv) {
     let driftBanner = document.getElementById('operator-drift-advisory-banner');
-    if (!adv || !adv.showReminder) {
+    const hasReminder = Boolean(adv && adv.showReminder);
+    if (!hasReminder && !operatorBannerState.stickyAdaptNotice) {
       if (driftBanner) driftBanner.style.display = 'none';
       operatorBannerState.lastAdvJson = '';
       operatorBannerState.adaptStatusText = '';
@@ -742,7 +744,12 @@
     // Do not rebuild DOM while an operator mutation is in flight or polls would re-enable buttons / orphan handlers.
     if (operatorBannerState.adapting || operatorBannerState.acceptingLicense) return;
 
-    const advJson = JSON.stringify(adv);
+    const effectiveAdv = adv || {};
+    const advJson = JSON.stringify({
+      adv: effectiveAdv,
+      stickyAdaptNotice: operatorBannerState.stickyAdaptNotice,
+      adaptStatusText: operatorBannerState.adaptStatusText,
+    });
     if (driftBanner && advJson === operatorBannerState.lastAdvJson) {
       driftBanner.style.display = 'block';
       return;
@@ -757,20 +764,20 @@
     }
 
     operatorBannerState.lastAdvJson = advJson;
-    const modFiles = (adv.locallyModifiedFiles && adv.locallyModifiedFiles.length)
-      ? adv.locallyModifiedFiles.map((f) => `<code>${escapeHtml(f)}</code>`).join(', ')
+    const modFiles = (effectiveAdv.locallyModifiedFiles && effectiveAdv.locallyModifiedFiles.length)
+      ? effectiveAdv.locallyModifiedFiles.map((f) => `<code>${escapeHtml(f)}</code>`).join(', ')
       : 'None';
-    const upCommits = (adv.upstreamCommits && adv.upstreamCommits.length)
-      ? `<div style="margin-top:6px;"><strong>New Official Upstream Commits (${adv.commitsBehind} behind):</strong><ul style="margin:4px 0 0 18px; padding:0;">${adv.upstreamCommits.map((c) => `<li><code>${escapeHtml(c)}</code></li>`).join('')}</ul></div>`
+    const upCommits = (effectiveAdv.upstreamCommits && effectiveAdv.upstreamCommits.length)
+      ? `<div style="margin-top:6px;"><strong>New Official Upstream Commits (${effectiveAdv.commitsBehind} behind):</strong><ul style="margin:4px 0 0 18px; padding:0;">${effectiveAdv.upstreamCommits.map((c) => `<li><code>${escapeHtml(c)}</code></li>`).join('')}</ul></div>`
       : '';
-    const upFiles = (adv.upstreamChangedFiles && adv.upstreamChangedFiles.length)
-      ? `<div style="margin-top:4px;"><strong>Changed Upstream Files:</strong> ${adv.upstreamChangedFiles.map((f) => `<code>${escapeHtml(f)}</code>`).join(', ')}</div>`
+    const upFiles = (effectiveAdv.upstreamChangedFiles && effectiveAdv.upstreamChangedFiles.length)
+      ? `<div style="margin-top:4px;"><strong>Changed Upstream Files:</strong> ${effectiveAdv.upstreamChangedFiles.map((f) => `<code>${escapeHtml(f)}</code>`).join(', ')}</div>`
       : '';
-    const overlapWarn = (adv.overlappingFiles && adv.overlappingFiles.length)
-      ? `<div style="margin-top:4px; color:#f59e0b;"><strong>Adaptation Overlap Detected:</strong> Both your local node and official upstream modified ${adv.overlappingFiles.map((f) => `<code>${escapeHtml(f)}</code>`).join(', ')}.</div>`
+    const overlapWarn = (effectiveAdv.overlappingFiles && effectiveAdv.overlappingFiles.length)
+      ? `<div style="margin-top:4px; color:#f59e0b;"><strong>Adaptation Overlap Detected:</strong> Both your local node and official upstream modified ${effectiveAdv.overlappingFiles.map((f) => `<code>${escapeHtml(f)}</code>`).join(', ')}.</div>`
       : '';
-    const lic = adv.licenseStatus;
-    const hasGitDrift = Boolean(adv.dirtyWorkingTree || (adv.commitsBehind && adv.commitsBehind > 0));
+    const lic = effectiveAdv.licenseStatus;
+    const hasGitDrift = Boolean(effectiveAdv.dirtyWorkingTree || (effectiveAdv.commitsBehind && effectiveAdv.commitsBehind > 0));
     const needsLicenseAction = Boolean(
       lic && (!lic.missingCriticalFiles || !lic.missingCriticalFiles.length) &&
       (!lic.accepted || lic.licenseChanged || lic.safeModeReason === 'corrupt_license_state')
@@ -785,10 +792,20 @@
       : '';
     const bannerTitle = hasGitDrift
       ? '[PRIVATE OPERATOR ADVISORY] Local Node Customization &amp; Upstream Sync Paused'
+      : operatorBannerState.stickyAdaptNotice
+      ? '[PRIVATE OPERATOR ADVISORY] Local Adaptation &amp; Stash Notice'
       : '[PRIVATE OPERATOR ADVISORY] License Integrity &amp; Safe Mode Notice';
     const bannerSubtitle = hasGitDrift
       ? 'Auto-updater paused fast-forward sync to protect your local changes. Only you (authenticated operator) can see this notice.'
+      : operatorBannerState.stickyAdaptNotice
+      ? 'Upstream sync completed, and overlapping local edits remain safely preserved in git stash until you restore or dismiss this notice.'
       : 'Operator attention required for license integrity verification. Only you (authenticated operator) can see this notice.';
+    const stickyNoticeBox = (!hasGitDrift && operatorBannerState.stickyAdaptNotice)
+      ? `<div style="margin-top:8px; padding:8px 10px; border-radius:6px; border:1px solid rgba(245, 158, 11, 0.35); background:rgba(0,0,0,0.25); display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          <span id="operator-adapt-feedback" style="font-size:11.5px; color:#f59e0b;"></span>
+          <button type="button" id="btn-dismiss-adapt-notice" class="btn btn-secondary" style="font-size:11px; padding:2px 8px;">Dismiss</button>
+        </div>`
+      : '';
     const gitControls = hasGitDrift
       ? `
       <div style="margin-top:6px;"><strong>Your Modified Files:</strong> ${modFiles}</div>
@@ -797,7 +814,7 @@
       ${overlapWarn}
       <div style="margin-top:8px;">
         <strong>Adapt &amp; Rebase Command:</strong>
-        <code style="display:block; margin-top:4px; padding:6px 8px; background:rgba(0,0,0,0.35); border-radius:4px; user-select:all;">${escapeHtml(adv.adaptationCommand || 'git fetch origin main && git stash && git pull --rebase origin main && git stash pop')}</code>
+        <code style="display:block; margin-top:4px; padding:6px 8px; background:rgba(0,0,0,0.35); border-radius:4px; user-select:all;">${escapeHtml(effectiveAdv.adaptationCommand || 'git fetch origin main && git stash && git pull --rebase origin main && git stash pop')}</code>
       </div>
       <div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
         <button type="button" id="btn-view-upstream-diff" class="btn btn-secondary" style="font-size:11.5px; padding:5px 10px;">View Upstream Diff</button>
@@ -806,12 +823,12 @@
       </div>
       <pre id="operator-upstream-diff-view" style="display:none; margin-top:8px; padding:8px; max-height:220px; overflow:auto; background:rgba(0,0,0,0.45); border-radius:4px; font-size:11px; white-space:pre-wrap;"></pre>
       `
-      : '';
+      : stickyNoticeBox;
 
     driftBanner.innerHTML = `
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
         <strong style="color:#f59e0b;">${bannerTitle}</strong>
-        <span class="badge badge-warn">Edition: ${escapeHtml(adv.edition || 'modified-local')}</span>
+        <span class="badge badge-warn">Edition: ${escapeHtml(effectiveAdv.edition || 'modified-local')}</span>
       </div>
       <div style="color:var(--text-muted);">
         ${bannerSubtitle}
@@ -821,6 +838,16 @@
     `;
     driftBanner.style.display = 'block';
     syncBannerFeedbackAndDiff();
+
+    const btnDismissAdapt = document.getElementById('btn-dismiss-adapt-notice');
+    if (btnDismissAdapt) {
+      btnDismissAdapt.onclick = () => {
+        operatorBannerState.stickyAdaptNotice = false;
+        operatorBannerState.adaptStatusText = '';
+        operatorBannerState.lastAdvJson = '';
+        renderOperatorDriftBanner(adv);
+      };
+    }
 
     const btnDiff = document.getElementById('btn-view-upstream-diff');
     if (btnDiff) {
@@ -848,6 +875,7 @@
       btnAdapt.onclick = async () => {
         if (operatorBannerState.adapting) return;
         operatorBannerState.adapting = true;
+        operatorBannerState.stickyAdaptNotice = false;
         operatorBannerState.adaptStatusText = '';
         btnAdapt.disabled = true;
         btnAdapt.textContent = 'Adapting & Rebasing...';
@@ -859,13 +887,16 @@
             body: '{}',
           });
           const aData = await aRes.json();
-          operatorBannerState.adaptStatusText = aRes.ok && aData.ok
+          const succeeded = Boolean(aRes.ok && aData.ok);
+          operatorBannerState.stickyAdaptNotice = !succeeded;
+          operatorBannerState.adaptStatusText = succeeded
             ? `Adapted to ${aData.commit}!`
             : (aData.message || aData.error || 'Conflict detected');
-          if (aRes.ok && aData.ok && activeTelemetryPid) {
+          if (activeTelemetryPid && succeeded) {
             setTimeout(() => loadProjectTelemetry(activeTelemetryPid, false), 400);
           }
         } catch (e) {
+          operatorBannerState.stickyAdaptNotice = true;
           operatorBannerState.adaptStatusText = 'Adapt failed';
         } finally {
           operatorBannerState.adapting = false;
