@@ -7,7 +7,7 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Dual%20(MIT%20%2B%20ELv2%2FZone%202)-blue.svg" alt="License: Dual (MIT + ELv2/Zone 2)"></a>
   <a href="package.json"><img src="https://img.shields.io/badge/dependencies-0-success.svg" alt="Zero Dependencies"></a>
-  <a href="tests/"><img src="https://img.shields.io/badge/tests-165%20passing-brightgreen.svg" alt="Tests: 165 Passing"></a>
+  <a href="tests/"><img src="https://img.shields.io/badge/tests-168%20passing-brightgreen.svg" alt="Tests: 168 Passing"></a>
   <a href="lib/crypto.js"><img src="https://img.shields.io/badge/crypto-SHA--256%20micro--PoW-orange.svg" alt="Crypto: PoW"></a>
   <a href="https://obsx.tech"><img src="https://img.shields.io/badge/live%20node-obsx.tech-E2886A.svg" alt="Live Node"></a>
 </p>
@@ -115,13 +115,15 @@ Add one `<script>` tag and `data-obsx-protect` to any `<form>`. OBSX automatical
 
 ```javascript
 // Collects behavioral entropy and solves the ephemeral SHA-256 micro-PoW (~15ms)
-const { token, nonce } = await OBSX.getAttestation();
+async function submitProtected(score) {
+  const { token, nonce } = await OBSX.getAttestation();
 
-await fetch('/api/submit', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ token, nonce, score: 500 })
-});
+  await fetch('/api/submit', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token, nonce, score })
+  });
+}
 ```
 
 Or bind every payload field to an HMAC action seal using `OBSX.seal({ score: 500 })`.

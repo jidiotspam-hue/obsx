@@ -73,14 +73,17 @@
       </p>
       <div class="code-block">
         <pre class="code-content"><code>// Automatically harvests biometric entropy and solves the SHA-256 micro-PoW (~15ms)
-const { token, nonce } = await OBSX.getAttestation();
+async function handleCheckout(cartItems) {
+  const { token, nonce } = await OBSX.getAttestation();
 
-// Submit single-use token &amp; PoW nonce with your request (or use await OBSX.seal({ items: cartItems }))
-const response = await fetch('/api/checkout', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ token, nonce, items: cartItems })
-});</code></pre>
+  // Submit single-use token &amp; PoW nonce with your request (or use await OBSX.seal({ items: cartItems }))
+  const response = await fetch('/api/checkout', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token, nonce, items: cartItems })
+  });
+  return response.json();
+}</code></pre>
       </div>
     </div>
 

@@ -300,12 +300,14 @@
 
 &lt;!-- Or programmatic SPA attestation --&gt;
 &lt;script&gt;
-  const { token, nonce } = await OBSX.getAttestation();
-  await fetch('/api/action', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ token, nonce, data: 'payload' })
-  });
+  async function submitAction(payload) {
+    const { token, nonce } = await OBSX.getAttestation();
+    return fetch('/api/action', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, nonce, data: payload })
+    });
+  }
 &lt;/script&gt;</code></pre>
       </div>
 

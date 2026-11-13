@@ -9,6 +9,8 @@ const vm = require('vm');
 const nodeCrypto = require('crypto');
 
 const ROOT = path.resolve(__dirname, '..');
+const { execFileSync } = require('child_process');
+const stream = require('stream');
 const obsx = require('..');
 const core = require('../lib/core');
 const cryptoLib = require('../lib/crypto');
@@ -148,8 +150,12 @@ test('package: require("obsx-security") exposes SDK API cleanly without auto-lis
   const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
   assert.equal(pkg.main, 'lib/index.js');
   assert.equal(pkg.types, 'index.d.ts');
-  assert.equal(pkg.exports['.'], './lib/index.js');
+  assert.deepEqual(pkg.exports['.'], {
+    types: './index.d.ts',
+    default: './lib/index.js',
+  });
   assert.equal(pkg.exports['./server'], './server.js');
+  assert.equal(pkg.exports['./lib/*'], './lib/*');
 
   assert.equal(typeof obsx.verifyToken, 'function');
   assert.equal(typeof obsx.verify, 'function');
@@ -349,50 +355,62 @@ test('dx: compiled obsx.min.js auto-resolves cross-origin script endpoints and p
     submit() { nativeSubmitCount++; },
   };
 
+  const docListeners = {};
+  const winListeners = {};
+  const overlayNodes = [];
   const mockDocument = {
     currentScript: scriptEl,
     readyState: 'complete',
     referrer: '',
-    body: { appendChild() {} },
+    body: {
+      appendChild(el) { overlayNodes.push(el); },
+    },
+    getElementById(id) {
+      return overlayNodes.find((n) => n.id === id) || null;
+    },
     querySelector(sel) {
       if (sel.includes('data-obsx-site') || sel.includes('data-site') || sel.includes('obsx.min.js')) return scriptEl;
       return null;
     },
     querySelectorAll() { return []; },
-    createElement() { return { type: '', name: '', value: '', dataset: {} }; },
-    addEventListener() {},
+    createElement() { return { type: '', name: '', value: '', dataset: {}, style: {} }; },
+    addEventListener(ev, fn) { docListeners[ev] = fn; },
   };
 
   const sandbox = {
     window: null,
     document: mockDocument,
-    navigator: { userAgent: 'Mozilla/5.0 Chrome/130.0.0.0 Safari/537.36' },
+    navigator: { userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36' },
     location: { origin: 'https://third-party-app.example.com', href: 'https://third-party-app.example.com/signup', search: '' },
     screen: { width: 1440, height: 900 },
-    performance: { now: () => Date.now() },
-    Date,
-    Object,
-    Function,
     TextEncoder,
     Uint8Array,
     URL,
+    atob: (s) => Buffer.from(s, 'base64').toString('binary'),
+    btoa: (s) => Buffer.from(s, 'binary').toString('base64'),
     CustomEvent: function CustomEvent(name, init) { return { type: name, detail: init && init.detail }; },
     crypto: nodeCrypto.webcrypto,
     fetch: async (url, init = {}) => {
       const body = init.body ? JSON.parse(init.body) : undefined;
-      const res = await httpJson(init.method || 'GET', url, body, init.headers || {});
+      const res = await httpJson(init.method || 'GET', url, body, {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36',
+        ...(init.headers || {}),
+      });
       return { ok: res.status >= 200 && res.status < 300, status: res.status, json: async () => res.json };
     },
     setTimeout,
     clearTimeout,
-    addEventListener() {},
+    addEventListener(ev, fn) { winListeners[ev] = fn; },
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
 
-  vm.runInNewContext(bundleCode, sandbox);
+  vm.createContext(sandbox);
+  sandbox.performance = { now: vm.runInContext('Date.now', sandbox) };
+  vm.runInContext(bundleCode, sandbox);
   const sdk = sandbox.OBSX;
   assert.ok(sdk, 'OBSX global must initialize');
+  assert.equal(sdk.version, '2.3.1');
 
   try {
     // Assert cross-origin init automatically pointed at ${baseUrl}/api/v1 without explicit endpoint!
@@ -400,6 +418,16 @@ test('dx: compiled obsx.min.js auto-resolves cross-origin script endpoints and p
     assert.equal(active.endpoint, `${baseUrl}/api/v1`);
     assert.equal(active.siteKey, testProject.publicKey);
     assert.ok(active.token);
+
+    // Feed natural human mouse cadence + varied frame deltas so tsig + biometrics verify cleanly end-to-end
+    const samplePts = buildNaturalSignals().mousePoints;
+    const delaysMs = [12, 23, 15, 29, 14, 24, 18, 27, 13, 21];
+    for (let i = 0; i < samplePts.length; i++) {
+      await new Promise((r) => setTimeout(r, delaysMs[i % delaysMs.length]));
+      if (typeof winListeners.mousemove === 'function') {
+        winListeners.mousemove({ clientX: samplePts[i].x, clientY: samplePts[i].y });
+      }
+    }
 
     sdk.protectForm(mockForm);
     let prevented = false;
@@ -412,9 +440,343 @@ test('dx: compiled obsx.min.js auto-resolves cross-origin script endpoints and p
     assert.ok(tokenInput.value.length > 10, 'protectForm must inject attested obsx-token before submit');
     assert.ok(nonceInput.value.length > 0, 'protectForm must inject PoW obsx-nonce before submit');
     assert.equal(nativeSubmitCount, 1);
+
+    // End-to-end verification of the exact form fields produced by obsx.min.js against server /api/v1/verify
+    const formVerify = await obsx.verifyToken(
+      { 'obsx-token': tokenInput.value, 'obsx-nonce': nonceInput.value },
+      {
+        secretKey: testProject.secretKey,
+        endpoint: `${baseUrl}/api/v1`,
+        clientUa: sandbox.navigator.userAgent,
+      }
+    );
+    assert.equal(formVerify.allowed, true, `Form verification failed: ${JSON.stringify(formVerify.reasons)}`);
+    assert.equal(formVerify.verdict, 'accept');
   } finally {
     sdk.reset();
   }
+});
+
+test('dx: security hardening blocks JSON req-spoofing, flat seal tampering, PII over-forwarding, and isolates OBSX_SECRET', async () => {
+  const chromeUa = 'Mozilla/5.0 Chrome/130.0.0.0 Safari/537.36';
+
+  // 1. Type confusion attack: client sends JSON req.body with fake { method, headers, body }
+  const decoy = await createGenuineSession(chromeUa);
+  const attackerBody = {
+    method: 'POST',
+    url: '/api/transfer',
+    headers: { 'user-agent': chromeUa },
+    ip: '1.2.3.4',
+    amount: 999999,
+    body: {
+      token: decoy.token,
+      nonce: decoy.nonce,
+    },
+  };
+  const decoyResult = await obsx.verifyToken(attackerBody, {
+    secretKey: testProject.secretKey,
+    endpoint: `${baseUrl}/api/v1`,
+  });
+  assert.equal(decoyResult.allowed, false, 'Parsed JSON req.body must never duck-type as HTTP req to unwrap req.body.body');
+
+  // Real Node stream.Readable request object IS unwrapped automatically
+  const realStreamReq = new stream.Readable({ read() {} });
+  const realSess = await createGenuineSession(chromeUa);
+  realStreamReq.headers = { 'user-agent': chromeUa };
+  realStreamReq.method = 'POST';
+  realStreamReq.url = '/api/transfer';
+  realStreamReq.body = { token: realSess.token, nonce: realSess.nonce };
+  const streamResult = await obsx.verifyToken(realStreamReq, {
+    secretKey: testProject.secretKey,
+    endpoint: `${baseUrl}/api/v1`,
+  });
+  assert.equal(streamResult.allowed, true, 'Real stream.Readable request objects must unwrap cleanly');
+
+  // 2. Flat HMAC action seals ({ sig, ts }) work end-to-end and detect payload tampering
+  const flatSess = await createGenuineSession(chromeUa);
+  const flatTs = Date.now();
+  const flatPayload = { action: 'withdraw', amount: 50 };
+  const flatSig = cryptoLib.signActionSeal(flatSess.rk, flatSess.session, flatTs, flatSess.nonce, flatPayload);
+  const flatOk = await obsx.verifyToken(
+    { ...flatPayload, token: flatSess.token, nonce: flatSess.nonce, ts: flatTs, sig: flatSig },
+    { secretKey: testProject.secretKey, endpoint: `${baseUrl}/api/v1` }
+  );
+  assert.equal(flatOk.allowed, true);
+  assert.equal(flatOk.sealed, 'ok');
+
+  const tamperedSess = await createGenuineSession(chromeUa);
+  const tamperedTs = Date.now();
+  const tamperedSig = cryptoLib.signActionSeal(tamperedSess.rk, tamperedSess.session, tamperedTs, tamperedSess.nonce, flatPayload);
+  const tamperedRes = await obsx.verifyToken(
+    { action: 'withdraw', amount: 50000, token: tamperedSess.token, nonce: tamperedSess.nonce, ts: tamperedTs, sig: tamperedSig },
+    { secretKey: testProject.secretKey, endpoint: `${baseUrl}/api/v1` }
+  );
+  assert.equal(tamperedRes.allowed, false);
+  assert.equal(tamperedRes.sealed, 'invalid');
+
+  // 3. Truthy primitive `obsx` or non-sealed `obsx` container still strips PII locally + OBSX_SECRET is NEVER sent Bearer
+  let capturedBodies = [];
+  const capSrv = http.createServer((req, res) => {
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => {
+      capturedBodies.push(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, allowed: true, verdict: 'accept', risk: 0, mode: 'enforce', reasons: [] }));
+    });
+  });
+  await new Promise((resolve) => capSrv.listen(0, '127.0.0.1', resolve));
+
+  const prevObsxSecret = process.env.OBSX_SECRET;
+  const prevObsxSecretKey = process.env.OBSX_SECRET_KEY;
+  try {
+    const capUrl = `http://127.0.0.1:${capSrv.address().port}/api/v1`;
+    await obsx.verifyToken(
+      { obsx: true, token: 'tok_safe', nonce: '7', password: 'secret-pw', email: 'pii@example.com' },
+      { secretKey: 'sk_cap_123', endpoint: capUrl }
+    );
+    await obsx.verifyToken(
+      { obsx: { token: 'tok_nested_unsealed', nonce: '8' }, password: 'secret-pw', ssn: '000' },
+      { secretKey: 'sk_cap_123', endpoint: capUrl }
+    );
+    assert.deepEqual(capturedBodies[0], { token: 'tok_safe', nonce: '7' });
+    assert.deepEqual(capturedBodies[1], { token: 'tok_nested_unsealed', nonce: '8' });
+
+    delete process.env.OBSX_SECRET_KEY;
+    process.env.OBSX_SECRET = 'master_hmac_secret_never_send_bearer';
+    const beforeReqs = capturedBodies.length;
+    const missingKeyRes = await obsx.verifyToken('tok_safe', { endpoint: capUrl });
+    assert.equal(missingKeyRes.ok, false);
+    assert.equal(missingKeyRes.allowed, false);
+    assert.equal(capturedBodies.length, beforeReqs, 'OBSX_SECRET must never be sent in Authorization header');
+  } finally {
+    if (prevObsxSecret === undefined) delete process.env.OBSX_SECRET;
+    else process.env.OBSX_SECRET = prevObsxSecret;
+    if (prevObsxSecretKey === undefined) delete process.env.OBSX_SECRET_KEY;
+    else process.env.OBSX_SECRET_KEY = prevObsxSecretKey;
+    capSrv.closeAllConnections?.();
+    await new Promise((resolve) => capSrv.close(resolve));
+  }
+});
+
+test('dx: middleware review-blocking, raw HTTP responses, next() error propagation, local mode, and network resilience', async () => {
+  // 1. Verdict 'review': allowed by default, rejected under blockReview: true
+  const reviewSrv = http.createServer((req, res) => {
+    req.resume();
+    req.on('end', () => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, allowed: true, verdict: 'review', risk: 45, mode: 'enforce', reasons: [{ code: 'suspicious', weight: 45 }] }));
+    });
+  });
+  await new Promise((resolve) => reviewSrv.listen(0, '127.0.0.1', resolve));
+
+  try {
+    const reviewUrl = `http://127.0.0.1:${reviewSrv.address().port}/api/v1`;
+    const mwAllow = obsx.middleware({ secretKey: 'sk_r', endpoint: reviewUrl });
+    const mwBlock = obsx.middleware({ secretKey: 'sk_r', endpoint: reviewUrl, blockReview: true, statusCode: 429 });
+
+    let allowedNext = false;
+    const rawRes1 = { headersSent: false, writeHead() {}, end() {} };
+    await mwAllow({ method: 'POST', headers: {}, body: { token: 't' } }, rawRes1, () => { allowedNext = true; });
+    assert.equal(allowedNext, true);
+
+    let blockedNext = false;
+    let writtenStatus = 0;
+    let writtenBody = '';
+    const rawRes2 = {
+      headersSent: false,
+      writeHead(code) { writtenStatus = code; this.headersSent = true; },
+      end(chunk) { writtenBody = chunk; },
+    };
+    await mwBlock({ method: 'POST', headers: {}, body: { token: 't' } }, rawRes2, () => { blockedNext = true; });
+    assert.equal(blockedNext, false);
+    assert.equal(writtenStatus, 429);
+    assert.equal(JSON.parse(writtenBody).verdict, 'review');
+
+    // Downstream errors thrown from next() must propagate rather than turning into 403 obsx_verification_failed
+    await assert.rejects(
+      mwAllow({ method: 'POST', headers: {}, body: { token: 't' } }, rawRes1, () => {
+        throw new Error('downstream_db_boom');
+      }),
+      /downstream_db_boom/
+    );
+  } finally {
+    reviewSrv.closeAllConnections?.();
+    await new Promise((resolve) => reviewSrv.close(resolve));
+  }
+
+  // 2. Network resilience: ECONNREFUSED, truncated/invalid JSON, timeout
+  const unreachable = await obsx.verifyToken('tok_123', {
+    secretKey: 'sk_t',
+    endpoint: 'http://127.0.0.1:9/api/v1',
+    timeoutMs: 300,
+  });
+  assert.equal(unreachable.ok, false);
+  assert.equal(unreachable.allowed, false);
+
+  const flakySrv = http.createServer((req, res) => {
+    req.resume();
+    req.on('end', () => {
+      if (req.headers['x-case'] === 'timeout') return; // intentionally hang
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end('{bad json');
+    });
+  });
+  await new Promise((resolve) => flakySrv.listen(0, '127.0.0.1', resolve));
+  try {
+    const flakyUrl = `http://127.0.0.1:${flakySrv.address().port}/api/v1`;
+    const badJsonRes = await obsx.verifyToken('tok_1', { secretKey: 'sk_1', endpoint: flakyUrl });
+    assert.equal(badJsonRes.allowed, false);
+    const timeoutRes = await obsx.verifyToken('tok_1', { secretKey: 'sk_1', endpoint: flakyUrl, timeoutMs: 260 });
+    assert.equal(timeoutRes.allowed, false);
+  } finally {
+    flakySrv.closeAllConnections?.();
+    await new Promise((resolve) => flakySrv.close(resolve));
+  }
+
+  // 3. Local verification success paths (by secretKey and by projectId)
+  const chromeUa = 'Mozilla/5.0 Chrome/130.0.0.0 Safari/537.36';
+  const sLocalKey = await createGenuineSession(chromeUa);
+  const localByKey = await obsx.verifyToken(
+    { token: sLocalKey.token, nonce: sLocalKey.nonce },
+    { local: true, secretKey: testProject.secretKey, clientUa: chromeUa }
+  );
+  assert.equal(localByKey.allowed, true);
+
+  const sLocalPid = await createGenuineSession(chromeUa);
+  const localByPid = await obsx.verifyToken(
+    { token: sLocalPid.token, nonce: sLocalPid.nonce },
+    { local: true, projectId: testProject.pid, clientUa: chromeUa }
+  );
+  assert.equal(localByPid.allowed, true);
+});
+
+test('dx: browser SDK DOM XSS safety, concurrent init/getAttestation queuing, and Node ESM named imports', async () => {
+  const bundleCode = fs.readFileSync(path.join(ROOT, 'public/obsx.min.js'), 'utf8');
+  let sessionFetchCount = 0;
+
+  // 1. Validate XSS-hardened resolveEndpoint & showDramBlockScreen + concurrent getAttestation queuing
+  const overlayNodes = [];
+  const xssScript = {
+    src: `${baseUrl}/sdk/v2.3.1/obsx.min.js`,
+    getAttribute(name) {
+      if (name === 'data-obsx-site') return testProject.publicKey;
+      if (name === 'data-obsx-endpoint') return 'https://obsx.example/" onload="alert(1)/api/v1';
+      if (name === 'data-obsx-auto') return 'false';
+      return null;
+    },
+  };
+  const docXss = {
+    currentScript: xssScript,
+    readyState: 'complete',
+    referrer: '',
+    body: { appendChild(el) { overlayNodes.push(el); } },
+    getElementById(id) { return overlayNodes.find((n) => n.id === id) || null; },
+    querySelector(sel) { return sel.includes('data-obsx-site') ? xssScript : null; },
+    querySelectorAll() { return []; },
+    createElement() { return { style: {}, dataset: {}, innerHTML: '' }; },
+    addEventListener() {},
+  };
+  const sbXss = {
+    window: null,
+    document: docXss,
+    navigator: { userAgent: 'Mozilla/5.0 Chrome/130.0.0.0' },
+    location: { origin: 'https://app.example.com', href: 'https://app.example.com/', search: '' },
+    screen: { width: 1440, height: 900 },
+    performance: { now: () => 100 },
+    Date,
+    Object,
+    Function,
+    TextEncoder,
+    Uint8Array,
+    URL,
+    crypto: nodeCrypto.webcrypto,
+    fetch: async () => { throw new Error('offline'); },
+    setTimeout,
+    clearTimeout,
+    addEventListener() {},
+  };
+  sbXss.window = sbXss;
+  sbXss.globalThis = sbXss;
+  vm.runInNewContext(bundleCode, sbXss);
+  sbXss.OBSX.showDramBlockScreen('https://obsx.example/" onload="alert(1)');
+  assert.equal(overlayNodes.length, 1);
+  assert.ok(!overlayNodes[0].innerHTML.includes('onload="alert(1)'), 'Origin interpolation must strip path/quote breakout payloads');
+  await assert.rejects(() => sbXss.OBSX.init({ site: 'pk_x', endpoint: 'javascript:alert(1)' }), /Unsupported endpoint protocol/);
+
+  // 2. Concurrent init() deduplicates and concurrent getAttestation() calls receive distinct tokens
+  const scriptOk = {
+    src: `${baseUrl}/sdk/v2.3.1/obsx.min.js`,
+    getAttribute(name) {
+      if (name === 'data-obsx-site') return testProject.publicKey;
+      if (name === 'data-obsx-auto') return 'false';
+      return null;
+    },
+  };
+  const docOk = {
+    currentScript: scriptOk,
+    readyState: 'complete',
+    referrer: '',
+    body: { appendChild() {} },
+    getElementById() { return null; },
+    querySelector(sel) { return sel.includes('data-obsx-site') ? scriptOk : null; },
+    querySelectorAll() { return []; },
+    createElement() { return { style: {}, dataset: {} }; },
+    addEventListener() {},
+  };
+  const sbConc = {
+    window: null,
+    document: docOk,
+    navigator: { userAgent: 'Mozilla/5.0 Chrome/130.0.0.0' },
+    location: { origin: 'https://app.example.com', href: 'https://app.example.com/', search: '' },
+    screen: { width: 1440, height: 900 },
+    performance: { now: () => 250 },
+    Date,
+    Object,
+    Function,
+    TextEncoder,
+    Uint8Array,
+    URL,
+    atob: (s) => Buffer.from(s, 'base64').toString('binary'),
+    btoa: (s) => Buffer.from(s, 'binary').toString('base64'),
+    crypto: nodeCrypto.webcrypto,
+    fetch: async (url, init = {}) => {
+      if (String(url).endsWith('/session')) sessionFetchCount++;
+      const body = init.body ? JSON.parse(init.body) : undefined;
+      const res = await httpJson(init.method || 'GET', url, body, { 'User-Agent': 'Mozilla/5.0 Chrome/130.0.0.0', ...(init.headers || {}) });
+      return { ok: res.status >= 200 && res.status < 300, status: res.status, json: async () => res.json };
+    },
+    setTimeout,
+    clearTimeout,
+    addEventListener() {},
+  };
+  sbConc.window = sbConc;
+  sbConc.globalThis = sbConc;
+  vm.runInNewContext(bundleCode, sbConc);
+
+  try {
+    const [s1, s2] = await Promise.all([sbConc.OBSX.init(), sbConc.OBSX.init()]);
+    assert.equal(s1.token, s2.token, 'Concurrent init() calls must deduplicate');
+    assert.equal(sessionFetchCount, 1);
+
+    const [a1, a2] = await Promise.all([sbConc.OBSX.getAttestation(), sbConc.OBSX.getAttestation()]);
+    assert.ok(a1.token && a2.token);
+    assert.notEqual(a1.token, a2.token, 'Queued getAttestation() calls must each receive distinct single-use tokens');
+  } finally {
+    sbConc.OBSX.reset();
+  }
+
+  // 3. Native Node ESM named import verification via package exports
+  const esmOut = execFileSync(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      "import { verifyToken, verify, middleware, protect, verifyActionSeal } from 'obsx-security'; import { verifyActionSeal as v2, randomInt } from 'obsx-security/crypto'; import { MemoryStore, getKv } from 'obsx-security/kv'; console.log([typeof verifyToken, typeof verify, typeof middleware, typeof protect, typeof verifyActionSeal, typeof v2, typeof randomInt, typeof MemoryStore, typeof getKv].join(','));",
+    ],
+    { cwd: ROOT, encoding: 'utf8' }
+  ).trim();
+  assert.equal(esmOut, 'function,function,function,function,function,function,function,function,function');
 });
 
 test('dx: install.md SRI hashes match built obsx.min.js and LICENSE covers lib/index.js', () => {
@@ -423,6 +785,7 @@ test('dx: install.md SRI hashes match built obsx.min.js and LICENSE covers lib/i
   const sha256 = 'sha256-' + nodeCrypto.createHash('sha256').update(bundle).digest('base64');
 
   const installMd = fs.readFileSync(path.join(ROOT, 'public/install.md'), 'utf8');
+  assert.ok(installMd.includes('v2.3.1'), 'public/install.md must reference v2.3.1 SDK URL');
   assert.ok(installMd.includes(sha384), `public/install.md must stay synced with ${sha384}`);
   assert.ok(installMd.includes(sha256), `public/install.md must stay synced with ${sha256}`);
   assert.ok(!installMd.includes('@obsx/core'), 'public/install.md must reference obsx-security, not phantom @obsx/core');

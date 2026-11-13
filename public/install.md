@@ -9,11 +9,11 @@ Deploy OBSX client-side anti-bot attestation and cryptographic action sealing to
 Add the OBSX SDK script to the `<head>` of your HTML document before any application forms or sensitive actions:
 
 ```html
-<!-- OBSX Security SDK v2.3.0 (Cryptographically Pinned with SRI) -->
+<!-- OBSX Security SDK v2.3.1 (Cryptographically Pinned with SRI) -->
 <script
-  src="https://obsx.tech/sdk/v2.3.0/obsx.min.js"
+  src="https://obsx.tech/sdk/v2.3.1/obsx.min.js"
   data-obsx-site="pk_YOUR_SITE_KEY"
-  integrity="sha384-IImxd5YYp6MZGcDMsV7SMLRyETzGv0Zs2eDIFYrlcFrm+N7hQGHajS48u5sc5OWp"
+  integrity="sha384-+4l1iIK2VDIXhaetDJU45YSDl6zHBm2OwD85zj9TKqTMcyfXIClNLxntUcMyEK+i"
   crossorigin="anonymous"
   defer>
 </script>
@@ -116,7 +116,7 @@ app.post('/api/manual-transfer', async (req, res) => {
 
 | Asset | Version | Algorithm | Hash |
 | :--- | :--- | :--- | :--- |
-| `obsx.min.js` | `v2.3.0` | **SHA-384** | `sha384-IImxd5YYp6MZGcDMsV7SMLRyETzGv0Zs2eDIFYrlcFrm+N7hQGHajS48u5sc5OWp` |
-| `obsx.min.js` | `v2.3.0` | **SHA-256** | `sha256-uKzNn83sKhNHtj1pY4Kcy0+rFuItLsONNvMM7f4SPaY=` |
-| `tracer.min.js` | `v2.3.0` | **SHA-384** | `sha384-IImxd5YYp6MZGcDMsV7SMLRyETzGv0Zs2eDIFYrlcFrm+N7hQGHajS48u5sc5OWp` |
-| `veritas.min.js` | `v2.3.0` | **SHA-384** | `sha384-IImxd5YYp6MZGcDMsV7SMLRyETzGv0Zs2eDIFYrlcFrm+N7hQGHajS48u5sc5OWp` |
+| `obsx.min.js` | `v2.3.1` | **SHA-384** | `sha384-+4l1iIK2VDIXhaetDJU45YSDl6zHBm2OwD85zj9TKqTMcyfXIClNLxntUcMyEK+i` |
+| `obsx.min.js` | `v2.3.1` | **SHA-256** | `sha256-5c+Su2yRmW9lXZ1T+UHhthNuUn0M1oeE7Zdc+PoPqGU=` |
+| `tracer.min.js` | `v2.3.1` | **SHA-384** | `sha384-+4l1iIK2VDIXhaetDJU45YSDl6zHBm2OwD85zj9TKqTMcyfXIClNLxntUcMyEK+i` |
+| `veritas.min.js` | `v2.3.1` | **SHA-384** | `sha384-+4l1iIK2VDIXhaetDJU45YSDl6zHBm2OwD85zj9TKqTMcyfXIClNLxntUcMyEK+i` |

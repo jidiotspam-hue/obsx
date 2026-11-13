@@ -43,11 +43,20 @@ export interface OBSXVerifyOptions {
   timeoutMs?: number;
 }
 
+export interface OBSXRequestLike {
+  headers?: Record<string, string | string[] | undefined>;
+  body?: unknown;
+  ip?: string;
+  method?: string;
+  url?: string;
+  socket?: { remoteAddress?: string };
+}
+
 export interface OBSXReason {
   code: string;
   weight?: number;
   detail?: string;
-  text: string;
+  text?: string;
 }
 
 export interface OBSXVerdict {
@@ -70,6 +79,7 @@ export interface OBSXMiddlewareOptions extends OBSXVerifyOptions {
 }
 
 export interface OBSXClient {
+  readonly version: string;
   init(options?: { site?: string; mode?: 'enforce' | 'passive'; endpoint?: string; force?: boolean }): Promise<OBSXSession>;
   flush(): Promise<void>;
   reset(): void;
@@ -97,7 +107,7 @@ declare global {
 }
 
 export function verifyToken(
-  tokenOrPayload: string | OBSXSeal | Record<string, unknown>,
+  tokenOrPayload: string | OBSXSeal | OBSXRequestLike | Record<string, unknown>,
   options?: OBSXVerifyOptions
 ): Promise<OBSXVerdict>;
 
@@ -117,3 +127,10 @@ export function verifyActionSeal(
   payload: Record<string, unknown>,
   sig: string
 ): boolean;
+
+export const core: Record<string, unknown>;
+export const crypto: Record<string, unknown>;
+export const telemetry: Record<string, unknown>;
+export const kv: Record<string, unknown>;
+export function getKv(): unknown;
+export const MemoryStore: unknown;
