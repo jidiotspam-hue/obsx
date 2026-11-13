@@ -1,6 +1,6 @@
 {
   "name": "obsx-security",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "description": "OBSX Security: Next-generation client integrity attestation, anti-automation, and tamper-resistant request verification.",
   "main": "server.js",
   "scripts": {

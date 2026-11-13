@@ -103,4 +103,4 @@ Dashboard operator endpoints (`/api/v1/alerts`, `/api/v1/system/update`, `/api/v
 thousands of IPs, each sending a few requests. Per-IP rules alone never trip, so
 the shield also budgets the subnet and the user-agent class the fleet shares.
 
-Run the tests: `OBSX_TEST_MODE=1 node --test tests/botshield.test.js` — 57 tests for the shield, 156 for the whole repo (`npm test`), no network and no server needed.
+Run the tests: `OBSX_TEST_MODE=1 node --test tests/botshield.test.js` — 57 tests for the shield, 158 for the whole repo (`npm test`), no network and no server needed.

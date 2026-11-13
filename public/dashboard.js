@@ -762,22 +762,26 @@
           ? `<div style="margin-top:4px; color:#f59e0b;"><strong>Adaptation Overlap Detected:</strong> Both your local node and official upstream modified ${adv.overlappingFiles.map((f) => `<code>${escapeHtml(f)}</code>`).join(', ')}.</div>`
           : '';
         const lic = adv.licenseStatus;
+        const hasGitDrift = Boolean(adv.dirtyWorkingTree || (adv.commitsBehind && adv.commitsBehind > 0));
+        const needsLicenseAction = Boolean(
+          lic && (!lic.missingCriticalFiles || !lic.missingCriticalFiles.length) &&
+          (!lic.accepted || lic.licenseChanged || lic.safeModeReason === 'corrupt_license_state')
+        );
         const licenseNotice = lic && (lic.safeMode || lic.licenseChanged)
           ? `<div style="margin-top:6px; padding:8px 10px; border-radius:6px; border:1px solid rgba(245, 158, 11, 0.35); background:rgba(0,0,0,0.2);">
               <strong>License Integrity Status:</strong> ${lic.safeMode ? `Safe Mode (${escapeHtml(lic.safeModeReason || 'integrity_check')})` : 'Updated LICENSE detected'}
               ${lic.missingCriticalFiles && lic.missingCriticalFiles.length ? ` · Missing: ${lic.missingCriticalFiles.map((f) => `<code>${escapeHtml(f)}</code>`).join(', ')}` : ''}
-              ${!lic.accepted && !lic.missingCriticalFiles?.length ? ' · <button type="button" id="btn-accept-license" class="btn btn-secondary" style="font-size:11px; padding:2px 8px; margin-left:4px;">Accept Current LICENSE</button>' : ''}
+              ${needsLicenseAction ? ' · <button type="button" id="btn-accept-license" class="btn btn-secondary" style="font-size:11px; padding:2px 8px; margin-left:4px;">Accept Current LICENSE</button>' : ''}
             </div>`
           : '';
-        driftBanner.innerHTML = `
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-            <strong style="color:#f59e0b;">[PRIVATE OPERATOR ADVISORY] Local Node Customization &amp; Upstream Sync Paused</strong>
-            <span class="badge badge-warn">Edition: ${escapeHtml(adv.edition || 'modified-local')}</span>
-          </div>
-          <div style="color:var(--text-muted);">
-            Auto-updater paused fast-forward sync to protect your local changes. Only you (authenticated operator) can see this notice.
-          </div>
-          ${licenseNotice}
+        const bannerTitle = hasGitDrift
+          ? '[PRIVATE OPERATOR ADVISORY] Local Node Customization &amp; Upstream Sync Paused'
+          : '[PRIVATE OPERATOR ADVISORY] License Integrity &amp; Safe Mode Notice';
+        const bannerSubtitle = hasGitDrift
+          ? 'Auto-updater paused fast-forward sync to protect your local changes. Only you (authenticated operator) can see this notice.'
+          : 'Operator attention required for license integrity verification. Only you (authenticated operator) can see this notice.';
+        const gitControls = hasGitDrift
+          ? `
           <div style="margin-top:6px;"><strong>Your Modified Files:</strong> ${modFiles}</div>
           ${upCommits}
           ${upFiles}
@@ -791,6 +795,18 @@
             <button type="button" id="btn-auto-adapt-node" class="btn btn-primary" style="font-size:11.5px; padding:5px 10px;">1-Click Auto-Adapt &amp; Rebase</button>
           </div>
           <pre id="operator-upstream-diff-view" style="display:none; margin-top:8px; padding:8px; max-height:220px; overflow:auto; background:rgba(0,0,0,0.45); border-radius:4px; font-size:11px; white-space:pre-wrap;"></pre>
+          `
+          : '';
+        driftBanner.innerHTML = `
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+            <strong style="color:#f59e0b;">${bannerTitle}</strong>
+            <span class="badge badge-warn">Edition: ${escapeHtml(adv.edition || 'modified-local')}</span>
+          </div>
+          <div style="color:var(--text-muted);">
+            ${bannerSubtitle}
+          </div>
+          ${licenseNotice}
+          ${gitControls}
         `;
         driftBanner.style.display = 'block';
         const btnDiff = document.getElementById('btn-view-upstream-diff');
@@ -820,7 +836,11 @@
             btnAdapt.disabled = true;
             btnAdapt.textContent = 'Adapting & Rebasing...';
             try {
-              const aRes = await fetch('/api/v1/system/adapt', { method: 'POST' });
+              const aRes = await fetch('/api/v1/system/adapt', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: '{}',
+              });
               const aData = await aRes.json();
               btnAdapt.textContent = aData.ok ? `Adapted to ${aData.commit}!` : (aData.message || 'Conflict detected');
             } catch (e) {
@@ -834,10 +854,17 @@
             btnAcceptLic.disabled = true;
             btnAcceptLic.textContent = 'Recording acceptance...';
             try {
-              const lRes = await fetch('/api/v1/system/license/accept', { method: 'POST' });
+              const lRes = await fetch('/api/v1/system/license/accept', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: '{}',
+              });
               const lData = await lRes.json();
               if (lRes.ok && lData.ok) {
                 btnAcceptLic.textContent = 'LICENSE Accepted';
+                if (activeTelemetryPid) {
+                  setTimeout(() => loadProjectTelemetry(activeTelemetryPid, false), 600);
+                }
               } else {
                 btnAcceptLic.disabled = false;
                 btnAcceptLic.textContent = lData.error || 'Acceptance failed';

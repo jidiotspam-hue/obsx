@@ -25,7 +25,8 @@ This repository is organized into two explicit license zones modeled after open-
    - `src/tracer.js` & `index.d.ts` (Client-side attestation collector and TypeScript declarations)
    - `public/obsx.min.js`, `public/veritas.min.js`, `public/tracer.min.js` (Built client SDK bundles)
    - `public/app.js`, `public/notes.js`, `public/style.css`, `public/install.md`, public demo pages (`public/index.html`, `public/docs.html`, `public/notes.html`, `public/privacy.html`, `public/terms.html`), and static brand/icon assets in `public/`
-   - `scripts/`, `tests/`, `README.md`, `SECURITY.md`, `.env.example`
+   - `scripts/`, `tests/`, `docs/`, `.github/`, `README.md`, `README.baseline.md`, `SECURITY.md`, `package.json`, `.gitignore`, `.env.example`
+   - Any auxiliary build, packaging, CI, or documentation file not explicitly listed under Zone 2 defaults to the **MIT License** (Zone 1).
 
 2. **ZONE 2: Node Operator Scaffolding, Bot Protection, Auto-Updater & Dashboard** — Licensed under the **Elastic License 2.0 (ELv2) + Additional OBSX Zone 2 Terms** (see Part 2).
    Includes:
@@ -50,13 +51,13 @@ The **OBSX Sentinel™ Adaptive Vector Circuit Breaker Engine** (autonomous vect
 
 ---
 
-## TRANSITION & GRANDFATHERING POLICY (RELEASE v2.2.0 & POST-CUTOFF)
+## TRANSITION & GRANDFATHERING POLICY (RELEASE v2.2.0+ & POST-CUTOFF)
 
 1. **Grandfathered Self-Hosted Community Instances (Installed on or prior to November 15, 2026):**
-   - Operators of self-hosted community instances installed on or before **November 15, 2026** may continue operating release **v2.2.0** indefinitely under the self-hosting permissions granted by the applicable open-source / ELv2 self-hosting terms in effect for that release.
+   - Consistent with the Prospective Applicability rule above (which preserves MIT for pre-v2.2.0 releases), operators of standalone self-hosted community instances of v2.2.0 installed on or before **November 15, 2026** retain perpetual internal self-hosting rights for that installation without commercial fee under Zone 1 (MIT) and Zone 2 (ELv2) self-hosting permissions, while commercial hosted SaaS redistribution remains excluded.
    - Standalone self-hosted deployments must configure local secrets/keys and do not receive hosted Sentinel™ cloud entitlements without a managed or enterprise agreement.
-2. **Post-Transition Clones & Commercial Restrictions (Cloned subsequent to November 15, 2026):**
-   - Deployments and forks created or upgraded subsequent to November 15, 2026 remain subject to all Zone 2 source-available terms and Sentinel™ proprietary boundaries. Commercial SaaS hosting and extraction of Zone 2 components into competing products remain strictly prohibited.
+2. **Post-Transition Clones & Commercial Restrictions (Cloned or upgraded subsequent to November 15, 2026):**
+   - Deployments, forks, and upgrades created after November 15, 2026 remain subject to all Zone 2 source-available terms (ELv2 + Additional OBSX Zone 2 Terms) and Sentinel™ proprietary boundaries. Commercial SaaS hosting and extraction of Zone 2 components into competing products remain strictly prohibited.
 3. **Integrity Verification, Safe Mode & Coordinated Disclosure Guarantee:**
    - `lib/updater.js` computes CRLF-normalized SHA-256 fingerprints across critical source files and `LICENSE`, tracking local license acceptance state and entering Safe Mode if critical integrity assets are missing or operator acceptance enforcement fails.
    - Security researchers and operators discovering bugs, false positives, or integrity discrepancies are welcome to report them cleanly via `security@obsx.tech`.

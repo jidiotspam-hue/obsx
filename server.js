@@ -185,6 +185,26 @@ function isOperatorAuthorized(req, user) {
   return Boolean(normalized && getOperatorAllowlist().has(normalized));
 }
 
+function isTrustedSameOriginMutation(req) {
+  const secFetchSite = String(req.headers['sec-fetch-site'] || '').toLowerCase();
+  if (secFetchSite && secFetchSite !== 'same-origin' && secFetchSite !== 'none') {
+    return false;
+  }
+  const origin = req.headers.origin;
+  if (typeof origin === 'string' && origin.trim()) {
+    try {
+      const originHost = new URL(origin).host.toLowerCase();
+      const reqHost = String(req.headers.host || '').toLowerCase();
+      if (!reqHost || originHost !== reqHost) return false;
+    } catch {
+      return false;
+    }
+  }
+  const contentType = String(req.headers['content-type'] || '').toLowerCase();
+  const xrw = req.headers['x-requested-with'];
+  return contentType.includes('application/json') || Boolean(xrw);
+}
+
 async function requireOperatorAccess(req, res) {
   if (hasValidOperatorKey(req)) return { via: 'key', email: null };
   const user = await accounts.getSessionUser(req);
@@ -194,6 +214,10 @@ async function requireOperatorAccess(req, res) {
   }
   if (!isOperatorAuthorized(req, user)) {
     sendJson(res, 403, { ok: false, error: 'operator_required' });
+    return null;
+  }
+  if (req.method !== 'GET' && req.method !== 'HEAD' && !isTrustedSameOriginMutation(req)) {
+    sendJson(res, 403, { ok: false, error: 'cross_origin_forbidden' });
     return null;
   }
   return { via: 'session', email: accounts.cleanEmail(user.email) };
@@ -902,7 +926,8 @@ const server = http.createServer(async (req, res) => {
         const op = await requireOperatorAccess(req, res);
         if (!op) return;
         const result = updater.acceptLicenseTerms({ acceptedBy: op.email || 'operator-key' });
-        return sendJson(res, result.ok ? 200 : 409, result);
+        const status = result.ok ? 200 : (result.statusCode || 409);
+        return sendJson(res, status, result);
       }
 
       if (pathname === '/api/v1/bot-protection') {
@@ -1098,7 +1123,7 @@ const server = http.createServer(async (req, res) => {
               publicKey: project.publicKey,
               settings: project.settings,
             },
-            upstreamAdvisory: updater.getOperatorDriftAdvisory(),
+            upstreamAdvisory: isOperatorAuthorized(req, user) ? updater.getOperatorDriftAdvisory() : null,
             ...telemetry,
           });
         }
