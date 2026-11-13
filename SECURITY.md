@@ -97,10 +97,10 @@ offender addresses are masked (`203.0.*.*`) unless the operator key is
 supplied, so the public endpoint cannot be used to fingerprint visitors.
 `POST /api/v1/bot-protection/mode` (`auto` | `always` | `off`) requires the `x-obsx-key`
 header matching a configured `OBSX_SECRET` of at least 16 characters; unset or shorter secrets fail closed with 401.
-Dashboard operator endpoints (`/api/v1/alerts`, `/api/v1/system/update`, `/api/v1/system/diff`, `/api/v1/system/adapt`) additionally accept an authenticated session whose email is explicitly allowlisted via `OPERATOR_EMAILS`, `OBSX_OPERATOR_EMAILS`, or `OPERATOR_EMAIL` (fail-closed when unset).
+Dashboard operator endpoints (`/api/v1/alerts`, `/api/v1/system/update`, `/api/v1/system/diff`, `/api/v1/system/adapt`, `/api/v1/system/license`, `/api/v1/system/license/accept`) additionally accept an authenticated session whose email is explicitly allowlisted via `OPERATOR_EMAILS`, `OBSX_OPERATOR_EMAILS`, or `OPERATOR_EMAIL` (fail-closed when unset).
 
 **Why this matters.** A botnet does not hammer from one address; it rotates across
 thousands of IPs, each sending a few requests. Per-IP rules alone never trip, so
 the shield also budgets the subnet and the user-agent class the fleet shares.
 
-Run the tests: `OBSX_TEST_MODE=1 node --test tests/botshield.test.js` — 57 tests for the shield, 153 for the whole repo (`npm test`), no network and no server needed.
+Run the tests: `OBSX_TEST_MODE=1 node --test tests/botshield.test.js` — 57 tests for the shield, 158 for the whole repo (`npm test`), no network and no server needed.

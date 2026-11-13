@@ -1,5 +1,11 @@
 'use strict';
 
+/**
+ * OBSX Security — Interactive Sandbox Frontend (Zone 1)
+ * Copyright (c) 2026 Alexis Grimmace.
+ * Licensed under the MIT License — See LICENSE file.
+ */
+
 (function () {
   const dispSession = document.getElementById('disp-session');
   const dispPoW = document.getElementById('disp-pow');

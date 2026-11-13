@@ -1,5 +1,11 @@
 'use strict';
 
+/**
+ * OBSX Security — Zero-Friction Protected Notes App (Zone 1)
+ * Copyright (c) 2026 Alexis Grimmace.
+ * Licensed under the MIT License — See LICENSE file.
+ */
+
 (function () {
   let activeUser = null;
   let activeMode = 'obsx'; // 'obsx' or 'advisory'

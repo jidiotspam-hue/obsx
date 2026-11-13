@@ -1,5 +1,11 @@
 'use strict';
 
+/**
+ * OBSX Security — HTTP Operator Server Harness & Telemetry Broadcaster
+ * Copyright (c) 2026 Alexis Grimmace.
+ * Licensed under the Elastic License 2.0 + OBSX Zone 2 Terms — See LICENSE file.
+ */
+
 // Load local environment configuration if present (.env)
 require('./lib/config');
 
@@ -179,18 +185,42 @@ function isOperatorAuthorized(req, user) {
   return Boolean(normalized && getOperatorAllowlist().has(normalized));
 }
 
+function isTrustedSameOriginMutation(req) {
+  const secFetchSite = String(req.headers['sec-fetch-site'] || '').toLowerCase();
+  if (secFetchSite && secFetchSite !== 'same-origin' && secFetchSite !== 'none') {
+    return false;
+  }
+  const origin = req.headers.origin;
+  if (typeof origin === 'string' && origin.trim()) {
+    try {
+      const originHost = new URL(origin).host.toLowerCase();
+      const reqHost = String(req.headers.host || '').toLowerCase();
+      if (!reqHost || originHost !== reqHost) return false;
+    } catch {
+      return false;
+    }
+  }
+  const contentType = String(req.headers['content-type'] || '').toLowerCase();
+  const xrw = req.headers['x-requested-with'];
+  return contentType.includes('application/json') || Boolean(xrw);
+}
+
 async function requireOperatorAccess(req, res) {
-  if (hasValidOperatorKey(req)) return true;
+  if (hasValidOperatorKey(req)) return { via: 'key', email: null };
   const user = await accounts.getSessionUser(req);
   if (!user) {
     sendJson(res, 401, { ok: false, error: 'unauthorized' });
-    return false;
+    return null;
   }
   if (!isOperatorAuthorized(req, user)) {
     sendJson(res, 403, { ok: false, error: 'operator_required' });
-    return false;
+    return null;
   }
-  return true;
+  if (req.method !== 'GET' && req.method !== 'HEAD' && !isTrustedSameOriginMutation(req)) {
+    sendJson(res, 403, { ok: false, error: 'cross_origin_forbidden' });
+    return null;
+  }
+  return { via: 'session', email: accounts.cleanEmail(user.email) };
 }
 
 function parseRequestUrl(req) {
@@ -885,6 +915,21 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, adaptRes.ok ? 200 : 409, adaptRes);
       }
 
+      if (pathname === '/api/v1/system/license') {
+        if (method !== 'GET') return sendMethodNotAllowed(res, ['GET']);
+        if (!(await requireOperatorAccess(req, res))) return;
+        return sendJson(res, 200, updater.getLicenseStatus());
+      }
+
+      if (pathname === '/api/v1/system/license/accept') {
+        if (method !== 'POST') return sendMethodNotAllowed(res, ['POST']);
+        const op = await requireOperatorAccess(req, res);
+        if (!op) return;
+        const result = updater.acceptLicenseTerms({ acceptedBy: op.email || 'operator-key' });
+        const status = result.ok ? 200 : (result.statusCode || 409);
+        return sendJson(res, status, result);
+      }
+
       if (pathname === '/api/v1/bot-protection') {
         if (method !== 'GET') return sendMethodNotAllowed(res, ['GET']);
         // Full addresses only to whoever holds a configured non-empty operator key.
@@ -1078,7 +1123,7 @@ const server = http.createServer(async (req, res) => {
               publicKey: project.publicKey,
               settings: project.settings,
             },
-            upstreamAdvisory: updater.getOperatorDriftAdvisory(),
+            upstreamAdvisory: isOperatorAuthorized(req, user) ? updater.getOperatorDriftAdvisory() : null,
             ...telemetry,
           });
         }

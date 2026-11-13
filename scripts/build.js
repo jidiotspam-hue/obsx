@@ -14,12 +14,15 @@ if (!fs.existsSync(outDir)) {
 
 const source = fs.readFileSync(srcPath, 'utf8');
 
-// Safe minification: strip multi-line comments and pure single-line comment lines
-const minified = source
+// Safe minification: strip multi-line comments and pure single-line comment lines,
+// then prepend Zone 1 MIT attribution header so distributed bundles retain required notices.
+const MIT_BANNER = '/*! OBSX Security Client SDK | Copyright (c) 2026 Alexis Grimmace | MIT License */\n';
+const minifiedBody = source
   .replace(/\/\*[\s\S]*?\*\//g, '')
   .replace(/^\s*\/\/.*$/gm, '')
   .replace(/^\s+|\s+$/gm, '')
   .replace(/\n\s*\n/g, '\n');
+const minified = MIT_BANNER + minifiedBody;
 
 // Strict syntax verification before deployment
 try {

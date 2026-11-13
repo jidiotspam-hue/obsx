@@ -3,8 +3,8 @@
 /**
  * OBSX Security — Node Operator Dashboard
  * Copyright (c) 2026 Alexis Grimmace.
- * Licensed under the Elastic License 2.0 (ELv2) — See LICENSE file.
- * Free for self-hosted and internal use; commercial SaaS hosting and snippet extraction prohibited.
+ * Licensed under the Elastic License 2.0 + OBSX Zone 2 Terms — See LICENSE file.
+ * Free for self-hosted internal use; commercial SaaS hosting and competing extraction prohibited.
  */
 
 (function () {
@@ -703,6 +703,246 @@
     });
   }
 
+  const operatorBannerState = {
+    lastAdvJson: '',
+    adapting: false,
+    acceptingLicense: false,
+    stickyAdaptNotice: false,
+    adaptStatusText: '',
+    licenseStatusText: '',
+    diffOpen: false,
+    diffContent: '',
+  };
+
+  function syncBannerFeedbackAndDiff() {
+    const adaptFeedback = document.getElementById('operator-adapt-feedback');
+    if (adaptFeedback) adaptFeedback.textContent = operatorBannerState.adaptStatusText;
+    const licFeedback = document.getElementById('operator-license-feedback');
+    if (licFeedback) licFeedback.textContent = operatorBannerState.licenseStatusText;
+    const btnDiff = document.getElementById('btn-view-upstream-diff');
+    const diffView = document.getElementById('operator-upstream-diff-view');
+    if (btnDiff && diffView) {
+      diffView.textContent = operatorBannerState.diffContent;
+      diffView.style.display = operatorBannerState.diffOpen ? 'block' : 'none';
+      btnDiff.textContent = operatorBannerState.diffOpen ? 'Hide Upstream Diff' : 'View Upstream Diff';
+    }
+  }
+
+  function renderOperatorDriftBanner(adv) {
+    let driftBanner = document.getElementById('operator-drift-advisory-banner');
+    const hasReminder = Boolean(adv && adv.showReminder);
+    if (!hasReminder && !operatorBannerState.stickyAdaptNotice) {
+      if (driftBanner) driftBanner.style.display = 'none';
+      operatorBannerState.lastAdvJson = '';
+      operatorBannerState.adaptStatusText = '';
+      operatorBannerState.licenseStatusText = '';
+      operatorBannerState.diffOpen = false;
+      operatorBannerState.diffContent = '';
+      return;
+    }
+
+    // Do not rebuild DOM while an operator mutation is in flight or polls would re-enable buttons / orphan handlers.
+    if (operatorBannerState.adapting || operatorBannerState.acceptingLicense) return;
+
+    const effectiveAdv = adv || {};
+    const advJson = JSON.stringify({
+      adv: effectiveAdv,
+      stickyAdaptNotice: operatorBannerState.stickyAdaptNotice,
+      adaptStatusText: operatorBannerState.adaptStatusText,
+    });
+    if (driftBanner && advJson === operatorBannerState.lastAdvJson) {
+      driftBanner.style.display = 'block';
+      return;
+    }
+
+    if (!driftBanner) {
+      driftBanner = document.createElement('div');
+      driftBanner.id = 'operator-drift-advisory-banner';
+      driftBanner.style.cssText = 'margin: 0 0 16px 0; padding: 14px 16px; border-radius: 8px; border: 1px solid rgba(245, 158, 11, 0.45); background: rgba(245, 158, 11, 0.08); font-size: 12.5px; line-height: 1.5;';
+      const parentTarget = (projectTelemetryContainer && projectTelemetryContainer.parentNode) || document.body;
+      parentTarget.insertBefore(driftBanner, projectTelemetryContainer || parentTarget.firstChild);
+    }
+
+    operatorBannerState.lastAdvJson = advJson;
+    const modFiles = (effectiveAdv.locallyModifiedFiles && effectiveAdv.locallyModifiedFiles.length)
+      ? effectiveAdv.locallyModifiedFiles.map((f) => `<code>${escapeHtml(f)}</code>`).join(', ')
+      : 'None';
+    const upCommits = (effectiveAdv.upstreamCommits && effectiveAdv.upstreamCommits.length)
+      ? `<div style="margin-top:6px;"><strong>New Official Upstream Commits (${effectiveAdv.commitsBehind} behind):</strong><ul style="margin:4px 0 0 18px; padding:0;">${effectiveAdv.upstreamCommits.map((c) => `<li><code>${escapeHtml(c)}</code></li>`).join('')}</ul></div>`
+      : '';
+    const upFiles = (effectiveAdv.upstreamChangedFiles && effectiveAdv.upstreamChangedFiles.length)
+      ? `<div style="margin-top:4px;"><strong>Changed Upstream Files:</strong> ${effectiveAdv.upstreamChangedFiles.map((f) => `<code>${escapeHtml(f)}</code>`).join(', ')}</div>`
+      : '';
+    const overlapWarn = (effectiveAdv.overlappingFiles && effectiveAdv.overlappingFiles.length)
+      ? `<div style="margin-top:4px; color:#f59e0b;"><strong>Adaptation Overlap Detected:</strong> Both your local node and official upstream modified ${effectiveAdv.overlappingFiles.map((f) => `<code>${escapeHtml(f)}</code>`).join(', ')}.</div>`
+      : '';
+    const lic = effectiveAdv.licenseStatus;
+    const hasGitDrift = Boolean(effectiveAdv.dirtyWorkingTree || (effectiveAdv.commitsBehind && effectiveAdv.commitsBehind > 0));
+    const needsLicenseAction = Boolean(
+      lic && (!lic.missingCriticalFiles || !lic.missingCriticalFiles.length) &&
+      (!lic.accepted || lic.licenseChanged || lic.safeModeReason === 'corrupt_license_state')
+    );
+    const licenseNotice = lic && (lic.safeMode || lic.licenseChanged)
+      ? `<div style="margin-top:6px; padding:8px 10px; border-radius:6px; border:1px solid rgba(245, 158, 11, 0.35); background:rgba(0,0,0,0.2);">
+          <strong>License Integrity Status:</strong> ${lic.safeMode ? `Safe Mode (${escapeHtml(lic.safeModeReason || 'integrity_check')})` : 'Updated LICENSE detected'}
+          ${lic.missingCriticalFiles && lic.missingCriticalFiles.length ? ` · Missing: ${lic.missingCriticalFiles.map((f) => `<code>${escapeHtml(f)}</code>`).join(', ')}` : ''}
+          ${needsLicenseAction ? ' · <button type="button" id="btn-accept-license" class="btn btn-secondary" style="font-size:11px; padding:2px 8px; margin-left:4px;">Accept Current LICENSE</button>' : ''}
+          <span id="operator-license-feedback" style="margin-left:8px; color:#f59e0b;"></span>
+        </div>`
+      : '';
+    const bannerTitle = hasGitDrift
+      ? '[PRIVATE OPERATOR ADVISORY] Local Node Customization &amp; Upstream Sync Paused'
+      : operatorBannerState.stickyAdaptNotice
+      ? '[PRIVATE OPERATOR ADVISORY] Local Adaptation &amp; Stash Notice'
+      : '[PRIVATE OPERATOR ADVISORY] License Integrity &amp; Safe Mode Notice';
+    const bannerSubtitle = hasGitDrift
+      ? 'Auto-updater paused fast-forward sync to protect your local changes. Only you (authenticated operator) can see this notice.'
+      : operatorBannerState.stickyAdaptNotice
+      ? 'Upstream sync completed, and overlapping local edits remain safely preserved in git stash until you restore or dismiss this notice.'
+      : 'Operator attention required for license integrity verification. Only you (authenticated operator) can see this notice.';
+    const stickyNoticeBox = (!hasGitDrift && operatorBannerState.stickyAdaptNotice)
+      ? `<div style="margin-top:8px; padding:8px 10px; border-radius:6px; border:1px solid rgba(245, 158, 11, 0.35); background:rgba(0,0,0,0.25); display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          <span id="operator-adapt-feedback" style="font-size:11.5px; color:#f59e0b;"></span>
+          <button type="button" id="btn-dismiss-adapt-notice" class="btn btn-secondary" style="font-size:11px; padding:2px 8px;">Dismiss</button>
+        </div>`
+      : '';
+    const gitControls = hasGitDrift
+      ? `
+      <div style="margin-top:6px;"><strong>Your Modified Files:</strong> ${modFiles}</div>
+      ${upCommits}
+      ${upFiles}
+      ${overlapWarn}
+      <div style="margin-top:8px;">
+        <strong>Adapt &amp; Rebase Command:</strong>
+        <code style="display:block; margin-top:4px; padding:6px 8px; background:rgba(0,0,0,0.35); border-radius:4px; user-select:all;">${escapeHtml(effectiveAdv.adaptationCommand || 'git fetch origin main && git stash && git pull --rebase origin main && git stash pop')}</code>
+      </div>
+      <div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+        <button type="button" id="btn-view-upstream-diff" class="btn btn-secondary" style="font-size:11.5px; padding:5px 10px;">View Upstream Diff</button>
+        <button type="button" id="btn-auto-adapt-node" class="btn btn-primary" style="font-size:11.5px; padding:5px 10px;">1-Click Auto-Adapt &amp; Rebase</button>
+        <span id="operator-adapt-feedback" style="font-size:11.5px; color:#f59e0b;"></span>
+      </div>
+      <pre id="operator-upstream-diff-view" style="display:none; margin-top:8px; padding:8px; max-height:220px; overflow:auto; background:rgba(0,0,0,0.45); border-radius:4px; font-size:11px; white-space:pre-wrap;"></pre>
+      `
+      : stickyNoticeBox;
+
+    driftBanner.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+        <strong style="color:#f59e0b;">${bannerTitle}</strong>
+        <span class="badge badge-warn">Edition: ${escapeHtml(effectiveAdv.edition || 'modified-local')}</span>
+      </div>
+      <div style="color:var(--text-muted);">
+        ${bannerSubtitle}
+      </div>
+      ${licenseNotice}
+      ${gitControls}
+    `;
+    driftBanner.style.display = 'block';
+    syncBannerFeedbackAndDiff();
+
+    const btnDismissAdapt = document.getElementById('btn-dismiss-adapt-notice');
+    if (btnDismissAdapt) {
+      btnDismissAdapt.onclick = () => {
+        operatorBannerState.stickyAdaptNotice = false;
+        operatorBannerState.adaptStatusText = '';
+        operatorBannerState.lastAdvJson = '';
+        renderOperatorDriftBanner(adv);
+      };
+    }
+
+    const btnDiff = document.getElementById('btn-view-upstream-diff');
+    if (btnDiff) {
+      btnDiff.onclick = async () => {
+        if (operatorBannerState.diffOpen) {
+          operatorBannerState.diffOpen = false;
+          syncBannerFeedbackAndDiff();
+          return;
+        }
+        btnDiff.textContent = 'Loading diff...';
+        try {
+          const dRes = await fetch('/api/v1/system/diff');
+          const dData = await dRes.json();
+          operatorBannerState.diffContent = `=== UPSTREAM DIFF (HEAD..origin/main) ===\n${dData.upstreamDiff || 'None'}\n\n=== LOCAL WORKING TREE DIFF ===\n${dData.localDiff || 'None'}`;
+        } catch (e) {
+          operatorBannerState.diffContent = 'Failed to load diff.';
+        }
+        operatorBannerState.diffOpen = true;
+        syncBannerFeedbackAndDiff();
+      };
+    }
+
+    const btnAdapt = document.getElementById('btn-auto-adapt-node');
+    if (btnAdapt) {
+      btnAdapt.onclick = async () => {
+        if (operatorBannerState.adapting) return;
+        operatorBannerState.adapting = true;
+        operatorBannerState.stickyAdaptNotice = false;
+        operatorBannerState.adaptStatusText = '';
+        btnAdapt.disabled = true;
+        btnAdapt.textContent = 'Adapting & Rebasing...';
+        syncBannerFeedbackAndDiff();
+        try {
+          const aRes = await fetch('/api/v1/system/adapt', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}',
+          });
+          const aData = await aRes.json();
+          const succeeded = Boolean(aRes.ok && aData.ok);
+          operatorBannerState.stickyAdaptNotice = !succeeded;
+          operatorBannerState.adaptStatusText = succeeded
+            ? `Adapted to ${aData.commit}!`
+            : (aData.message || aData.error || 'Conflict detected');
+          if (activeTelemetryPid && succeeded) {
+            setTimeout(() => loadProjectTelemetry(activeTelemetryPid, false), 400);
+          }
+        } catch (e) {
+          operatorBannerState.stickyAdaptNotice = true;
+          operatorBannerState.adaptStatusText = 'Adapt failed';
+        } finally {
+          operatorBannerState.adapting = false;
+          btnAdapt.disabled = false;
+          btnAdapt.textContent = '1-Click Auto-Adapt & Rebase';
+          syncBannerFeedbackAndDiff();
+        }
+      };
+    }
+
+    const btnAcceptLic = document.getElementById('btn-accept-license');
+    if (btnAcceptLic) {
+      btnAcceptLic.onclick = async () => {
+        if (operatorBannerState.acceptingLicense) return;
+        operatorBannerState.acceptingLicense = true;
+        operatorBannerState.licenseStatusText = '';
+        btnAcceptLic.disabled = true;
+        btnAcceptLic.textContent = 'Recording acceptance...';
+        syncBannerFeedbackAndDiff();
+        try {
+          const lRes = await fetch('/api/v1/system/license/accept', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}',
+          });
+          const lData = await lRes.json();
+          if (lRes.ok && lData.ok) {
+            operatorBannerState.licenseStatusText = 'LICENSE Accepted';
+            if (activeTelemetryPid) {
+              setTimeout(() => loadProjectTelemetry(activeTelemetryPid, false), 400);
+            }
+          } else {
+            operatorBannerState.licenseStatusText = lData.error || 'Acceptance failed';
+          }
+        } catch (e) {
+          operatorBannerState.licenseStatusText = 'Acceptance failed';
+        } finally {
+          operatorBannerState.acceptingLicense = false;
+          btnAcceptLic.disabled = false;
+          btnAcceptLic.textContent = 'Accept Current LICENSE';
+          syncBannerFeedbackAndDiff();
+        }
+      };
+    }
+  }
+
   // 7. Isolated Tenant Project Telemetry Poller (Option B)
   async function loadProjectTelemetry(pid, isManualClick = false) {
     if (!pid) return;
@@ -739,89 +979,7 @@
       const pk = proj.publicKey || '';
 
       // Render Private Operator-Only Upstream Drift & Adaptation Reminder (when local tree is dirty or behind upstream)
-      const adv = data.upstreamAdvisory;
-      let driftBanner = document.getElementById('operator-drift-advisory-banner');
-      if (adv && adv.showReminder) {
-        if (!driftBanner) {
-          driftBanner = document.createElement('div');
-          driftBanner.id = 'operator-drift-advisory-banner';
-          driftBanner.style.cssText = 'margin: 0 0 16px 0; padding: 14px 16px; border-radius: 8px; border: 1px solid rgba(245, 158, 11, 0.45); background: rgba(245, 158, 11, 0.08); font-size: 12.5px; line-height: 1.5;';
-          const parentTarget = (projectTelemetryContainer && projectTelemetryContainer.parentNode) || document.body;
-          parentTarget.insertBefore(driftBanner, projectTelemetryContainer || parentTarget.firstChild);
-        }
-        const modFiles = (adv.locallyModifiedFiles && adv.locallyModifiedFiles.length)
-          ? adv.locallyModifiedFiles.map((f) => `<code>${escapeHtml(f)}</code>`).join(', ')
-          : 'None';
-        const upCommits = (adv.upstreamCommits && adv.upstreamCommits.length)
-          ? `<div style="margin-top:6px;"><strong>New Official Upstream Commits (${adv.commitsBehind} behind):</strong><ul style="margin:4px 0 0 18px; padding:0;">${adv.upstreamCommits.map((c) => `<li><code>${escapeHtml(c)}</code></li>`).join('')}</ul></div>`
-          : '';
-        const upFiles = (adv.upstreamChangedFiles && adv.upstreamChangedFiles.length)
-          ? `<div style="margin-top:4px;"><strong>Changed Upstream Files:</strong> ${adv.upstreamChangedFiles.map((f) => `<code>${escapeHtml(f)}</code>`).join(', ')}</div>`
-          : '';
-        const overlapWarn = (adv.overlappingFiles && adv.overlappingFiles.length)
-          ? `<div style="margin-top:4px; color:#f59e0b;"><strong>Adaptation Overlap Detected:</strong> Both your local node and official upstream modified ${adv.overlappingFiles.map((f) => `<code>${escapeHtml(f)}</code>`).join(', ')}.</div>`
-          : '';
-        driftBanner.innerHTML = `
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-            <strong style="color:#f59e0b;">[PRIVATE OPERATOR ADVISORY] Local Node Customization &amp; Upstream Sync Paused</strong>
-            <span class="badge badge-warn">Edition: ${escapeHtml(adv.edition || 'modified-local')}</span>
-          </div>
-          <div style="color:var(--text-muted);">
-            Auto-updater paused fast-forward sync to protect your local changes. Only you (authenticated operator) can see this notice.
-          </div>
-          <div style="margin-top:6px;"><strong>Your Modified Files:</strong> ${modFiles}</div>
-          ${upCommits}
-          ${upFiles}
-          ${overlapWarn}
-          <div style="margin-top:8px;">
-            <strong>Adapt &amp; Rebase Command:</strong>
-            <code style="display:block; margin-top:4px; padding:6px 8px; background:rgba(0,0,0,0.35); border-radius:4px; user-select:all;">${escapeHtml(adv.adaptationCommand || 'git fetch origin main && git stash && git pull --rebase origin main && git stash pop')}</code>
-          </div>
-          <div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;">
-            <button type="button" id="btn-view-upstream-diff" class="btn btn-secondary" style="font-size:11.5px; padding:5px 10px;">View Upstream Diff</button>
-            <button type="button" id="btn-auto-adapt-node" class="btn btn-primary" style="font-size:11.5px; padding:5px 10px;">1-Click Auto-Adapt &amp; Rebase</button>
-          </div>
-          <pre id="operator-upstream-diff-view" style="display:none; margin-top:8px; padding:8px; max-height:220px; overflow:auto; background:rgba(0,0,0,0.45); border-radius:4px; font-size:11px; white-space:pre-wrap;"></pre>
-        `;
-        driftBanner.style.display = 'block';
-        const btnDiff = document.getElementById('btn-view-upstream-diff');
-        const diffView = document.getElementById('operator-upstream-diff-view');
-        if (btnDiff && diffView) {
-          btnDiff.onclick = async () => {
-            if (diffView.style.display === 'block') {
-              diffView.style.display = 'none';
-              return;
-            }
-            btnDiff.textContent = 'Loading diff...';
-            try {
-              const dRes = await fetch('/api/v1/system/diff');
-              const dData = await dRes.json();
-              diffView.textContent = `=== UPSTREAM DIFF (HEAD..origin/main) ===\n${dData.upstreamDiff || 'None'}\n\n=== LOCAL WORKING TREE DIFF ===\n${dData.localDiff || 'None'}`;
-              diffView.style.display = 'block';
-            } catch (e) {
-              diffView.textContent = 'Failed to load diff.';
-              diffView.style.display = 'block';
-            }
-            btnDiff.textContent = 'Hide Upstream Diff';
-          };
-        }
-        const btnAdapt = document.getElementById('btn-auto-adapt-node');
-        if (btnAdapt) {
-          btnAdapt.onclick = async () => {
-            btnAdapt.disabled = true;
-            btnAdapt.textContent = 'Adapting & Rebasing...';
-            try {
-              const aRes = await fetch('/api/v1/system/adapt', { method: 'POST' });
-              const aData = await aRes.json();
-              btnAdapt.textContent = aData.ok ? `Adapted to ${aData.commit}!` : (aData.message || 'Conflict detected');
-            } catch (e) {
-              btnAdapt.textContent = 'Adapt failed';
-            }
-          };
-        }
-      } else if (driftBanner) {
-        driftBanner.style.display = 'none';
-      }
+      renderOperatorDriftBanner(data.upstreamAdvisory);
 
       const stats = data.stats || {};
       const hasTraffic = Boolean(data.hasTraffic && stats.total > 0);

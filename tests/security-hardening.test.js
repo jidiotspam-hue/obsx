@@ -7,6 +7,9 @@ const test = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
 const net = require('node:net');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
 const server = require('../server');
 const core = require('../lib/core');
@@ -236,15 +239,31 @@ test('hardening: non-operator and unauthenticated callers are denied operator/sy
   const prevSecret = process.env.OBSX_SECRET;
   const prevOps = process.env.OPERATOR_EMAILS;
   const prevAlertEmail = process.env.ALERT_EMAIL;
+  const prevHttpSync = process.env.OBSX_HTTP_SYNC;
+  const prevAutoRestart = process.env.OBSX_AUTO_RESTART;
+  const prevAcceptLic = process.env.OBSX_ACCEPT_LICENSE;
+  const prevEnforceLic = process.env.OBSX_ENFORCE_LICENSE_ACCEPTANCE;
+  const prevLicStateFile = process.env.OBSX_LICENSE_STATE_FILE;
+
+  const tmpLicDir = fs.mkdtempSync(path.join(os.tmpdir(), 'obsx-sec-lic-'));
+  const licStatePath = path.join(tmpLicDir, 'license-state.json');
+
   process.env.OBSX_SECRET = 'valid_operator_secret_key_abcdef';
   process.env.OPERATOR_EMAILS = 'ops-admin@obsx.tech';
   process.env.ALERT_EMAIL = 'alert-recipient@example.com';
+  delete process.env.OBSX_HTTP_SYNC;
+  delete process.env.OBSX_AUTO_RESTART;
+  delete process.env.OBSX_ACCEPT_LICENSE;
+  delete process.env.OBSX_ENFORCE_LICENSE_ACCEPTANCE;
+  process.env.OBSX_LICENSE_STATE_FILE = licStatePath;
 
   try {
     const regEmail = `regular_${crypto.randomId(6)}@example.com`;
     const regStart = await accounts.startEmailAuth(regEmail, '198.51.100.141');
     const regSession = await accounts.verifyEmailAuth(regEmail, regStart.devCode);
     const regCookie = `obsx_session=${regSession.sid}`;
+    const regUser = await accounts.getSessionUser({ headers: { cookie: regCookie } });
+    const regProj = await core.createProject({ name: 'Tenant Telemetry Scope' }, regUser.uid);
 
     // Neither official@obsx.tech nor ALERT_EMAIL is granted implicit operator access when omitted from OPERATOR_EMAILS
     const defaultStart = await accounts.startEmailAuth('official@obsx.tech', '198.51.100.143');
@@ -258,12 +277,16 @@ test('hardening: non-operator and unauthenticated callers are denied operator/sy
     const opStart = await accounts.startEmailAuth('ops-admin@obsx.tech', '198.51.100.142');
     const opSession = await accounts.verifyEmailAuth('ops-admin@obsx.tech', opStart.devCode);
     const opCookie = `obsx_session=${opSession.sid}`;
+    const opUser = await accounts.getSessionUser({ headers: { cookie: opCookie } });
+    const opProj = await core.createProject({ name: 'Operator Telemetry Scope' }, opUser.uid);
 
     for (const [method, endpoint] of [
       ['GET', '/api/v1/alerts'],
       ['GET', '/api/v1/system/diff'],
       ['POST', '/api/v1/system/update'],
       ['POST', '/api/v1/system/adapt'],
+      ['GET', '/api/v1/system/license'],
+      ['POST', '/api/v1/system/license/accept'],
     ]) {
       const unauthed = await request(method, endpoint, {
         body: method === 'POST' ? {} : undefined,
@@ -281,6 +304,21 @@ test('hardening: non-operator and unauthenticated callers are denied operator/sy
       }
     }
 
+    // Cross-origin or simple form-POST operator session mutations are rejected
+    const evilOriginRes = await request('POST', '/api/v1/system/license/accept', {
+      headers: { Cookie: opCookie, Origin: 'https://evil.example' },
+      body: {},
+    });
+    assert.equal(evilOriginRes.status, 403);
+    assert.equal(evilOriginRes.json.error, 'cross_origin_forbidden');
+
+    const simplePostRes = await request('POST', '/api/v1/system/license/accept', {
+      headers: { Cookie: opCookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'foo=bar',
+    });
+    assert.equal(simplePostRes.status, 403);
+    assert.equal(simplePostRes.json.error, 'cross_origin_forbidden');
+
     const opAlerts = await request('GET', '/api/v1/alerts', { headers: { Cookie: opCookie } });
     assert.equal(opAlerts.status, 200);
     assert.equal(opAlerts.json.ok, true);
@@ -296,7 +334,80 @@ test('hardening: non-operator and unauthenticated callers are denied operator/sy
     });
     assert.equal(keyDiff.status, 200);
     assert.equal(keyDiff.json.ok, true);
+
+    // Enforced acceptance before accept flips public /api/v1/system/version to safeMode: true
+    process.env.OBSX_ENFORCE_LICENSE_ACCEPTANCE = 'true';
+    const preAcceptVer = await request('GET', '/api/v1/system/version');
+    assert.equal(preAcceptVer.status, 200);
+    assert.equal(preAcceptVer.json.ok, false);
+    assert.equal(preAcceptVer.json.safeMode, true);
+    assert.equal(preAcceptVer.json.safeModeReason, 'license_acceptance_required');
+
+    // Accept via key first (operator-key attribution), then via operator session (email attribution)
+    const keyAcceptRes = await request('POST', '/api/v1/system/license/accept', {
+      headers: { 'x-obsx-key': process.env.OBSX_SECRET },
+      body: {},
+    });
+    assert.equal(keyAcceptRes.status, 200);
+    assert.equal(keyAcceptRes.json.ok, true);
+    assert.equal(keyAcceptRes.json.acceptedBy, 'operator-key');
+
+    const acceptRes = await request('POST', '/api/v1/system/license/accept', {
+      headers: { Cookie: opCookie },
+      body: {},
+    });
+    assert.equal(acceptRes.status, 200);
+    assert.equal(acceptRes.json.ok, true);
+    assert.equal(acceptRes.json.safeMode, false);
+    assert.equal(acceptRes.json.accepted, true);
+    assert.equal(acceptRes.json.acceptedBy, 'ops-admin@obsx.tech');
+    assert.equal(acceptRes.json.acceptedVia, 'state_file');
+
+    const opLicRes = await request('GET', '/api/v1/system/license', {
+      headers: { 'x-obsx-key': process.env.OBSX_SECRET },
+    });
+    assert.equal(opLicRes.status, 200);
+    assert.equal(opLicRes.json.ok, true);
+    assert.equal(opLicRes.json.accepted, true);
+
+    // Public /api/v1/system/version must redact operator metadata and state-file internals
+    const pubVer = await request('GET', '/api/v1/system/version');
+    assert.equal(pubVer.status, 200);
+    assert.equal(pubVer.json.ok, true);
+    assert.equal(pubVer.json.safeMode, false);
+    assert.ok(pubVer.json.licenseFingerprint && pubVer.json.licenseFingerprint.length === 16);
+    for (const redactedKey of ['accepted', 'acceptedAt', 'acceptedBy', 'acceptedVia', 'licenseSha256', 'enforceAcceptance']) {
+      assert.equal(redactedKey in pubVer.json, false, `Public version must omit ${redactedKey}`);
+    }
+    assert.equal(pubVer.json.autoUpdate.httpSyncEnabled, false);
+    assert.equal(pubVer.json.autoUpdate.autoRestartEnabled, false);
+
+    // Regular tenant telemetry must NEVER disclose operator advisory or acceptedBy email
+    const regTele = await request('GET', `/api/v1/project/${regProj.pid}/telemetry`, {
+      headers: { Cookie: regCookie },
+    });
+    assert.equal(regTele.status, 200);
+    assert.equal(regTele.json.upstreamAdvisory, null);
+
+    // Operator telemetry DOES receive upstreamAdvisory + licenseStatus
+    const opTele = await request('GET', `/api/v1/project/${opProj.pid}/telemetry`, {
+      headers: { Cookie: opCookie },
+    });
+    assert.equal(opTele.status, 200);
+    assert.ok(opTele.json.upstreamAdvisory && opTele.json.upstreamAdvisory.licenseStatus);
+    assert.equal(opTele.json.upstreamAdvisory.licenseStatus.acceptedBy, 'ops-admin@obsx.tech');
   } finally {
+    fs.rmSync(tmpLicDir, { recursive: true, force: true });
+    if (prevLicStateFile === undefined) delete process.env.OBSX_LICENSE_STATE_FILE;
+    else process.env.OBSX_LICENSE_STATE_FILE = prevLicStateFile;
+    if (prevHttpSync === undefined) delete process.env.OBSX_HTTP_SYNC;
+    else process.env.OBSX_HTTP_SYNC = prevHttpSync;
+    if (prevAutoRestart === undefined) delete process.env.OBSX_AUTO_RESTART;
+    else process.env.OBSX_AUTO_RESTART = prevAutoRestart;
+    if (prevAcceptLic === undefined) delete process.env.OBSX_ACCEPT_LICENSE;
+    else process.env.OBSX_ACCEPT_LICENSE = prevAcceptLic;
+    if (prevEnforceLic === undefined) delete process.env.OBSX_ENFORCE_LICENSE_ACCEPTANCE;
+    else process.env.OBSX_ENFORCE_LICENSE_ACCEPTANCE = prevEnforceLic;
     if (prevSecret === undefined) delete process.env.OBSX_SECRET;
     else process.env.OBSX_SECRET = prevSecret;
     if (prevOps === undefined) delete process.env.OPERATOR_EMAILS;
