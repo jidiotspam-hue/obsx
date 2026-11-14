@@ -35,7 +35,7 @@ test('license: repository LICENSE, package.json, README, and HTML pages stay ali
   const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
   const licenseText = fs.readFileSync(path.join(ROOT, 'LICENSE'), 'utf8');
   const readmeText = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
-  const baselineText = fs.readFileSync(path.join(ROOT, 'README.baseline.md'), 'utf8');
+  const baselineText = fs.readFileSync(path.join(ROOT, 'docs', 'README.baseline.md'), 'utf8');
   const archText = fs.readFileSync(path.join(ROOT, 'docs/ARCHITECTURE.md'), 'utf8');
   const releaseNotes = fs.readFileSync(path.join(ROOT, 'docs/RELEASE_NOTES.md'), 'utf8');
   const termsHtml = fs.readFileSync(path.join(ROOT, 'public/terms.html'), 'utf8');
@@ -69,7 +69,7 @@ test('license: repository LICENSE, package.json, README, and HTML pages stay ali
     'docs/',
     'package.json',
     '.gitignore',
-    'README.baseline.md',
+    'docs/README.baseline.md',
   ]) {
     assert.ok(zone1Section.includes(z1), `LICENSE Zone 1 must include ${z1}`);
   }
@@ -111,7 +111,7 @@ test('license: repository LICENSE, package.json, README, and HTML pages stay ali
   const packedPaths = (packInfo[0] && packInfo[0].files || []).map((f) => f.path);
   assert.ok(packedPaths.includes('lib/core.js'), 'npm pack must include Zone 1 lib/core.js');
   assert.ok(packedPaths.includes('lib/index.js'), 'npm pack must include Zone 1 lib/index.js');
-  for (const forbidden of ['server.js', 'lib/botshield.js', 'lib/sentinel.js', 'lib/updater.js', 'lib/accounts.js', 'lib/mailer.js', 'tools/flood.js', 'public/veritas.min.js']) {
+  for (const forbidden of ['server.js', 'lib/botshield.js', 'lib/sentinel.js', 'lib/updater.js', 'lib/accounts.js', 'lib/mailer.js', 'tools/flood.js', 'public/veritas.min.js', 'README.baseline.md', 'docs/README.baseline.md']) {
     assert.ok(!packedPaths.includes(forbidden), `npm pack must exclude Zone 2 / proprietary file: ${forbidden}`);
   }
 });

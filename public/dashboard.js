@@ -176,15 +176,21 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, origins, token, nonce }),
       });
-      const data = await res.json();
-      if (data.ok && data.project) {
+      let data = null;
+      try {
+        data = await res.json();
+      } catch {
+        data = null;
+      }
+      if (res.ok && data && data.ok && data.project) {
         if (formCreateProject) formCreateProject.style.display = 'none';
         if (inpNewProjectName) inpNewProjectName.value = '';
         if (inpNewProjectOrigins) inpNewProjectOrigins.value = '';
         showRevealedKey(data.project.secretKey);
         await loadProjects();
       } else {
-        alert('Failed to create project: ' + (data.error || data.message || 'Unknown error'));
+        const errMsg = (data && (data.message || data.error)) || `HTTP ${res.status}`;
+        alert('Failed to create project: ' + errMsg);
       }
     } catch (err) {
       alert('Error creating project: ' + err.message);
@@ -802,14 +808,22 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ recipient, token, nonce }),
       });
-      const data = await res.json();
-      if (data.ok) {
+      let data = null;
+      try {
+        data = await res.json();
+      } catch {
+        data = null;
+      }
+      if (res.ok && data && data.ok) {
         alert(data.throttled
           ? 'Alert recorded, but throttled by 5-minute circuit breaker to protect operator inbox!'
           : `Critical security advisory dispatched successfully to ${data.alert?.recipient || 'operator'}!`);
         fetchAlertsHistory();
       } else {
-        alert('Alert dispatch failed: ' + (data.error || 'Unknown error'));
+        const errMsg =
+          (data && (data.error || (data.dispatch && data.dispatch.error) || data.reason || data.message)) ||
+          `HTTP ${res.status}`;
+        alert('Alert dispatch failed: ' + errMsg);
       }
     } catch (err) {
       alert('Alert test error: ' + err.message);

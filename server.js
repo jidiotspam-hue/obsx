@@ -1015,10 +1015,19 @@ const server = http.createServer(async (req, res) => {
           severity: 'INFO',
           recipient: targetEmail,
         });
+        const alertError =
+          (alertRes && alertRes.error) ||
+          (alertRes && alertRes.dispatch && alertRes.dispatch.error) ||
+          (alertRes && alertRes.reason) ||
+          (alertRes && alertRes.ok === false ? 'alert_dispatch_failed' : undefined);
         const alertStatus = alertRes && alertRes.ok === false
-          ? (alertRes.dispatch && alertRes.dispatch.error === 'smtp_unconfigured' ? 503 : 502)
+          ? (alertError === 'smtp_unconfigured' ? 503 : 502)
           : 200;
-        return sendJson(res, alertStatus, { ...alertRes, ok: Boolean(alertRes && alertRes.ok !== false) });
+        return sendJson(res, alertStatus, {
+          ...alertRes,
+          ok: Boolean(alertRes && alertRes.ok !== false),
+          ...(alertRes && alertRes.ok === false ? { error: alertError } : {}),
+        });
       }
 
       if (pathname === '/api/v1/alerts') {
@@ -1693,6 +1702,9 @@ const server = http.createServer(async (req, res) => {
     }
     if (err.message === 'note_quota_exceeded') {
       return sendJson(res, 429, { ok: false, error: 'note_quota_exceeded' });
+    }
+    if (err.code === 'invalid_origin' || err.statusCode === 400) {
+      return sendJson(res, 400, { ok: false, error: err.code || 'bad_request', message: err.message });
     }
     console.error('[Server Error]', err);
     if (!res.headersSent) {

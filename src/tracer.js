@@ -968,7 +968,7 @@
       const icon = el.querySelector('.obsx-widget-icon');
 
       const attestOpts = {};
-      const attrSite = options.site || (el.getAttribute && (el.getAttribute('data-obsx-site') || el.getAttribute('data-site')));
+      const attrSite = options.site || (el.getAttribute && (el.getAttribute('data-obsx-site') || el.getAttribute('data-tracer-site') || el.getAttribute('data-site')));
       const attrEndpoint = options.endpoint || (el.getAttribute && (el.getAttribute('data-obsx-endpoint') || el.getAttribute('data-endpoint')));
       const attrMode = options.mode || (el.getAttribute && (el.getAttribute('data-obsx-mode') || el.getAttribute('data-mode')));
       if (attrSite) attestOpts.site = attrSite;

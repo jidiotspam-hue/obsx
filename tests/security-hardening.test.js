@@ -1477,17 +1477,28 @@ test('core, telemetry, mailer, updater, kv, and botshield handle review regressi
   const updaterMod = require('../lib/updater');
   const { MemoryStore } = require('../lib/kv');
 
-  // 1. project settings.origins normalizes trailing slashes & mixed case; mobile touchPoints satisfy human interaction
+  // 1. project settings.origins normalizes trailing slashes & mixed case and rejects invalid entries
   const originProj = await core.createProject({
     name: 'Normalized Origin & Touch Project',
     origins: [
       'HTTPS://Shop.Example.COM/checkout/',
       'https://shop.example.com',
-      'javascript:alert(1)',
     ],
     settings: { minDurationMs: 0 },
   });
   assert.deepEqual(originProj.settings.origins, ['https://shop.example.com']);
+  await assert.rejects(
+    () => core.createProject({ name: 'Bad Origin Proj', origins: ['app.example.com'] }),
+    /invalid_origin/i
+  );
+  await assert.rejects(
+    () => core.updateProjectSettings(originProj.pid, { origins: ['javascript:alert(1)'] }),
+    /invalid_origin/i
+  );
+  await assert.rejects(
+    () => core.createProject({ name: 'Non-Array Origin Proj', origins: 'https://shop.example.com' }),
+    /invalid_origin/i
+  );
   const loadedOriginProj = await core.loadProject(originProj.pid);
 
   const mobileUa = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)';
@@ -1560,6 +1571,13 @@ test('core, telemetry, mailer, updater, kv, and botshield handle review regressi
   ]);
   assert.equal(nonFiniteEval.isInstant, false);
   assert.equal(nonFiniteEval.isLinear, false);
+
+  const cadenceNonFinite = telemetryMod.evaluateKeystrokeCadence([null, '', '  ', false, 120, 140]);
+  assert.equal(cadenceNonFinite.count, 2);
+  assert.equal(cadenceNonFinite.isSyntheticCadence, false);
+  const cadenceOnlyCoercible = telemetryMod.evaluateKeystrokeCadence([null, '', '  ', false, false]);
+  assert.equal(cadenceOnlyCoercible.count, 0);
+  assert.equal(cadenceOnlyCoercible.isSyntheticCadence, false);
 
   // 3. mailer non-production unconfigured console OTP fallback & caught SMTP alert error
   const prevNodeEnv = process.env.NODE_ENV;
@@ -1675,7 +1693,16 @@ test('core, telemetry, mailer, updater, kv, and botshield handle review regressi
       env: { OBSX_UPSTREAM_REPO: 'custom-org/obsx-mirror', OBSX_AUTO_UPDATE: 'true' },
     });
     assert.equal(verInfo.upstream, 'custom-org/obsx-mirror');
+    assert.equal(verInfo.upstreamBranch, 'main');
     assert.equal(verInfo.autoUpdate.enabled, true);
+
+    const verOverrideInfo = updaterMod.getSystemVersionInfo({
+      rootDir: cloneDir,
+      repo: 'direct-org/obsx-fork',
+      branch: 'release/v2.4',
+    });
+    assert.equal(verOverrideInfo.upstream, 'direct-org/obsx-fork');
+    assert.equal(verOverrideInfo.upstreamBranch, 'release/v2.4');
 
     const branchAdvisory = updaterMod.getOperatorDriftAdvisory({
       rootDir: cloneDir,
@@ -1752,6 +1779,21 @@ test('core, telemetry, mailer, updater, kv, and botshield handle review regressi
         1,
         new URL('http://example.com/api/v1/verify')
       );
+      botshield.evaluate(
+        {
+          method: 'POST',
+          headers: {
+            host: 'example.com',
+            'user-agent': 'Mozilla/5.0 Chrome/130.0.0.0 Safari/537.36',
+            accept: 'application/json',
+          },
+        },
+        makeFakeRes(),
+        '2001:db8:85a3:42::88',
+        '/api/v1/verify',
+        1,
+        new URL('http://example.com/api/v1/verify')
+      );
     }
 
     const statsMaskedReq = makeFakeRes();
@@ -1765,6 +1807,7 @@ test('core, telemetry, mailer, updater, kv, and botshield handle review regressi
     );
     const maskedStats = JSON.parse(statsMaskedReq.out.body);
     assert.ok(maskedStats.quarantinedSubnets.some((s) => s.subnet === '198.51.*.*/24'));
+    assert.ok(maskedStats.quarantinedSubnets.some((s) => s.subnet === '2001:db8:*:*/64'));
 
     const statsDetailedReq = makeFakeRes();
     botshield.evaluate(
@@ -1777,6 +1820,7 @@ test('core, telemetry, mailer, updater, kv, and botshield handle review regressi
     );
     const detailedStats = JSON.parse(statsDetailedReq.out.body);
     assert.ok(detailedStats.quarantinedSubnets.some((s) => s.subnet === '198.51.100.0/24'));
+    assert.ok(detailedStats.quarantinedSubnets.some((s) => s.subnet === '2001:db8:85a3:42::/64'));
 
     // Challenge solve cookie omits ; Secure when capacity.isHttps=false even with spoofed X-Forwarded-Proto
     const chalRes = makeFakeRes();
@@ -1934,5 +1978,237 @@ test('accounts handle SMTP rollback, cross-subnet grace verification, multi-sess
 
   const deviceBProjects = await request('GET', '/api/v1/projects', { headers: { Cookie: cookieB } });
   assert.equal(deviceBProjects.status, 401, 'Deleting account must immediately invalidate all device sessions');
+});
+
+test('autofill touch tolerance, settingsOverride, OTP counter continuity, session pruning, and alert/origin errors', async () => {
+  const { execFileSync } = require('child_process');
+  const { getKv } = require('../lib/kv');
+  const kv = getKv();
+
+  // 1. Mobile touchPoints >= 3 exercises real minDurationMs autofill tolerance branch (not minDurationMs: 0)
+  const timingProj = await core.createProject({
+    name: 'Autofill Touch Timing Project',
+    settings: { minDurationMs: 1200, reviewAt: 35, rejectAt: 65 },
+  });
+  const loadedTimingProj = await core.loadProject(timingProj.pid);
+  const mobileUa = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)';
+
+  const threeTouchSess = await core.startSession(loadedTimingProj, { ip: '198.51.100.240', action: 'checkout' });
+  const threeTouchNonce = solvePow(threeTouchSess.challenge, threeTouchSess.difficulty);
+  const threeTouchSignals = {
+    sh: 'trc_v1_live',
+    gpuRenderer: 'Apple GPU',
+    mousePoints: [],
+    touchPoints: [
+      { x: 110, y: 240, t: 15 },
+      { x: 115, y: 248, t: 48 },
+      { x: 121, y: 256, t: 84 },
+    ],
+    dwellTimeMs: 420,
+    elapsedMs: 490,
+    keyIntervals: [118, 142, 99],
+    rum: { dns: 10, tcp: 14, ttfb: 38, domReady: 165 },
+    audio: 0.00023456,
+  };
+  await core.recordSignals({
+    token: threeTouchSess.token,
+    nonce: threeTouchNonce,
+    signals: threeTouchSignals,
+    tsig: crypto.hmac(
+      crypto.unb64u(threeTouchSess.rk),
+      `obsx.sig.v1\n${threeTouchSess.session}\n${threeTouchNonce}\n${crypto.canon(threeTouchSignals)}`
+    ),
+  });
+  await new Promise((r) => setTimeout(r, 500));
+  const softAutofillVerdict = await core.verify(
+    loadedTimingProj,
+    { token: threeTouchSess.token, nonce: threeTouchNonce },
+    { ip: '198.51.100.240', ua: mobileUa }
+  );
+  const fastReason = softAutofillVerdict.reasons.find((r) => r.code === 'too_fast');
+  assert.ok(fastReason, 'Expected too_fast soft reason during minDurationMs window');
+  assert.equal(fastReason.weight, 25);
+  assert.ok(String(fastReason.detail).includes('Autofill tolerance'));
+  assert.equal(softAutofillVerdict.verdict, 'accept');
+
+  const twoTouchSess = await core.startSession(loadedTimingProj, { ip: '198.51.100.241', action: 'checkout' });
+  const twoTouchNonce = solvePow(twoTouchSess.challenge, twoTouchSess.difficulty);
+  const twoTouchSignals = {
+    ...threeTouchSignals,
+    touchPoints: threeTouchSignals.touchPoints.slice(0, 2),
+  };
+  await core.recordSignals({
+    token: twoTouchSess.token,
+    nonce: twoTouchNonce,
+    signals: twoTouchSignals,
+    tsig: crypto.hmac(
+      crypto.unb64u(twoTouchSess.rk),
+      `obsx.sig.v1\n${twoTouchSess.session}\n${twoTouchNonce}\n${crypto.canon(twoTouchSignals)}`
+    ),
+  });
+  await new Promise((r) => setTimeout(r, 500));
+  const twoTouchVerdict = await core.verify(
+    loadedTimingProj,
+    { token: twoTouchSess.token, nonce: twoTouchNonce },
+    { ip: '198.51.100.241', ua: mobileUa }
+  );
+  assert.equal(twoTouchVerdict.verdict, 'reject');
+  assert.equal(twoTouchVerdict.reasons.find((r) => r.code === 'too_fast')?.weight, 100);
+
+  // 2. ctx.settingsOverride takes effect in core.verify
+  const startUa = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/130.0.0.0';
+  const changedUa = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/131.0.0.0';
+  const makeUaShiftSession = async (ip) => {
+    const sess = await core.startSession(loadedTimingProj, { ip, ua: startUa, action: 'gate_check' });
+    const nonce = solvePow(sess.challenge, sess.difficulty);
+    const sigs = {
+      sh: 'trc_v1_live',
+      gpuRenderer: 'Apple M2',
+      mousePoints: [
+        { x: 10, y: 12, t: 0 },
+        { x: 24, y: 31, t: 18 },
+        { x: 47, y: 42, t: 41 },
+        { x: 63, y: 58, t: 69 },
+        { x: 88, y: 74, t: 103 },
+        { x: 105, y: 90, t: 141 },
+      ],
+      dwellTimeMs: 1300,
+      elapsedMs: 1300,
+      keyIntervals: [110, 145, 95],
+      rum: { dns: 8, tcp: 11, ttfb: 32, domReady: 140 },
+      audio: 0.00023456,
+    };
+    await core.recordSignals({
+      token: sess.token,
+      nonce,
+      signals: sigs,
+      tsig: crypto.hmac(crypto.unb64u(sess.rk), `obsx.sig.v1\n${sess.session}\n${nonce}\n${crypto.canon(sigs)}`),
+    });
+    return { sess, nonce };
+  };
+  await core.updateProjectSettings(timingProj.pid, { minDurationMs: 0 });
+  const reloadedOverrideProj = await core.loadProject(timingProj.pid);
+  const ovA = await makeUaShiftSession('198.51.100.242');
+  const withoutOverride = await core.verify(
+    reloadedOverrideProj,
+    { token: ovA.sess.token, nonce: ovA.nonce },
+    { ip: '198.51.100.242', ua: changedUa }
+  );
+  assert.equal(withoutOverride.risk, 45);
+  assert.equal(withoutOverride.verdict, 'review');
+
+  const ovB = await makeUaShiftSession('198.51.100.243');
+  const withOverride = await core.verify(
+    reloadedOverrideProj,
+    { token: ovB.sess.token, nonce: ovB.nonce },
+    { ip: '198.51.100.243', ua: changedUa, settingsOverride: { reviewAt: 50, rejectAt: 90 } }
+  );
+  assert.equal(withOverride.risk, 45);
+  assert.equal(withOverride.verdict, 'accept');
+
+  // 3. OTP resend carries forward attempt counter & overwrites graceKey with latest replaced code
+  const capEmail = `otp-counter-cap-${crypto.randomId(4).toLowerCase()}@obsx.tech`;
+  const capHash = crypto.sha256(capEmail);
+  const r1 = await accounts.startEmailAuth(capEmail, '198.18.10.1');
+  for (let i = 0; i < 4; i++) {
+    await assert.rejects(() => accounts.verifyEmailAuth(capEmail, '000000', false));
+  }
+  const r2 = await accounts.startEmailAuth(capEmail, '198.18.11.1');
+  assert.notEqual(r2.devCode, r1.devCode);
+  const storedAfterResend = await kv.hgetall(`tr:ec:${capHash}`);
+  assert.equal(storedAfterResend.n, '4', 'Resending OTP must preserve cumulative wrong-attempt count');
+  await assert.rejects(() => accounts.verifyEmailAuth(capEmail, '000000', false));
+  const graceAfterFifthFail = await kv.get(`tr:ec:grace:${capHash}`);
+  assert.equal(graceAfterFifthFail, null, 'Exhausted grace slot must be deleted on 5th failed guess');
+  await assert.rejects(
+    () => accounts.verifyEmailAuth(capEmail, r2.devCode, false),
+    /Too many incorrect attempts/
+  );
+
+  // 3-OTP sequence keeps the most recently replaced code (OTP #2) alive in graceKey
+  const chainEmail = `otp-chain-${crypto.randomId(4).toLowerCase()}@obsx.tech`;
+  const c1 = await accounts.startEmailAuth(chainEmail, '198.18.12.1');
+  const c2 = await accounts.startEmailAuth(chainEmail, '198.18.13.1');
+  const c3 = await accounts.startEmailAuth(chainEmail, '198.18.14.1');
+  assert.notEqual(c2.devCode, c3.devCode);
+  await assert.rejects(() => accounts.verifyEmailAuth(chainEmail, c1.devCode, false));
+  const verifiedC2 = await accounts.verifyEmailAuth(chainEmail, c2.devCode, false, { termsAccepted: true });
+  assert.ok(verifiedC2.uid && verifiedC2.sid);
+
+  // 4. Expired session index fields in tr:u:${uid}:sessions are pruned on login
+  const staleSidHash = crypto.sha256('stale_expired_session');
+  await kv.hset(`tr:u:${verifiedC2.uid}:sessions`, {
+    [staleSidHash]: String(Date.now() - 8 * 86400 * 1000),
+  });
+  const pruneOtp = await accounts.startEmailAuth(chainEmail, '198.18.15.1');
+  const pruneSess = await accounts.verifyEmailAuth(chainEmail, pruneOtp.devCode, false);
+  const sessIndexAfterLogin = await kv.hgetall(`tr:u:${verifiedC2.uid}:sessions`);
+  assert.equal(sessIndexAfterLogin[staleSidHash], undefined, 'Expired session entries must be pruned on login');
+  assert.ok(sessIndexAfterLogin[crypto.sha256(pruneSess.sid)], 'Newly issued session must be indexed');
+
+  // 5. mailer.sendSecurityAlert reports devMode: true in non-test NODE_ENV=development
+  const devAlertOut = execFileSync(
+    process.execPath,
+    [
+      '-e',
+      'const m = require("./lib/mailer"); m.sendSecurityAlert("dev-alert@example.com", { title: "Dev Probe", summary: "ok" }).then((r) => { console.log("__ALERT__=" + JSON.stringify(r)); });',
+    ],
+    {
+      cwd: path.resolve(__dirname, '..'),
+      env: { PATH: process.env.PATH || '', NODE_ENV: 'development' },
+      encoding: 'utf8',
+    }
+  );
+  const alertLine = devAlertOut.split('\n').find((l) => l.startsWith('__ALERT__='));
+  assert.ok(alertLine, 'Dev alert child process must emit __ALERT__');
+  const parsedDevAlert = JSON.parse(alertLine.slice('__ALERT__='.length));
+  assert.equal(parsedDevAlert.ok, true);
+  assert.equal(parsedDevAlert.devMode, true);
+
+  // 6. HTTP invalid_origin returns 400 and /api/v1/alert/test surfaces top-level error on failure
+  const opEmail = `alert-op-${crypto.randomId(4).toLowerCase()}@obsx.tech`;
+  const opStart = await accounts.startEmailAuth(opEmail, '198.18.16.1');
+  const opAuth = await accounts.verifyEmailAuth(opEmail, opStart.devCode, false, { termsAccepted: true });
+  const opCookie = `__Host-obsx_session=${opAuth.sid}`;
+  const badCreateRes = await request('POST', '/api/v1/project', {
+    headers: { Cookie: opCookie },
+    body: { name: 'Bad HTTP Origin', origins: ['app.example.com'] },
+  });
+  assert.equal(badCreateRes.status, 400);
+  assert.equal(badCreateRes.json.error, 'invalid_origin');
+
+  const validCreateRes = await request('POST', '/api/v1/project', {
+    headers: { Cookie: opCookie },
+    body: { name: 'Patch Origin Validation', origins: ['https://good.example.com'] },
+  });
+  assert.equal(validCreateRes.status, 201);
+  const badPatchRes = await request('PATCH', `/api/v1/project/${validCreateRes.json.project.pid}/settings`, {
+    headers: { Cookie: opCookie },
+    body: { origins: ['javascript:alert(1)'] },
+  });
+  assert.equal(badPatchRes.status, 400);
+  assert.equal(badPatchRes.json.error, 'invalid_origin');
+
+  const prevOpEmails = process.env.OPERATOR_EMAILS;
+  const origNotify = mailer.notifyCriticalIncident;
+  process.env.OPERATOR_EMAILS = opEmail;
+  mailer.notifyCriticalIncident = async () => ({
+    ok: false,
+    throttled: false,
+    dispatch: { ok: false, error: 'smtp_down_probe', devMode: false },
+  });
+  try {
+    const failedTestAlert = await request('POST', '/api/v1/alert/test', {
+      headers: { Cookie: opCookie },
+      body: {},
+    });
+    assert.equal(failedTestAlert.status, 502);
+    assert.equal(failedTestAlert.json.ok, false);
+    assert.equal(failedTestAlert.json.error, 'smtp_down_probe');
+  } finally {
+    mailer.notifyCriticalIncident = origNotify;
+    if (prevOpEmails === undefined) delete process.env.OPERATOR_EMAILS;
+    else process.env.OPERATOR_EMAILS = prevOpEmails;
+  }
 });
 

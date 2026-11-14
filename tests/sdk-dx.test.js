@@ -1027,6 +1027,31 @@ test('dx: tracer.min.js exposes Tracer global, honors data-tracer-site, and supp
     });
     assert.equal(prevented, true);
     assert.equal(failOpenSubmits, 1, 'protectForm with failOpen: true must submit when attestation fails');
+
+    // Verify OBSX.render honors data-tracer-site attribute on widget containers
+    failAttest = false;
+    sandbox.OBSX.reset();
+    let hiddenTokenInput = null;
+    const widgetContainer = {
+      innerHTML: '',
+      getAttribute(name) { return name === 'data-tracer-site' ? testProject.publicKey : null; },
+      querySelector(sel) {
+        if (sel === 'input[name="obsx-token"]') {
+          if (!hiddenTokenInput) hiddenTokenInput = { value: '', dataset: {} };
+          return hiddenTokenInput;
+        }
+        return null;
+      },
+    };
+    let renderedToken = '';
+    sandbox.OBSX.render(widgetContainer, {
+      callback(tok) { renderedToken = tok; },
+    });
+    for (let i = 0; i < 40 && !renderedToken; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.ok(hiddenTokenInput && hiddenTokenInput.value.length > 0, 'OBSX.render must populate token from data-tracer-site');
+    assert.equal(renderedToken, hiddenTokenInput.value);
   } finally {
     sandbox.OBSX.reset();
   }
