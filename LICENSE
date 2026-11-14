@@ -1,71 +1,22 @@
-# OBSX Security Protocol — Dual License
+# OBSX Security Dual-License Structure
 
-Copyright (c) 2026 Alexis Grimmace. All rights reserved.
+Copyright (c) 2026 Alexis Grimmace (https://obsx.tech)
 
----
+OBSX Security uses a **Dual-License Structure** with clear file-level boundaries:
 
-## PROSPECTIVE APPLICABILITY & PRIOR RELEASES
+- **Zone 1 (`MIT`)**: Core Protocol Engine, Client SDK, Verification Middleware, TypeScript Definitions, Build Tooling, Tests, Package Manifests, and Public Documentation (`lib/core.js`, `lib/crypto.js`, `lib/telemetry.js`, `lib/kv.js`, `lib/config.js`, `lib/index.js`, `index.d.ts`, `package.json`, `.gitignore`, `src/tracer.js`, compiled client bundles, `public/index.html`, `public/docs.html`, `public/notes.html`, `public/notes.js`, `public/app.js`, `public/style.css`, `public/privacy.html`, `public/terms.html`, `public/install.md`, public static icons/diagrams in `public/`, `scripts/`, `tests/`, `README.md`, `README.baseline.md`, `SECURITY.md`, `docs/`).
+- **Zone 2 (`LicenseRef-OBSX-Zone-2-1.0` — OBSX Source-Available License v1.0)**: Self-Hosted Operator Server, Origin Shield, Auto-Updater, Account & Mailer Subsystems, Operator Dashboard UI, and Deployment/Load-Testing Tooling (`server.js`, `lib/botshield.js`, `lib/updater.js`, `lib/accounts.js`, `lib/mailer.js`, `public/dashboard.html`, `public/dashboard.js`, `tools/flood.js`, `.env.example`, `.github/`).
+- **Closed-Source / Proprietary Modules (Excluded — No License Granted)**: Proprietary operational modules maintained outside this public repository (`OBSX Sentinel™` proprietary engine and closed-source edge infrastructure) are strictly proprietary, excluded from distribution and npm `"files"` allowlists, and receive no license grant under this file.
 
-This Dual License applies prospectively beginning with the **v2.2.0 dual-license release** and all subsequent releases, modifications, and distributions derived from it.
+**Prospective Applicability**: This Dual-License Structure governs releases from **v2.2.0 onward**. Historical commits and releases published strictly prior to v2.2.0 under the MIT License remain licensed under MIT for those prior versions. Any future license updates apply prospectively to future versions only and do not retroactively revoke rights already validly granted for prior versions.
 
-Commits, tags, and releases distributed solely under the MIT License prior to the introduction of this Dual License remain governed by the MIT License for those specific prior versions as originally distributed. Any upgrade to, integration with, or redistribution incorporating the Zone 2 components or v2.2.0+ dual-licensed source files is governed by the terms below.
+**Precedence & Severability**: Standalone use of Zone 1 files is governed exclusively by the MIT License in Part 1 without additional restriction. Use of Zone 2 files (or combined server deployments incorporating Zone 2 components) is governed by Part 2 with respect to Zone 2 software components. If any provision of this license is held unenforceable, the remaining provisions continue in full force and effect.
 
----
-
-## REPOSITORY LICENSE ZONES
-
-This repository is organized into two explicit license zones modeled after open-core infrastructure licensing:
-
-1. **ZONE 1: Core Protocol Engine, Client SDK, Tests & Public Documentation** — Licensed under the **MIT License**.
-   Includes:
-   - `lib/index.js` (Zero-dependency Node.js verification SDK entry point & Express/HTTP middleware)
-   - `lib/crypto.js` (Proof-of-work generator, HMAC seals, canonicalization, shared runtime/escaping helpers)
-   - `lib/core.js` (Core verification engine, telemetry validation, rate limiting, replay defense)
-   - `lib/telemetry.js` (Kinematic jerk entropy & pointer dynamics evaluation)
-   - `lib/kv.js` & `lib/config.js` (Key-value store adapters and environment loader)
-   - `src/tracer.js` & `index.d.ts` (Client-side attestation collector and TypeScript declarations)
-   - `public/obsx.min.js`, `public/veritas.min.js`, `public/tracer.min.js` (Built client SDK bundles)
-   - `public/app.js`, `public/notes.js`, `public/style.css`, `public/install.md`, public demo pages (`public/index.html`, `public/docs.html`, `public/notes.html`, `public/privacy.html`, `public/terms.html`), and static brand/icon assets in `public/`
-   - `scripts/`, `tests/`, `docs/`, `.github/`, `README.md`, `README.baseline.md`, `SECURITY.md`, `package.json`, `.gitignore`, `.env.example`
-   - Any auxiliary build, packaging, CI, or documentation file not explicitly listed under Zone 2 defaults to the **MIT License** (Zone 1).
-
-2. **ZONE 2: Node Operator Scaffolding, Bot Protection, Auto-Updater & Dashboard** — Licensed under the **Elastic License 2.0 (ELv2) + Additional OBSX Zone 2 Terms** (see Part 2).
-   Includes:
-   - `server.js` (HTTP server harness, operator routes, and metrics broadcaster)
-   - `lib/accounts.js` (Multi-tenant user and project key administration)
-   - `lib/mailer.js` (Automated security incident notifications and email delivery)
-   - `lib/botshield.js` (Origin shield, adaptive load shedding, body gating, and connection posture engine)
-   - `lib/updater.js` (Upstream sync, CRLF-safe tree fingerprint attestation, license integrity verification, and Safe Mode checks)
-   - `tools/flood.js` (Load shedding verification and origin stress test harness)
-   - `public/dashboard.html` & `public/dashboard.js` (Node operator management interface)
+**Contributor License Agreement (CLA)**: By submitting a pull request or contribution to this repository, you agree that your contribution is licensed under the Part governing the file(s) you modify or add (Part 1 MIT for Zone 1; Part 2 OBSX Source-Available License v1.0 for Zone 2).
 
 ---
 
-## PROPRIETARY & CLOSED-SOURCE NOTICE: OBSX SENTINEL™
-
-The **OBSX Sentinel™ Adaptive Vector Circuit Breaker Engine** (autonomous vector isolation, distributed zero-day threat correlation, dynamic saturation throttling, real-time edge heuristics, and vector state machines) is **STRICTLY CLOSED SOURCE AND PROPRIETARY INTELLECTUAL PROPERTY**.
-
-- **Not Included in this Repository:** Sentinel™ is **NOT** included in this public repository and is **NOT** licensed under the MIT License, Elastic License 2.0, or Part 2 below.
-- **Private Repository & Cloud Exclusive:** Sentinel™ is maintained separately (`jidiotspam-hue/obsx-sentinel`) under the *OBSX Sentinel™ Enterprise Proprietary Software License* and operates as the managed service powering **https://obsx.tech**.
-- **No Unauthorized Impersonation, API Abuse, or Proprietary Shims:** Nothing in Zone 1 or Zone 2 grants any license, patent right, or trademark right to Sentinel™. You may **NOT** copy, decompile, extract, or bypass Sentinel™ proprietary software, impersonate official OBSX Sentinel™ nodes, or distribute modules marketed as drop-in replacements for proprietary Sentinel™ services without a commercial agreement.
-- **Self-Hosting Independence:** Self-hosted deployments from this repository execute the complete, standalone OBSX Core verification engine (Zone 1) with operator scaffolding (Zone 2) without requiring Sentinel™.
-
----
-
-## TRANSITION & GRANDFATHERING POLICY (RELEASE v2.2.0+ & POST-CUTOFF)
-
-1. **Grandfathered Self-Hosted Community Instances (Installed on or prior to November 15, 2026):**
-   - Consistent with the Prospective Applicability rule above (which preserves MIT for pre-v2.2.0 releases), operators of standalone self-hosted community instances of v2.2.0 installed on or before **November 15, 2026** retain perpetual internal self-hosting rights for that installation without commercial fee under Zone 1 (MIT) and Zone 2 (ELv2) self-hosting permissions, while commercial hosted SaaS redistribution remains excluded.
-   - Standalone self-hosted deployments must configure local secrets/keys and do not receive hosted Sentinel™ cloud entitlements without a managed or enterprise agreement.
-2. **Post-Transition Clones & Commercial Restrictions (Cloned or upgraded subsequent to November 15, 2026):**
-   - Deployments, forks, and upgrades created after November 15, 2026 remain subject to all Zone 2 source-available terms (ELv2 + Additional OBSX Zone 2 Terms) and Sentinel™ proprietary boundaries. Commercial SaaS hosting and extraction of Zone 2 components into competing products remain strictly prohibited.
-3. **Integrity Verification, Safe Mode & Coordinated Disclosure Guarantee:**
-   - `lib/updater.js` computes CRLF-normalized SHA-256 fingerprints across critical source files and `LICENSE`, tracking local license acceptance state and entering Safe Mode if critical integrity assets are missing or operator acceptance enforcement fails.
-   - Security researchers and operators discovering bugs, false positives, or integrity discrepancies are welcome to report them cleanly via `security@obsx.tech`.
-
----
-
-## PART 1: MIT LICENSE (ZONE 1 — Core Protocol, Client SDK, Tests & Public Docs)
+## PART 1: MIT LICENSE (Zone 1 — Core Engine, SDK & Documentation)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -87,40 +38,33 @@ SOFTWARE.
 
 ---
 
-## PART 2: ZONE 2 SOURCE-AVAILABLE LICENSE (ELASTIC LICENSE 2.0 + ADDITIONAL OBSX ZONE 2 TERMS)
+## PART 2: OBSX SOURCE-AVAILABLE LICENSE v1.0 (Zone 2 — Operator Software)
 
-*Note: Part 2 adapts the Elastic License 2.0 (ELv2) framework with additional OBSX-specific Zone 2 protections (clauses 3(b) and 3(d)–(f)). For unmodified upstream ELv2 text, refer to https://www.elastic.co/licensing/elastic-license.*
+Applies exclusively to **Zone 2** files:
+- `server.js`
+- `lib/botshield.js`, `lib/updater.js`, `lib/accounts.js`, `lib/mailer.js`
+- `public/dashboard.html`, `public/dashboard.js`
+- `tools/flood.js`
+- `.env.example`, `.github/` (operator deployment and CI scaffolding)
 
-### 1. Acceptance
-By using, copying, modifying, or distributing any software, algorithms, or files designated under
-Zone 2—specifically including the node operator dashboard, server harness, origin bot shield, auto-updater, stress harness, and account/mailer modules—you agree to all of the terms and conditions below.
+### 1. Copyright License Grant
+Subject to the limitations and conditions in Section 2, Licensor grants You a non-exclusive, worldwide, royalty-free copyright license to reproduce, prepare derivative works of, display, execute, and use the Zone 2 software components strictly for internal business operations or personal, self-hosted infrastructure protecting applications and origins that You own or operate.
 
-### 2. Right to Use
-You may copy, distribute, modify, and create derivative works of the Zone 2 software,
-subject to the non-negotiable limitations in Section 3.
+### 2. Limitations and Conditions
+You may **not**:
+1. **Hosted / Managed Anti-Bot Service**: Provide the Zone 2 software, or any substantial derivative thereof, to third parties as a hosted, managed, cloud, or software-as-a-service anti-bot, CAPTCHA, WAF, or client attestation platform where third parties consume protection for their own domains or origins.
+2. **Competing Product Extraction**: Extract, isolate, or repackage Zone 2 software components into a competing security, DDoS-mitigation, or anti-automation product distributed or made available to third parties.
+3. **Circumvention & Notice Integrity**: Remove, obscure, bypass, or alter any copyright notice, license notice, Safe Mode license verification check, or attribution included in the Zone 2 software.
+4. **Authorized Security & Load Tooling (`tools/flood.js`)**: You may execute `tools/flood.js` solely against staging, development, or production infrastructure that You own or for which You hold explicit, verifiable prior written authorization from the infrastructure owner.
 
-**Permitted Uses Include:**
-- Downloading and running the full self-hosted node as-is for personal, commercial, or internal enterprise infrastructure.
-- Making private modifications and custom extensions for your internal, private operations.
-- Inspecting source code, conducting internal security audits, and testing.
+### 3. Patent Grant & Defensive Patent Termination
+Subject to your compliance with this License, Licensor grants You a non-exclusive, worldwide, royalty-free patent license under patent claims owned or licensable by Licensor that are necessarily infringed by the unmodified Zone 2 software as distributed by Licensor. If You institute patent litigation against any entity (including a cross-claim or counterclaim in a lawsuit) alleging that the Zone 2 software directly or contributorily infringes a patent, any patent licenses granted to You under this License terminate automatically as of the date such litigation is filed.
 
-### 3. Limitations
-You may not:
-- **(a) Hosted SaaS Service Prohibition**: Provide the Zone 2 software, or any portion, feature, or functionality derived from Zone 2, to third parties as a hosted, managed, or software-as-a-service (SaaS) offering;
-- **(b) Component & Algorithm Extraction Prohibition**: Extract, copy, adapt, or incorporate Zone 2 modules, UI components, or origin shield/metrics/account implementations into any competing commercial product or competing anti-bot/protection service;
-- **(c) Notice Removal**: Move, change, disable, or obscure any licensing, copyright, attribution, or legal notices of the licensor;
-- **(d) Sentinel™ Impersonation & Spoofing Prohibition**: Distribute or deploy any module claiming to represent, emulate, or spoof the closed-source OBSX Sentinel™ service or its proprietary cloud API endpoints (`https://obsx.tech`);
-- **(e) Origin Shield Abuse & Harvesting Prohibition**: Abuse, spoof, or harvest the origin shield telemetry endpoints (`/api/v1/bot-protection`, `/api/v1/sentinel/ring`), forwarding header integrity checks, or connection posture telemetry to operate unauthorized scraping proxies, IP reputation bypass tooling, or commercial traffic relays;
-- **(f) License Integrity & Safe Mode Tampering**: Disable, strip, or falsify license verification routines, tree fingerprint checks, or Safe Mode reporting in `lib/updater.js` for the purpose of misrepresenting modified software as an official OBSX build or evading license acceptance controls.
+### 4. Trademark Non-Grant
+This License does not grant permission to use the trade names, trademarks, service marks, or product names of Licensor (including "OBSX", "OBSX Security", "OBSX Sentinel", or `obsx.tech`), except as required for reasonable and customary use in describing the origin of the Software and reproducing copyright notices.
 
-### 4. Termination
-The rights granted to you under Part 2 terminate immediately if you violate any part of Section 3.
+### 5. Export Compliance
+You agree to comply with all applicable export control and economic sanctions laws and regulations of the United States and other relevant jurisdictions when using or redistributing the Zone 2 software.
 
-### 5. Disclaimer
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+### 6. Disclaimer of Warranty & Limitation of Liability
+THE ZONE 2 SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND NON-INFRINGEMENT. IN NO EVENT SHALL LICENSOR OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES, LOSS OF USE, DATA, OR PROFITS, OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.

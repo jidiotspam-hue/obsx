@@ -8,8 +8,8 @@ If you believe you have discovered a vulnerability, cryptographic defect, or sec
 
 1. **Do NOT open a public GitHub issue.** Public issues disclose vulnerabilities before patches can be deployed to live nodes.
 2. **Submit via GitHub Security Advisories**: Navigate to the [Security Advisory Submission](https://github.com/jidiotspam-hue/obsx/security/advisories/new) page on GitHub.
-3. **Email the Security Team**: Alternatively, send an encrypted report directly to:
-   - **`security@obsx.tech`** or **`official@obsx.tech`**
+3. **Email Security Contact**: Alternatively, send an encrypted report directly to:
+   - **`security@obsx.tech`**
 
 ### What to Include in Your Report
 
@@ -21,12 +21,12 @@ Please include the following information in your advisory:
 
 ---
 
-## Response Times & SLA
+## Response Targets
 
-When you submit a vulnerability report:
-- **Initial Acknowledgment**: Within **24 hours**.
-- **Triage & Reproduction**: Within **48 hours**.
-- **Fix & Patch Deployment**: Critical issues impacting token verification or cryptographic invariants are prioritized for immediate resolution on live nodes (`obsx.tech`) and released via hotfix tags.
+We handle vulnerability reports on a **best-effort basis** as an individually maintained project (non-binding targets, not a contractual SLA):
+- **Initial Acknowledgment**: Best-effort target within **3 business days**.
+- **Triage & Reproduction**: Best-effort assessment as maintainer capacity permits.
+- **Fix & Patch Deployment**: Confirmed issues affecting cryptographic invariants or boundary isolation are prioritized for hotfix releases.
 
 ---
 
@@ -34,23 +34,23 @@ When you submit a vulnerability report:
 
 | Version | Supported | Notes |
 | :--- | :--- | :--- |
-| `v2.2.x` | YES | Active stable branch |
-| `v2.1.x` | Security fixes only | Maintenance |
-| `< v2.0.0` | NO | Deprecated legacy releases |
+| `v2.3.x` | YES | Active stable branch |
+| `v2.2.x` | Security fixes only | Maintenance |
+| `< v2.2.0` | NO | Legacy releases |
 
 ---
 
-## Scope & Bounties
+## Research Scope & Safe Harbor
 
-- **In Scope**:
+- **In Scope (Public Code & Scoped `obsx.tech` Sandbox Only)**:
   - Cryptographic token forging or HMAC signature bypass in `lib/crypto.js`.
   - Replay attacks or state race conditions in `lib/kv.js` and `lib/core.js`.
-  - Client-side bypasses that convincingly spoof natural human kinematic tremor without triggering `degenerate_jerk` or `synthetic_cadence`.
-  - Unauthorized privilege escalation or cross-tenant data bleed in `server.js` and `lib/accounts.js`.
+  - Attestation validation flaws or cross-tenant isolation bugs in `server.js` and `lib/accounts.js`.
+- **Safe Harbor Conditions**: Good-faith, low-rate testing strictly scoped to the public `obsx.tech` sandbox (`pk_obsx_sandbox`) or your own local self-hosted instance is permitted when you do not access other users' data, degrade availability, or run automated flood tools against `obsx.tech`.
 - **Out of Scope**:
-  - Denial of Service (DoS) attacks requiring massive volumetric bandwidth floods.
-  - Social engineering against operators or maintainers.
-  - Vulnerabilities in third-party mailer SMTP relays outside OBSX's code.
+  - Volumetric Denial of Service (DoS/DDoS) or running `tools/flood.js` against `obsx.tech` without prior written authorization.
+  - Social engineering or phishing against operators or maintainers.
+  - Third-party mail relays outside OBSX's code.
 
 ---
 
@@ -103,4 +103,4 @@ Dashboard operator endpoints (`/api/v1/alerts`, `/api/v1/system/update`, `/api/v
 thousands of IPs, each sending a few requests. Per-IP rules alone never trip, so
 the shield also budgets the subnet and the user-agent class the fleet shares.
 
-Run the tests: `OBSX_TEST_MODE=1 node --test tests/botshield.test.js` — 57 tests for the shield, 158 for the whole repo (`npm test`), no network and no server needed.
+Run the tests locally with no network required: `OBSX_TEST_MODE=1 npm test` (or `OBSX_TEST_MODE=1 node --test tests/botshield.test.js` for origin shield tests).

@@ -85,7 +85,7 @@ function request(method, path, options = {}) {
 }
 
 // 1. CORS Preflight & API Headers
-test('cloudflare-tier: CORS OPTIONS preflight returns 204 with full headers', async () => {
+test('edge-hardening: CORS OPTIONS preflight returns 204 with full headers', async () => {
   const res = await request('OPTIONS', '/api/v1/session');
   assert.equal(res.status, 204);
   assert.equal(res.headers['access-control-allow-origin'], '*');
@@ -94,7 +94,7 @@ test('cloudflare-tier: CORS OPTIONS preflight returns 204 with full headers', as
 });
 
 // 2. HTTP 405 Method Not Allowed Handling
-test('cloudflare-tier: wrong HTTP verbs return 405 Method Not Allowed with Allow header', async () => {
+test('edge-hardening: wrong HTTP verbs return 405 Method Not Allowed with Allow header', async () => {
   // Session accepts only POST and OPTIONS
   const resSession = await request('GET', '/api/v1/session');
   assert.equal(resSession.status, 405);
@@ -118,7 +118,7 @@ test('cloudflare-tier: wrong HTTP verbs return 405 Method Not Allowed with Allow
 });
 
 // 3. Static File Serving with ETags and 304 Caching
-test('cloudflare-tier: static assets serve with ETag, Cache-Control, and support 304 Not Modified', async () => {
+test('edge-hardening: static assets serve with ETag, Cache-Control, and support 304 Not Modified', async () => {
   const res1 = await request('GET', '/index.html');
   assert.equal(res1.status, 200);
   assert.ok(res1.headers['etag'], 'ETag header must be present');
@@ -142,7 +142,7 @@ test('cloudflare-tier: static assets serve with ETag, Cache-Control, and support
 });
 
 // 4. Directory Traversal Defense
-test('cloudflare-tier: directory traversal attempts are strictly blocked', async () => {
+test('edge-hardening: directory traversal attempts are strictly blocked', async () => {
   const res1 = await request('GET', '/../../package.json');
   assert.ok(res1.status === 403 || res1.status === 404, 'Must not serve root files');
   assert.ok(!res1.body.includes('"name": "obsx-security"'));
@@ -153,7 +153,7 @@ test('cloudflare-tier: directory traversal attempts are strictly blocked', async
 });
 
 // 5. Payload Body Size Limitation (512KB Cap)
-test('cloudflare-tier: payloads exceeding 512KB cap are rejected with 413 Payload Too Large', async () => {
+test('edge-hardening: payloads exceeding 512KB cap are rejected with 413 Payload Too Large', async () => {
   const largeBuffer = 'x'.repeat(600 * 1024);
   const res = await request('POST', '/api/v1/notes', { body: { large: largeBuffer } });
   assert.equal(res.status, 413);
@@ -161,7 +161,7 @@ test('cloudflare-tier: payloads exceeding 512KB cap are rejected with 413 Payloa
 });
 
 // 6. Cookie Security (RFC 6265bis __Host- vs standard)
-test('cloudflare-tier: cookies set __Host- with Secure on HTTPS, standard on HTTP', async () => {
+test('edge-hardening: cookies set __Host- with Secure on HTTPS, standard on HTTP', async () => {
   const email1 = 'auth_cookie_test1@example.com';
   const email2 = 'auth_cookie_test2@example.com';
   const start1 = await accounts.startEmailAuth(email1, '127.0.0.1');
@@ -180,7 +180,7 @@ test('cloudflare-tier: cookies set __Host- with Secure on HTTPS, standard on HTT
 });
 
 // 7. KV Store TTL Accuracy & Atomic Invalidation
-test('cloudflare-tier: KV MemoryStore hget and hgetall honor TTL expiration immediately', async () => {
+test('edge-hardening: KV MemoryStore hget and hgetall honor TTL expiration immediately', async () => {
   const store = new MemoryStore(100);
   await store.hset('test_session', { user: 'alex', role: 'admin' });
   await store.expire('test_session', 1); // 1 second TTL
@@ -202,7 +202,7 @@ test('cloudflare-tier: KV MemoryStore hget and hgetall honor TTL expiration imme
 });
 
 // 8. End-to-End User Sign-in, Projects, and Note Creation Flow
-test('cloudflare-tier: full E2E auth lifecycle with project and notes management', async () => {
+test('edge-hardening: full E2E auth lifecycle with project and notes management', async () => {
   const userEmail = 'e2e_full_user@obsx.tech';
 
   // Step 1: Start Email Auth
@@ -251,7 +251,7 @@ test('cloudflare-tier: full E2E auth lifecycle with project and notes management
     headers: { Cookie: cookieVal },
     body: {
       title: 'Authenticated User Secret',
-      content: 'Cloudflare tier security validated',
+      content: 'Edge hardening security validated',
       protectionMode: 'advisory',
     },
   });
@@ -280,9 +280,9 @@ test('cloudflare-tier: full E2E auth lifecycle with project and notes management
   assert.equal(meAfterLogout.json.user, null);
 });
 
-// 9. Guest Sandbox Partitioning & Note Deletion Safety
-test('cloudflare-tier: guest sandbox partitions notes safely and prevents unauthorized deletion', async () => {
-  // Guest 1 creates a note
+// 9. Guest Sandbox Partitioning & Note Deletion Safety (Per-Session Cookie Isolation Across Same NAT/IP)
+test('edge-hardening: guest sandbox partitions notes via obsx_guest cookie even on same IP and prevents unauthorized deletion', async () => {
+  // Guest 1 creates a note without an existing guest cookie -> server mints random obsx_guest cookie
   const g1Res = await request('POST', '/api/v1/notes', {
     headers: { 'X-Forwarded-For': '203.0.113.195' },
     body: {
@@ -293,6 +293,20 @@ test('cloudflare-tier: guest sandbox partitions notes safely and prevents unauth
   });
   assert.equal(g1Res.status, 201);
   const noteId = g1Res.json.note.id;
+  const g1SetCookies = Array.isArray(g1Res.headers['set-cookie'])
+    ? g1Res.headers['set-cookie']
+    : [g1Res.headers['set-cookie']].filter(Boolean);
+  const g1CookiePair = g1SetCookies
+    .map((c) => c.split(';')[0])
+    .find((c) => c.startsWith('obsx_guest='));
+  assert.ok(g1CookiePair, 'Guest note creation must mint an HttpOnly obsx_guest partition cookie');
+
+  // Same-IP peer (behind NAT) without Guest 1's cookie cannot see or delete Guest 1's note
+  const sameIpPeerList = await request('GET', '/api/v1/notes', {
+    headers: { 'X-Forwarded-For': '203.0.113.195' },
+  });
+  assert.equal(sameIpPeerList.status, 200);
+  assert.ok(!sameIpPeerList.json.notes.some((n) => n.id === noteId));
 
   // Guest 2 from different IP cannot see Guest 1's note
   const g2List = await request('GET', '/api/v1/notes', {
@@ -308,9 +322,22 @@ test('cloudflare-tier: guest sandbox partitions notes safely and prevents unauth
   assert.equal(g2Delete.status, 200);
   assert.equal(g2Delete.json.ok, false);
 
-  // Guest 1 can successfully delete their own note
-  const g1Delete = await request('DELETE', `/api/v1/notes/${noteId}`, {
+  // Same-IP peer without Guest 1's cookie also cannot delete Guest 1's note
+  const sameIpPeerDelete = await request('DELETE', `/api/v1/notes/${noteId}`, {
     headers: { 'X-Forwarded-For': '203.0.113.195' },
+  });
+  assert.equal(sameIpPeerDelete.status, 200);
+  assert.equal(sameIpPeerDelete.json.ok, false);
+
+  // Guest 1 WITH their obsx_guest cookie can read and delete their own note
+  const g1List = await request('GET', '/api/v1/notes', {
+    headers: { 'X-Forwarded-For': '203.0.113.195', Cookie: g1CookiePair },
+  });
+  assert.equal(g1List.status, 200);
+  assert.ok(g1List.json.notes.some((n) => n.id === noteId));
+
+  const g1Delete = await request('DELETE', `/api/v1/notes/${noteId}`, {
+    headers: { 'X-Forwarded-For': '203.0.113.195', Cookie: g1CookiePair },
   });
   assert.equal(g1Delete.status, 200);
   assert.equal(g1Delete.json.ok, true);

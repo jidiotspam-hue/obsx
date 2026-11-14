@@ -3,7 +3,7 @@
 /**
  * OBSX Security — Node Operator Dashboard
  * Copyright (c) 2026 Alexis Grimmace.
- * Licensed under the Elastic License 2.0 + OBSX Zone 2 Terms — See LICENSE file.
+ * Licensed under the OBSX Source-Available License v1.0 (Zone 2) — See LICENSE file.
  * Free for self-hosted internal use; commercial SaaS hosting and competing extraction prohibited.
  */
 
@@ -13,12 +13,19 @@
   const authStepEmail = document.getElementById('auth-step-email');
   const authStepCode = document.getElementById('auth-step-code');
   const inpEmail = document.getElementById('inp-auth-email');
+  const chkAcceptLegal = document.getElementById('chk-accept-legal');
   const inpCode = document.getElementById('inp-auth-code');
   const btnSendCode = document.getElementById('btn-send-code');
   const btnVerifyCode = document.getElementById('btn-verify-code');
   const btnBackEmail = document.getElementById('btn-back-email');
   const btnSignout = document.getElementById('btn-signout');
   const btnTestAlert = document.getElementById('btn-test-alert');
+  const btnExportData = document.getElementById('btn-export-data');
+  const btnDeleteAccount = document.getElementById('btn-delete-account');
+  const dialogDeleteAccount = document.getElementById('dialog-delete-account');
+  const btnCancelDeleteAccount = document.getElementById('btn-cancel-delete-account');
+  const btnConfirmDeleteAccount = document.getElementById('btn-confirm-delete-account');
+  const deleteAccountError = document.getElementById('delete-account-error');
   const authMsg = document.getElementById('auth-msg');
 
   const userEmailDisplay = document.getElementById('user-email-display');
@@ -307,23 +314,19 @@
               </div>
             </div>
 
-            <!-- OpenAI / ChatGPT Scraper Gate ("get your own ram") -->
+            <!-- Automated AI Crawler Policy -->
             <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
-              <div style="display: flex; align-items: center; gap: 10px;">
-                <img src="/dram-dark.jpg" alt="Pixel DRAM Stick" style="width: 44px; height: auto; border-radius: 5px; border: 1px solid var(--border); image-rendering: pixelated; background: #000;" />
-                <div>
-                  <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">OpenAI / ChatGPT Scraper Policy (DRAM Sovereignty)</div>
-                  <div style="display: flex; align-items: center; gap: 8px; margin-top: 3px; flex-wrap: wrap;">
-                    <span class="badge ${(p.settings && p.settings.blockOpenAiScrapers !== false) ? 'badge-good' : 'badge-secondary'}">
-                      ${(p.settings && p.settings.blockOpenAiScrapers !== false) ? '● Blocking OpenAI Scrapers ("get your own ram")' : '○ Allowed'}
-                    </span>
-                    <a href="/?utm_source=chatgpt.com" target="_blank" rel="noopener" style="font-size: 11.5px; color: var(--accent); text-decoration: none; font-weight: 600;">Preview DRAM Balloons &rarr;</a>
-                  </div>
+              <div>
+                <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Automated AI Crawler Access Policy</div>
+                <div style="display: flex; align-items: center; gap: 8px; margin-top: 3px; flex-wrap: wrap;">
+                  <span class="badge ${(p.settings && p.settings.blockOpenAiScrapers !== false) ? 'badge-good' : 'badge-secondary'}">
+                    ${(p.settings && p.settings.blockOpenAiScrapers !== false) ? '● Blocking Automated AI Crawlers' : '○ Allowed'}
+                  </span>
                 </div>
               </div>
               <div>
                 <button type="button" class="btn btn-secondary btn-toggle-openai" data-pid="${escapeHtml(p.pid)}" data-enabled="${(p.settings && p.settings.blockOpenAiScrapers !== false) ? 'true' : 'false'}" style="font-size: 11.5px; padding: 4px 10px;">
-                  ${(p.settings && p.settings.blockOpenAiScrapers !== false) ? 'Allow OpenAI' : 'Block OpenAI ("get your own ram")'}
+                  ${(p.settings && p.settings.blockOpenAiScrapers !== false) ? 'Allow AI Crawlers' : 'Block AI Crawlers'}
                 </button>
               </div>
             </div>
@@ -575,15 +578,28 @@
   }
 
   // 2. Request OTP Code
-  if (btnSendCode) {
-    btnSendCode.addEventListener('click', async () => {
+  chkAcceptLegal?.addEventListener('change', () => {
+    chkAcceptLegal.setAttribute('aria-invalid', chkAcceptLegal.checked ? 'false' : 'true');
+  });
+
+  if (authStepEmail) {
+    authStepEmail.addEventListener('submit', async (e) => {
+      e.preventDefault();
       const email = (inpEmail ? inpEmail.value : '').trim();
       if (!email || !email.includes('@')) {
+        inpEmail?.focus();
         return showMsg('Please enter a valid operator email address.', true);
       }
+      if (chkAcceptLegal && !chkAcceptLegal.checked) {
+        chkAcceptLegal.setAttribute('aria-invalid', 'true');
+        chkAcceptLegal.focus();
+        return showMsg('Please accept the Terms of Service and Privacy Policy to continue.', true);
+      }
       activeEmail = email;
-      btnSendCode.disabled = true;
-      btnSendCode.textContent = 'Attesting & sending code...';
+      if (btnSendCode) {
+        btnSendCode.disabled = true;
+        btnSendCode.textContent = 'Attesting & sending code...';
+      }
 
       const { token, nonce } = await harvestAttestation();
 
@@ -591,7 +607,13 @@
         const res = await fetch('/api/v1/auth/email', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, action: 'start', token, nonce }),
+          body: JSON.stringify({
+            email,
+            action: 'start',
+            termsAccepted: Boolean(!chkAcceptLegal || chkAcceptLegal.checked),
+            token,
+            nonce,
+          }),
         });
         const data = await res.json();
 
@@ -606,7 +628,7 @@
           if (data.devMode && data.devCode) {
             showMsg('Verification code generated! Dev/Test mode code:', false, data.devCode);
           } else {
-            showMsg('Verification code sent from official@obsx.tech to your email!', false);
+            showMsg('Verification code sent to your email!', false);
           }
         } else {
           showMsg(data.error || 'Failed to dispatch verification code.', true);
@@ -614,22 +636,28 @@
       } catch (err) {
         showMsg('Network error requesting code: ' + err.message, true);
       } finally {
-        btnSendCode.disabled = false;
-        btnSendCode.textContent = 'Send Verification Code';
+        if (btnSendCode) {
+          btnSendCode.disabled = false;
+          btnSendCode.textContent = 'Send Verification Code';
+        }
       }
     });
   }
 
   // 3. Verify OTP Code
-  if (btnVerifyCode) {
-    btnVerifyCode.addEventListener('click', async () => {
+  if (authStepCode) {
+    authStepCode.addEventListener('submit', async (e) => {
+      e.preventDefault();
       const code = (inpCode ? inpCode.value : '').trim();
       if (!code || code.length < 6) {
+        inpCode?.focus();
         return showMsg('Please enter the 6-digit one-time code.', true);
       }
 
-      btnVerifyCode.disabled = true;
-      btnVerifyCode.textContent = 'Attesting & verifying...';
+      if (btnVerifyCode) {
+        btnVerifyCode.disabled = true;
+        btnVerifyCode.textContent = 'Attesting & verifying...';
+      }
 
       const { token, nonce } = await harvestAttestation();
 
@@ -641,6 +669,7 @@
             action: 'verify',
             email: activeEmail,
             code,
+            termsAccepted: Boolean(!chkAcceptLegal || chkAcceptLegal.checked),
             token,
             nonce,
           }),
@@ -658,8 +687,10 @@
       } catch (err) {
         showMsg('Verification failed: ' + err.message, true);
       } finally {
-        btnVerifyCode.disabled = false;
-        btnVerifyCode.textContent = 'Verify & Enter';
+        if (btnVerifyCode) {
+          btnVerifyCode.disabled = false;
+          btnVerifyCode.textContent = 'Verify & Enter';
+        }
       }
     });
   }
@@ -681,6 +712,81 @@
         renderLoggedOut();
       } catch (err) {
         console.error('Logout error:', err);
+      }
+    });
+  }
+
+  // 5b. Data Portability Export (GDPR Art. 20 / CCPA Right to Know)
+  if (btnExportData) {
+    btnExportData.addEventListener('click', async () => {
+      btnExportData.disabled = true;
+      btnExportData.textContent = 'Exporting...';
+      try {
+        const res = await fetch('/api/v1/me/export');
+        const data = await res.json();
+        if (!data.ok) {
+          alert('Export failed: ' + (data.error || 'Unknown error'));
+          return;
+        }
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'obsx-data-export.json';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        alert('Export error: ' + err.message);
+      } finally {
+        btnExportData.disabled = false;
+        btnExportData.textContent = 'Export My Data';
+      }
+    });
+  }
+
+  // 5c. Account Deletion Modal (GDPR Art. 17 / CCPA Delete)
+  if (btnDeleteAccount && dialogDeleteAccount) {
+    btnDeleteAccount.addEventListener('click', () => {
+      if (deleteAccountError) {
+        deleteAccountError.style.display = 'none';
+        deleteAccountError.textContent = '';
+      }
+      dialogDeleteAccount.showModal();
+    });
+  }
+
+  if (btnCancelDeleteAccount && dialogDeleteAccount) {
+    btnCancelDeleteAccount.addEventListener('click', () => {
+      dialogDeleteAccount.close();
+    });
+  }
+
+  if (btnConfirmDeleteAccount && dialogDeleteAccount) {
+    btnConfirmDeleteAccount.addEventListener('click', async () => {
+      btnConfirmDeleteAccount.disabled = true;
+      btnConfirmDeleteAccount.textContent = 'Deleting...';
+      try {
+        const res = await fetch('/api/v1/me', { method: 'DELETE' });
+        const data = await res.json();
+        if (!data.ok) {
+          if (deleteAccountError) {
+            deleteAccountError.textContent = 'Deletion failed: ' + (data.error || 'Unknown error');
+            deleteAccountError.style.display = 'block';
+          }
+          return;
+        }
+        dialogDeleteAccount.close();
+        renderLoggedOut();
+      } catch (err) {
+        if (deleteAccountError) {
+          deleteAccountError.textContent = 'Deletion error: ' + err.message;
+          deleteAccountError.style.display = 'block';
+        }
+      } finally {
+        btnConfirmDeleteAccount.disabled = false;
+        btnConfirmDeleteAccount.textContent = 'Permanently Delete';
       }
     });
   }
@@ -1410,7 +1516,7 @@
       if (data.ok) {
         alert(data.throttled
           ? 'Alert recorded, but throttled by 5-minute circuit breaker to protect operator inbox!'
-          : `Critical security advisory dispatched successfully from official@obsx.tech to ${data.alert?.recipient || 'operator'}!`);
+          : `Critical security advisory dispatched successfully to ${data.alert?.recipient || 'operator'}!`);
         fetchAlertsHistory();
       } else {
         alert('Alert dispatch failed: ' + (data.error || 'Unknown error'));

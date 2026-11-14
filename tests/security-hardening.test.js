@@ -333,7 +333,11 @@ test('hardening: non-operator and unauthenticated callers are denied operator/sy
       headers: { 'x-obsx-key': process.env.OBSX_SECRET },
     });
     assert.equal(keyDiff.status, 200);
-    assert.equal(keyDiff.json.ok, true);
+    if (fs.existsSync(path.join(__dirname, '..', '.git'))) {
+      assert.equal(keyDiff.json.ok, true);
+    } else {
+      assert.equal(keyDiff.json.error, 'not_git_repo');
+    }
 
     // Enforced acceptance before accept flips public /api/v1/system/version to safeMode: true
     process.env.OBSX_ENFORCE_LICENSE_ACCEPTANCE = 'true';
@@ -931,3 +935,216 @@ test('hardening: recordSignals preserves invalid tsig, unions tamper flags, vali
     restoreBotShield();
   }
 });
+
+test('hardening: telemetry privacy, scrub on verify, KV eviction, MIME checks, ring fail-closed, data export/erasure & Safe Mode 503', async () => {
+  const kvMod = require('../lib/kv');
+  const updater = require('../lib/updater');
+  const obsxSdk = require('../lib/index');
+  const nodeCrypto = require('node:crypto');
+  const kv = kvMod.getKv();
+
+  // 1. No synthetic recentEvents in fresh core load & /api/v1/telemetry/live filters strictly to DEMO pid + redacts topReasons
+  const isolatedCoreRes = require('node:child_process').execFileSync(
+    process.execPath,
+    ['-e', "const c=require('./lib/core'); c.getLiveTelemetry().then(t=>console.log(JSON.stringify(t.recentEvents))).catch(e=>{console.error(e);process.exit(1);});"],
+    { cwd: path.join(__dirname, '..'), encoding: 'utf8' }
+  ).trim();
+  assert.deepEqual(JSON.parse(isolatedCoreRes), [], 'Fresh core module must contain zero pre-seeded fake telemetry events');
+
+  const privProj = await core.createProject({ name: 'private_telemetry_proj' }, 'u_priv_telemetry');
+  await core.updateProjectSettings(privProj.pid, { minDurationMs: 0 });
+  const privSession = await core.startSession(privProj, { ip: '198.51.100.190', action: 'private_checkout' });
+  const privNonce = solvePow(privSession.challenge, privSession.difficulty);
+  await core.recordSignals({
+    token: privSession.token,
+    nonce: privNonce,
+    signals: {
+      sh: 'trc_v1_live',
+      gpuRenderer: 'NVIDIA RTX',
+      mousePoints: [
+        { x: 10, y: 10, t: 0 },
+        { x: 34, y: 29, t: 21 },
+        { x: 67, y: 41, t: 48 },
+        { x: 92, y: 78, t: 74 },
+        { x: 129, y: 95, t: 106 },
+      ],
+      keyIntervals: [92, 118, 86],
+      elapsedMs: 1100,
+    },
+  });
+  // Before verify: tr:s:<session> exists
+  assert.ok(await kv.get(`tr:s:${privSession.session}`));
+  const privVerdict = await core.verify(privProj, { token: privSession.token, nonce: privNonce }, { ip: '198.51.100.190', ua: 'Mozilla/5.0' });
+  assert.equal(privVerdict.verdict, 'accept');
+  // 2. Immediately scrubbed on verify() completion
+  assert.equal(await kv.get(`tr:s:${privSession.session}`), null, 'tr:s:<session> behavioral telemetry must be scrubbed after verify()');
+
+  const pubLive = await request('GET', '/api/v1/telemetry/live');
+  assert.equal(pubLive.status, 200);
+  assert.deepEqual(pubLive.json.stats && pubLive.json.stats.topReasons, {}, 'Unauthenticated /api/v1/telemetry/live must redact topReasons');
+  assert.ok(!JSON.stringify(pubLive.json.recentEvents || []).includes('private_checkout'), 'Non-demo project events must never leak on public /api/v1/telemetry/live');
+
+  const pubMetrics = await request('GET', '/api/v1/metrics');
+  assert.equal(pubMetrics.status, 200);
+  assert.deepEqual(pubMetrics.json.metrics && pubMetrics.json.metrics.topReasons, {}, 'Unauthenticated /api/v1/metrics must return redacted topReasons');
+
+  // 3. MemoryStore priority-tiered eviction protects tr:used:* and credentials against tr:rl:* floods
+  const tinyStore = new kvMod.MemoryStore(6);
+  await tinyStore.set('tr:used:tok_critical', '1', 'EX', 300);
+  await tinyStore.set('cred:important', '{"ok":true}');
+  for (let i = 0; i < 8; i++) {
+    await tinyStore.set(`tr:rl:198.51.100.${i}`, '5', 'EX', 60);
+    await tinyStore.set(`tr:s:unverified_${i}`, '{}', 'EX', 300);
+  }
+  assert.equal(await tinyStore.get('tr:used:tok_critical'), '1', 'tr:used:* lock must survive rate-limit & unverified session floods');
+  assert.equal(await tinyStore.get('cred:important'), '{"ok":true}', 'Credentials must survive volatile floods');
+
+  // 4. lib/index.js WHATWG Headers support for clientUa resolution
+  let seenServerToServerHeader = '';
+  let capturedUa = '';
+  const mockApiServer = http.createServer((req, res) => {
+    seenServerToServerHeader = req.headers['content-type'] || '';
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => {
+      capturedUa = req.headers['x-obsx-client-ua'] || '';
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, allowed: true, verdict: 'accept', risk: 0, reasons: [] }));
+    });
+  });
+  await new Promise((resolve) => mockApiServer.listen(0, '127.0.0.1', resolve));
+  try {
+    const apiEndpoint = `http://127.0.0.1:${mockApiServer.address().port}/api/v1`;
+    const webReq = new Request('https://example.com/submit', {
+      method: 'POST',
+      headers: new Headers({ 'user-agent': 'Mozilla/5.0 WHATWG-Headers-Check/1.0' }),
+    });
+    const r = await obsxSdk.verifyToken({ token: 'tok_x', nonce: '1' }, {
+      secretKey: 'sk_test_whatwg',
+      endpoint: apiEndpoint,
+      req: webReq,
+    });
+    assert.equal(r.allowed, true);
+    assert.ok(seenServerToServerHeader.includes('application/json'));
+    assert.equal(capturedUa, 'Mozilla/5.0 WHATWG-Headers-Check/1.0');
+  } finally {
+    mockApiServer.closeAllConnections?.();
+    await new Promise((resolve) => mockApiServer.close(resolve));
+  }
+
+  // 5. CSRF guard blocks simple text/plain requests (403) and strict MIME check rejects non-JSON mutations with 415
+  const csrfMimeRes = await request('POST', '/api/v1/notes', {
+    headers: { 'Content-Type': 'text/plain' },
+    body: '{"title":"x","content":"y"}',
+  });
+  assert.equal(csrfMimeRes.status, 403);
+  assert.equal(csrfMimeRes.json.error, 'cross_origin_forbidden');
+
+  const badMimeRes = await request('POST', '/api/v1/notes', {
+    headers: { 'Content-Type': 'text/plain', 'X-Requested-With': 'fetch' },
+    body: '{"title":"x","content":"y"}',
+  });
+  assert.equal(badMimeRes.status, 415);
+  assert.equal(badMimeRes.json.error, 'unsupported_media_type');
+
+  // 6. fetchHttpsBuffer rejects prematurely closed truncated HTTP responses
+  const truncServer = net.createServer((sock) => {
+    sock.once('data', () => {
+      sock.write('HTTP/1.1 200 OK\r\nContent-Length: 1000\r\nContent-Type: text/plain\r\n\r\npartial_only');
+      sock.destroy();
+    });
+  });
+  await new Promise((resolve) => truncServer.listen(0, '127.0.0.1', resolve));
+  try {
+    const truncPort = truncServer.address().port;
+    await assert.rejects(
+      () => updater.fetchHttpsBuffer(`http://127.0.0.1:${truncPort}/truncated.js`, {
+        allowedHosts: ['127.0.0.1'],
+        allowInsecureLocal: true,
+        allowIpLiteral: true,
+      }),
+      /Incomplete|truncated|aborted|closed|socket/i
+    );
+  } finally {
+    await new Promise((resolve) => truncServer.close(resolve));
+  }
+
+  // 7. syncHybridCloudRing fails closed without verification key and validates HMAC(syncSecret, payloadStr)
+  const unverifiedRing = await updater.syncHybridCloudRing({
+    env: { OBSX_CLOUD_KEY: 'ck_test', OBSX_CLOUD_URL: 'https://obsx.tech' },
+    fetchText: async () => JSON.stringify({ ok: true, activeSubnets: [{ subnet: '203.0.113.0/24', rejections: 5 }] }),
+  });
+  assert.equal(unverifiedRing.synced, false);
+  assert.equal(unverifiedRing.reason, 'ring_verification_key_required');
+
+  const ringSecret = 'ring-sync-secret-123456';
+  const ringPayloadObj = { ts: Date.now(), activeSubnets: [{ subnet: '203.0.113.0/24', rejections: 7, remainingSeconds: 120 }] };
+  const badSigRing = await updater.syncHybridCloudRing({
+    env: { OBSX_CLOUD_KEY: 'ck_test', OBSX_CLOUD_URL: 'https://obsx.tech', OBSX_CLOUD_SYNC_SECRET: ringSecret },
+    fetchText: async () => JSON.stringify({ ok: true, ...ringPayloadObj, sig: 'deadbeef' }),
+  });
+  assert.equal(badSigRing.synced, false);
+  assert.equal(badSigRing.reason, 'invalid_ring_signature');
+
+  const goodSig = crypto.hmac(ringSecret, crypto.canon(ringPayloadObj));
+  const okRing = await updater.syncHybridCloudRing({
+    env: { OBSX_CLOUD_KEY: 'ck_test', OBSX_CLOUD_URL: 'https://obsx.tech', OBSX_CLOUD_SYNC_SECRET: ringSecret },
+    fetchText: async () => JSON.stringify({ ok: true, ...ringPayloadObj, sig: goodSig }),
+  });
+  assert.equal(okRing.synced, true);
+  assert.equal(okRing.count, 1);
+
+  // 8. GDPR/CCPA GET /api/v1/me/export & DELETE /api/v1/me cascading deletion
+  const gdprEmail = 'gdpr-user@example.com';
+  const startAuth = await accounts.startEmailAuth(gdprEmail, '198.51.100.191');
+  const verifiedAuth = await accounts.verifyEmailAuth(gdprEmail, startAuth.devCode, false, { termsAccepted: true, termsVersion: '2026-11-14' });
+  const gdprCookie = `obsx_session=${verifiedAuth.sid}`;
+  const gdprProj = await core.createProject({ name: 'GDPR Cascade Project' }, verifiedAuth.uid);
+  const createNoteRes = await request('POST', '/api/v1/notes', {
+    headers: { Cookie: gdprCookie, 'X-Forwarded-For': '198.51.100.191' },
+    body: { title: 'My Personal Note', content: 'Erase me completely', protectionMode: 'advisory' },
+  });
+  assert.equal(createNoteRes.status, 201);
+
+  const exportRes = await request('GET', '/api/v1/me/export', { headers: { Cookie: gdprCookie } });
+  assert.equal(exportRes.status, 200);
+  assert.equal(exportRes.json.ok, true);
+  assert.equal(exportRes.json.data.account.email, gdprEmail);
+  assert.ok(exportRes.json.data.projects.some((p) => p.pid === gdprProj.pid));
+  assert.ok(exportRes.json.data.notes.some((n) => n.title === 'My Personal Note'));
+
+  const deleteMeRes = await request('DELETE', '/api/v1/me', { headers: { Cookie: gdprCookie } });
+  assert.equal(deleteMeRes.status, 200);
+  assert.equal(deleteMeRes.json.ok, true);
+
+  const meAfterDelete = await request('GET', '/api/v1/me', { headers: { Cookie: gdprCookie } });
+  assert.equal(meAfterDelete.status, 200);
+  assert.equal(meAfterDelete.json.user, null, 'Deleted user session must be invalidated');
+  assert.equal(await core.loadProject(gdprProj.pid), null, 'Deleted user projects must be cascaded out');
+
+  // 9. OBSX_ENFORCE_LICENSE_ACCEPTANCE=true Safe Mode blocks /api/v1/session with 503 license_safe_mode
+  const tmpLicenseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'obsx-lic-enforce-'));
+  const prevEnforce = process.env.OBSX_ENFORCE_LICENSE_ACCEPTANCE;
+  const prevStateFile = process.env.OBSX_LICENSE_STATE_FILE;
+  const prevAcceptEnv = process.env.OBSX_ACCEPT_LICENSE;
+  try {
+    delete process.env.OBSX_ACCEPT_LICENSE;
+    process.env.OBSX_ENFORCE_LICENSE_ACCEPTANCE = 'true';
+    process.env.OBSX_LICENSE_STATE_FILE = path.join(tmpLicenseDir, 'missing-state.json');
+
+    const safeSessionRes = await request('POST', '/api/v1/session', {
+      body: { site: 'pk_obsx_sandbox' },
+    });
+    assert.equal(safeSessionRes.status, 503);
+    assert.equal(safeSessionRes.json.error, 'license_safe_mode');
+  } finally {
+    if (prevEnforce === undefined) delete process.env.OBSX_ENFORCE_LICENSE_ACCEPTANCE;
+    else process.env.OBSX_ENFORCE_LICENSE_ACCEPTANCE = prevEnforce;
+    if (prevStateFile === undefined) delete process.env.OBSX_LICENSE_STATE_FILE;
+    else process.env.OBSX_LICENSE_STATE_FILE = prevStateFile;
+    if (prevAcceptEnv === undefined) delete process.env.OBSX_ACCEPT_LICENSE;
+    else process.env.OBSX_ACCEPT_LICENSE = prevAcceptEnv;
+    fs.rmSync(tmpLicenseDir, { recursive: true, force: true });
+  }
+});
+

@@ -76,6 +76,9 @@
 
     const email = prompt('Enter your email to sign in via 6-digit verification code:');
     if (!email) return;
+    if (!confirm('By signing in, you agree to the OBSX Terms of Service (/terms.html) and Privacy Policy (/privacy.html). Continue?')) {
+      return;
+    }
 
     try {
       const { token: startToken, nonce: startNonce } = await getAttestationSafe();
@@ -93,7 +96,7 @@
 
       const promptMsg = startData.devMode
         ? `[DEV MODE] Verification Code: ${startData.devCode}\nEnter code:`
-        : `A 6-digit verification code was dispatched from official@obsx.tech.\nEnter code:`;
+        : 'A 6-digit verification code was dispatched to your email.\nEnter code:';
 
       const code = prompt(promptMsg);
       if (!code) return;
@@ -103,7 +106,7 @@
       const verifyRes = await fetch('/api/v1/auth/email', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'verify', email, code, token: verifyToken, nonce: verifyNonce }),
+        body: JSON.stringify({ action: 'verify', email, code, termsAccepted: true, token: verifyToken, nonce: verifyNonce }),
       });
       const verifyData = await verifyRes.json();
       if (!verifyData.ok) {

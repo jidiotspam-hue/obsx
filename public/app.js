@@ -17,7 +17,7 @@
   let eventCounter = 0;
 
   function getSdk() {
-    return window.OBSX || window.Veritas || window.Tracer;
+    return window.OBSX;
   }
 
   function escapeHtml(value) {

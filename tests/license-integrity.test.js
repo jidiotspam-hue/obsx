@@ -41,21 +41,23 @@ test('license: repository LICENSE, package.json, README, and HTML pages stay ali
   const termsHtml = fs.readFileSync(path.join(ROOT, 'public/terms.html'), 'utf8');
   const sdkMin = fs.readFileSync(path.join(ROOT, 'public/obsx.min.js'), 'utf8');
 
-  assert.equal(pkg.license, 'SEE LICENSE IN LICENSE');
+  assert.equal(pkg.license, 'MIT AND LicenseRef-OBSX-Zone-2-1.0');
   assert.ok(!licenseText.includes('UNIVERSAL & RETROACTIVE APPLICABILITY'));
-  assert.ok(licenseText.includes('PROSPECTIVE APPLICABILITY & PRIOR RELEASES'));
+  assert.ok(licenseText.includes('Prospective Applicability'));
+  assert.ok(!licenseText.includes('Elastic License 2.0'));
   assert.ok(!readmeText.includes('Universal & Retroactive Applicability'));
   assert.ok(!baselineText.includes('Universal & Retroactive Applicability'));
   assert.ok(!archText.includes('Open source under the MIT License'));
   assert.ok(releaseNotes.includes(pkg.version));
   assert.ok(sdkMin.includes('MIT License'), 'Built client SDK must retain MIT attribution banner');
 
-  const zone1Start = licenseText.indexOf('1. **ZONE 1:');
-  const zone2Start = licenseText.indexOf('2. **ZONE 2:');
-  const propStart = licenseText.indexOf('## PROPRIETARY & CLOSED-SOURCE NOTICE');
+  const zone1Start = licenseText.indexOf('- **Zone 1 (`MIT`)**');
+  const zone2Start = licenseText.indexOf('- **Zone 2 (`LicenseRef-OBSX-Zone-2-1.0`');
+  const propStart = licenseText.indexOf('- **Closed-Source / Proprietary Modules');
   assert.ok(zone1Start >= 0 && zone2Start > zone1Start && propStart > zone2Start);
-  const zone1Section = licenseText.slice(zone1Start, zone2Start);
-  const zone2Section = licenseText.slice(zone2Start, propStart);
+  const zone1Section = licenseText.slice(zone1Start, propStart);
+  const zone2PartStart = licenseText.indexOf('## PART 2: OBSX SOURCE-AVAILABLE LICENSE v1.0');
+  const zone2Section = licenseText.slice(zone2PartStart);
 
   for (const z1 of [
     'lib/core.js',
@@ -65,7 +67,6 @@ test('license: repository LICENSE, package.json, README, and HTML pages stay ali
     'index.d.ts',
     'scripts/',
     'docs/',
-    '.github/',
     'package.json',
     '.gitignore',
     'README.baseline.md',
@@ -81,6 +82,7 @@ test('license: repository LICENSE, package.json, README, and HTML pages stay ali
     'lib/updater.js',
     'tools/flood.js',
     'public/dashboard.html',
+    '.github/',
   ]) {
     assert.ok(zone2Section.includes(z2), `LICENSE Zone 2 must include ${z2}`);
   }
@@ -97,10 +99,21 @@ test('license: repository LICENSE, package.json, README, and HTML pages stay ali
     assert.ok(!html.includes('Open source under the MIT License.'), `${htmlFile} must reflect dual licensing`);
     assert.ok(!html.includes('MIT Open-Source License · Acceptable Use Policy'), `${htmlFile} hero pill must reflect dual licensing`);
     assert.ok(!html.includes('Zero External Dependencies · MIT\n'), `${htmlFile} hero pill must not claim MIT-only node runtime`);
-    assert.ok(html.includes('ELv2 + OBSX Zone 2 Terms (Operator)'), `${htmlFile} footer must reference ELv2 + OBSX Zone 2 Terms`);
+    assert.ok(!html.includes('ELv2 + OBSX Zone 2 Terms'), `${htmlFile} must not claim ELv2`);
+    assert.ok(html.includes('OBSX Source-Available License v1.0 (Zone 2)'), `${htmlFile} footer must reference OBSX Source-Available License v1.0 (Zone 2)`);
   }
 
-  assert.ok(termsHtml.includes('Elastic License 2.0 + Additional OBSX Zone 2 Terms'));
+  assert.ok(termsHtml.includes('OBSX Source-Available License v1.0'));
+
+  // Verify npm pack Zone 1 allowlist excludes all Zone 2 and closed-source modules
+  const packOut = execFileSync('npm', ['pack', '--json', '--dry-run'], { cwd: ROOT, encoding: 'utf8' });
+  const packInfo = JSON.parse(packOut);
+  const packedPaths = (packInfo[0] && packInfo[0].files || []).map((f) => f.path);
+  assert.ok(packedPaths.includes('lib/core.js'), 'npm pack must include Zone 1 lib/core.js');
+  assert.ok(packedPaths.includes('lib/index.js'), 'npm pack must include Zone 1 lib/index.js');
+  for (const forbidden of ['server.js', 'lib/botshield.js', 'lib/sentinel.js', 'lib/updater.js', 'lib/accounts.js', 'lib/mailer.js', 'tools/flood.js', 'public/veritas.min.js']) {
+    assert.ok(!packedPaths.includes(forbidden), `npm pack must exclude Zone 2 / proprietary file: ${forbidden}`);
+  }
 });
 
 test('updater: tree fingerprint includes LICENSE/shield/updater and normalizes CRLF', () => {
@@ -493,4 +506,12 @@ test('updater: autoAdaptDirtyNode preserves conflicting edits in stash and keeps
   } finally {
     fs.rmSync(baseDir, { recursive: true, force: true });
   }
+});
+
+test('hardening: normalizeCloudRingSubnetKey rejects unspecified :: and full fe80::/10 link-local ranges', () => {
+  assert.equal(updater.normalizeCloudRingSubnetKey('subnet:v6:0000:0000:0000/48'), null);
+  assert.equal(updater.normalizeCloudRingSubnetKey('::/48'), null);
+  assert.equal(updater.normalizeCloudRingSubnetKey('subnet:v6:fe85:0000:0000/48'), null);
+  assert.equal(updater.normalizeCloudRingSubnetKey('subnet:v6:febf:1234:5678/48'), null);
+  assert.equal(updater.normalizeCloudRingSubnetKey('subnet:v6:2001:0db8:85a3/48'), 'subnet:v6:2001:0db8:85a3/48');
 });

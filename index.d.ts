@@ -37,7 +37,8 @@ export interface OBSXVerifyOptions {
   projectId?: string;
   clientIp?: string;
   clientUa?: string;
-  headers?: Record<string, string | string[] | undefined>;
+  req?: Request | OBSXRequestLike;
+  headers?: Record<string, string | string[] | undefined> | Headers;
   proxyHeaders?: string[];
   nonce?: string | number;
   timeoutMs?: number;
@@ -102,8 +103,6 @@ export interface OBSXClient {
 declare global {
   interface Window {
     OBSX?: OBSXClient;
-    Veritas?: OBSXClient;
-    Tracer?: OBSXClient;
   }
 }
 

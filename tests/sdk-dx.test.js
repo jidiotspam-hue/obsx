@@ -154,8 +154,9 @@ test('package: require("obsx-security") exposes SDK API cleanly without auto-lis
     types: './index.d.ts',
     default: './lib/index.js',
   });
-  assert.equal(pkg.exports['./server'], './server.js');
-  assert.equal(pkg.exports['./lib/*'], './lib/*');
+  assert.equal(pkg.exports['./server'], undefined);
+  assert.equal(pkg.exports['./lib/*'], undefined);
+  assert.equal(pkg.exports['./config'], './lib/config.js');
 
   assert.equal(typeof obsx.verifyToken, 'function');
   assert.equal(typeof obsx.verify, 'function');
@@ -410,7 +411,7 @@ test('dx: compiled obsx.min.js auto-resolves cross-origin script endpoints and p
   vm.runInContext(bundleCode, sandbox);
   const sdk = sandbox.OBSX;
   assert.ok(sdk, 'OBSX global must initialize');
-  assert.equal(sdk.version, '2.3.1');
+  assert.equal(sdk.version, '2.3.0');
 
   try {
     // Assert cross-origin init automatically pointed at ${baseUrl}/api/v1 without explicit endpoint!
@@ -686,7 +687,7 @@ test('dx: browser SDK DOM XSS safety, concurrent init/getAttestation queuing, an
   // 1. Validate XSS-hardened resolveEndpoint & showDramBlockScreen + concurrent getAttestation queuing
   const overlayNodes = [];
   const xssScript = {
-    src: `${baseUrl}/sdk/v2.3.1/obsx.min.js`,
+    src: `${baseUrl}/sdk/v2.3.0/obsx.min.js`,
     getAttribute(name) {
       if (name === 'data-obsx-site') return testProject.publicKey;
       if (name === 'data-obsx-endpoint') return 'https://obsx.example/" onload="alert(1)/api/v1';
@@ -734,7 +735,7 @@ test('dx: browser SDK DOM XSS safety, concurrent init/getAttestation queuing, an
 
   // 2. Concurrent init() deduplicates and concurrent getAttestation() calls receive distinct tokens
   const scriptOk = {
-    src: `${baseUrl}/sdk/v2.3.1/obsx.min.js`,
+    src: `${baseUrl}/sdk/v2.3.0/obsx.min.js`,
     getAttribute(name) {
       if (name === 'data-obsx-site') return testProject.publicKey;
       if (name === 'data-obsx-auto') return 'false';
@@ -893,7 +894,7 @@ test('dx: install.md SRI hashes match built obsx.min.js and LICENSE covers lib/i
   const sha256 = 'sha256-' + nodeCrypto.createHash('sha256').update(bundle).digest('base64');
 
   const installMd = fs.readFileSync(path.join(ROOT, 'public/install.md'), 'utf8');
-  assert.ok(installMd.includes('v2.3.1'), 'public/install.md must reference v2.3.1 SDK URL');
+  assert.ok(installMd.includes('v2.3.0'), 'public/install.md must reference v2.3.0 SDK URL');
   assert.ok(installMd.includes(sha384), `public/install.md must stay synced with ${sha384}`);
   assert.ok(installMd.includes(sha256), `public/install.md must stay synced with ${sha256}`);
   assert.ok(!installMd.includes('@obsx/core'), 'public/install.md must reference obsx-security, not phantom @obsx/core');
@@ -903,4 +904,34 @@ test('dx: install.md SRI hashes match built obsx.min.js and LICENSE covers lib/i
 
   const leftoverSnapshots = fs.readdirSync(ROOT).filter((f) => f.startsWith('.test-snapshot-'));
   assert.deepEqual(leftoverSnapshots, [], 'Repo root must stay free of temporary test snapshot files');
+});
+
+test('dx: verifyToken(Web Request) preserves req tracking when User-Agent is omitted', async () => {
+  let seenClientUaHeader;
+  const captureSrv = http.createServer((req, res) => {
+    seenClientUaHeader = req.headers['x-obsx-client-ua'];
+    req.resume();
+    req.on('end', () => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, allowed: false, verdict: 'reject', risk: 40, reasons: [{ code: 'automation_headless' }] }));
+    });
+  });
+  await new Promise((resolve) => captureSrv.listen(0, '127.0.0.1', resolve));
+  try {
+    const port = captureSrv.address().port;
+    const reqNoUa = new Request('https://app.example.com/api/checkout', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: 'tok_ua_check', nonce: '7' }),
+    });
+    const res = await obsx.verifyToken(reqNoUa, {
+      secretKey: 'sk_test_capture',
+      endpoint: `http://127.0.0.1:${port}/api/v1`,
+    });
+    assert.equal(res.allowed, false);
+    assert.equal(seenClientUaHeader, '', 'Web Request without User-Agent must still forward empty X-OBSX-Client-UA');
+  } finally {
+    captureSrv.closeAllConnections?.();
+    await new Promise((resolve) => captureSrv.close(resolve));
+  }
 });

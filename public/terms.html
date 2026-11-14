@@ -3,71 +3,21 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Terms of Service — OBSX Security</title>
-  <meta name="description" content="OBSX Security Terms of Service and Acceptable Use Policy." />
+  <title>Terms of Service &amp; Licensing — OBSX Security</title>
+  <meta name="description" content="Terms of Service, Acceptable Use Policy, Dual-License Summary, and Scoped Security Testing Policy for OBSX Security and obsx.tech." />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="alternate icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
   <link rel="alternate icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/style.css?v=2.3.5" />
-  <style>
-    .legal-content {
-      max-width: 780px;
-      margin: 40px auto 80px auto;
-      line-height: 1.7;
-    }
-    .legal-content h1 {
-      font-family: var(--font-serif);
-      font-size: 2.8rem;
-      margin-bottom: 8px;
-      color: var(--text);
-    }
-    .legal-content .last-updated {
-      font-size: 0.88rem;
-      color: var(--text-faint);
-      margin-bottom: 36px;
-      font-family: var(--font-mono);
-    }
-    .legal-content h2 {
-      font-family: var(--font-sans);
-      font-size: 1.35rem;
-      margin-top: 36px;
-      margin-bottom: 12px;
-      color: var(--text);
-      border-bottom: 1px solid var(--border);
-      padding-bottom: 6px;
-    }
-    .legal-content p, .legal-content li {
-      color: var(--text-muted);
-      margin-bottom: 16px;
-      font-size: 0.95rem;
-    }
-    .legal-content ul {
-      padding-left: 24px;
-      margin-bottom: 20px;
-    }
-    .legal-card {
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 24px;
-      margin: 28px 0;
-      box-shadow: var(--shadow-sm);
-    }
-    .legal-card h3 {
-      font-size: 1.05rem;
-      color: var(--text);
-      margin-bottom: 8px;
-    }
-  </style>
+  <link rel="stylesheet" href="/style.css?v=2.3.0" />
 </head>
 <body>
-  <!-- Header -->
-  <header>
-    <div class="container header-wrap">
+  <header class="nav">
+    <div class="container nav-wrap">
       <a href="/" class="brand">
         <span class="brand-dot"></span>
-        OBSX Security
+        OBSX
+        <span class="brand-sub">Security</span>
       </a>
       <nav class="links">
         <a href="/">Sandbox</a>
@@ -79,79 +29,67 @@
     </div>
   </header>
 
-  <main class="container">
-    <article class="legal-content">
-      <div class="hero-pill" style="margin-bottom: 16px;">
-        <span class="pill-dot"></span>
-        Dual-Licensed (MIT Core/SDK + ELv2/OBSX Zone 2 Terms) · Acceptable Use Policy · Fair Security Research
-      </div>
-      <h1>Terms of Service</h1>
-      <div class="last-updated">Effective Date: November 1, 2026 · Version 2.3.2</div>
+  <main class="container" style="max-width: 860px; padding: 56px 24px;">
+    <span class="section-tag">// Legal Terms &amp; Licensing</span>
+    <h1 style="font-family: var(--font-serif); font-size: clamp(32px, 5vw, 44px); font-weight: 400; letter-spacing: -0.5px; margin-bottom: 10px;">
+      Terms of Service &amp; Dual-License Summary
+    </h1>
+    <p style="color: var(--text-muted); font-size: 15px; line-height: 1.6; margin-bottom: 32px;">
+      Effective Date: November 14, 2026 &middot; Operated by <strong>Alexis Grimmace</strong> (individual operator of <code>obsx.tech</code>, contact: <a href="mailto:security@obsx.tech">security@obsx.tech</a>).
+      By creating an account, clicking "I agree" at sign-in, issuing API keys on <code>obsx.tech</code>, or using the hosted service, you agree to these Terms and our <a href="/privacy.html">Privacy Policy</a>.
+    </p>
 
-      <p>
-        These Terms of Service (&ldquo;Terms&rdquo;) govern your access to and use of the OBSX Security platform, APIs, client software development kits (SDKs), and related websites operated at <code>obsx.tech</code> and open-source repositories.
+    <div class="card" style="margin-bottom: 24px;" id="licensing">
+      <h2 style="font-size: 18px; margin-bottom: 10px;">1. Software Dual-License Summary</h2>
+      <p style="color: var(--text-muted); font-size: 14px; line-height: 1.65; margin-bottom: 10px;">
+        Software distributed from the public <a href="https://github.com/jidiotspam-hue/obsx" target="_blank" rel="noopener">GitHub repository</a> is licensed under the repository <code>LICENSE</code> file (<code>MIT AND LicenseRef-OBSX-Zone-2-1.0</code>):
       </p>
-
-      <div class="legal-card">
-        <h3>Core Principles</h3>
-        <ul>
-          <li><strong>Zone 1 — Open Source Core &amp; SDK (MIT):</strong> The OBSX core verification engine and client SDKs are released under the permissive MIT License, free to embed and self-host in commercial or open-source apps.</li>
-          <li><strong>Zone 2 — Operator &amp; Shield Scaffolding (ELv2 + Zone 2 Terms):</strong> The HTTP operator harness, dashboard, origin shield, updater, and account modules are free for internal self-hosting; hosted SaaS redistribution and extraction into competing products are prohibited.</li>
-          <li><strong>Acceptable Use &amp; Responsible Research:</strong> Security researchers are encouraged to stress-test our algorithms responsibly via <code>security@obsx.tech</code>, while abusive DDoS/spam/scraping proxy usage against hosted nodes is prohibited.</li>
-        </ul>
-      </div>
-
-      <h2>1. Dual License &amp; Proprietary Cloud Notice</h2>
-      <p>
-        OBSX Security is dual-licensed prospectively from release v2.2.0 onward under the <strong>MIT License</strong> (Zone 1: core verification engine, client SDKs, tests, and public docs) and the <strong>Elastic License 2.0 + Additional OBSX Zone 2 Terms</strong> (Zone 2: node operator server, dashboard, origin bot shield, auto-updater, stress harness, and account/mailer modules). The closed-source <strong>OBSX Sentinel™</strong> cloud engine powering <code>obsx.tech</code> is proprietary and excluded from Zone 1 and Zone 2 grants. See the complete zone map and November 15, 2026 transition policy in <a href="https://github.com/jidiotspam-hue/obsx/blob/main/LICENSE" target="_blank" rel="noopener">github.com/jidiotspam-hue/obsx/blob/main/LICENSE</a>.
-      </p>
-
-      <h2>2. Acceptable Use Policy (AUP)</h2>
-      <p>You agree not to use the public hosted nodes or developer APIs at <code>obsx.tech</code> to:</p>
-      <ul>
-        <li>Conduct distributed denial-of-service (DDoS) attacks against our infrastructure or any third-party infrastructure.</li>
-        <li>Exploit developer alert or notification endpoints (such as <code>/api/v1/alert/test</code>) to dispatch unsolicited bulk email (spam) or harass third parties.</li>
-        <li>Evade legitimate rate limiting through automated IP pool cycling with malicious intent.</li>
-        <li>Impersonate official OBSX cryptographic signatures or forge HMAC attestation seals.</li>
+      <ul style="color: var(--text-muted); font-size: 14px; line-height: 1.7; padding-left: 20px;">
+        <li id="zone1"><strong>Zone 1 &mdash; MIT License:</strong> Core protocol engine, crypto primitives, client SDK, verification middleware, TypeScript definitions, tests, and public documentation. Standalone use of Zone 1 files is governed exclusively by the MIT License.</li>
+        <li id="zone2"><strong>Zone 2 &mdash; OBSX Source-Available License v1.0:</strong> Operator server, Origin Shield, Auto-Updater, account/mailer subsystems, operator dashboard, and load tool (<code>server.js</code>, <code>lib/botshield.js</code>, <code>lib/updater.js</code>, <code>lib/accounts.js</code>, <code>lib/mailer.js</code>, <code>public/dashboard.*</code>, <code>tools/flood.js</code>). Permitted for internal or self-hosted infrastructure protecting your own origins; hosted SaaS redistribution and extraction into competing products are prohibited.</li>
+        <li><strong>Proprietary Modules:</strong> Closed-source operational modules outside the public repository (such as OBSX Sentinel&trade;) remain strictly proprietary with no license grant under MIT or Zone 2.</li>
       </ul>
+    </div>
 
-      <h2>3. Security Research & Coordinated Disclosure</h2>
-      <p>
-        OBSX is engineered under <em>Kerckhoffs's Principle</em>: mathematical transparency over security through obscurity. We welcome defensive security audits, academic review, and penetration testing against our public sandboxes.
-      </p>
-      <p>
-        If you discover a vulnerability or cryptographic defect, please report it privately to <a href="mailto:security@obsx.tech">security@obsx.tech</a> before public disclosure. We commit to acknowledging receipt within 24 hours and deploying verified remediations within 72 hours.
-      </p>
+    <div class="card" style="margin-bottom: 24px;">
+      <h2 style="font-size: 18px; margin-bottom: 10px;">2. Acceptable Use &amp; Scoped Security Research</h2>
+      <ul style="color: var(--text-muted); font-size: 14px; line-height: 1.7; padding-left: 20px;">
+        <li><strong>Prohibited Conduct:</strong> You may not use <code>obsx.tech</code>, generated keys, or repository tools to conduct denial-of-service attacks, volumetric floods, automated spam, credential stuffing, unauthorized network probing, or bypasses against systems you do not own.</li>
+        <li><strong>Scoped Safe Harbor (<code>obsx.tech</code> Sandbox Only):</strong> Good-faith, low-rate vulnerability research directed solely at our public demo sandbox (<code>pk_obsx_sandbox</code>) is permitted if you: (a) avoid volumetric DoS, resource exhaustion, or automated flood tools (<code>tools/flood.js</code> is prohibited against <code>obsx.tech</code> without written authorization); (b) do not access, modify, or exfiltrate other users' accounts, notes, or private keys; and (c) report findings privately under <a href="https://github.com/jidiotspam-hue/obsx/security/advisories/new" target="_blank" rel="noopener">GitHub Security Advisories</a> or <a href="mailto:security@obsx.tech">security@obsx.tech</a>.</li>
+      </ul>
+    </div>
 
-      <h2>4. Disclaimers & Limitation of Liability</h2>
-      <p>
-        THE PLATFORM, HOSTED SANDBOXES, AND ASSOCIATED SOFTWARE ARE PROVIDED &ldquo;AS IS&rdquo;, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+    <div class="card" style="margin-bottom: 24px;">
+      <h2 style="font-size: 18px; margin-bottom: 10px;">3. Service Availability &amp; Disclaimers</h2>
+      <p style="color: var(--text-muted); font-size: 14px; line-height: 1.65;">
+        The hosted <code>obsx.tech</code> sandbox and API are provided on an <strong>"AS IS"</strong> and <strong>"AS AVAILABLE"</strong> best-effort basis with no service-level agreement (SLA), guaranteed uptime, or unconditional response deadline. To the maximum extent permitted by law, Operator disclaims all express, implied, and statutory warranties, including merchantability, fitness for a particular purpose, non-infringement, and uninterrupted security protection.
       </p>
+    </div>
 
-      <h2>5. Enterprise Service Level Agreements (SLAs)</h2>
-      <p>
-        Public hosted demo endpoints (such as <code>obsx.tech/api/v1/telemetry/live</code>) are provided for evaluation and developmental sandbox testing. Production enterprise customers requiring guaranteed uptime SLAs, private dedicated edge clusters, and custom Proof-of-Work tuning should contact <a href="mailto:official@obsx.tech">official@obsx.tech</a>.
+    <div class="card" style="margin-bottom: 24px;">
+      <h2 style="font-size: 18px; margin-bottom: 10px;">4. Limitation of Liability &amp; Indemnification</h2>
+      <p style="color: var(--text-muted); font-size: 14px; line-height: 1.65; margin-bottom: 10px;">
+        <strong>Limitation of Liability:</strong> To the fullest extent permitted by applicable law, Operator shall not be liable for any indirect, incidental, special, consequential, or punitive damages, or loss of profits, revenue, data, or goodwill. Operator's total aggregate liability arising out of or relating to the hosted service or these Terms shall not exceed the greater of amounts actually paid by you to Operator in the twelve (12) months preceding the claim or <strong>USD $100.00</strong>.
       </p>
+      <p style="color: var(--text-muted); font-size: 14px; line-height: 1.65;">
+        <strong>Indemnification:</strong> You agree to defend, indemnify, and hold harmless Operator from any third-party claims, damages, losses, or reasonable legal costs arising from your breach of these Terms, misuse of API keys or load-testing tools, or unlawful deployment against third-party systems.
+      </p>
+    </div>
 
-      <h2>6. Modifications to Terms</h2>
-      <p>
-        We may update these Terms periodically to reflect architectural changes or regulatory updates. Continued use of the platform after updates constitutes acceptance of the revised Terms.
+    <div class="card" style="margin-bottom: 24px;">
+      <h2 style="font-size: 18px; margin-bottom: 10px;">5. Termination, Governing Law &amp; General Terms</h2>
+      <p style="color: var(--text-muted); font-size: 14px; line-height: 1.65;">
+        Operator may suspend or revoke abusive API keys or accounts without prior notice when necessary to protect service integrity. You may terminate your hosted account and delete your stored records at any time via <strong>Delete Account</strong> in the <a href="/dashboard.html">Dashboard</a> (<code>DELETE /api/v1/me</code>). Sections 1, 3, 4, and 5 survive termination. These Terms do not exclude mandatory consumer rights in your jurisdiction. If any provision is unenforceable, remaining provisions remain in effect; failure to enforce a right is not a waiver; neither party is liable for delays caused by force majeure; and these Terms (together with the <a href="/privacy.html">Privacy Policy</a> and <code>LICENSE</code>) constitute the entire agreement between you and Operator.
       </p>
-
-      <h2>7. Contact</h2>
-      <p>
-        Questions regarding these Terms of Service may be directed to <a href="mailto:official@obsx.tech">official@obsx.tech</a> or submitted via our GitHub repository at <a href="https://github.com/jidiotspam-hue/obsx" target="_blank" rel="noopener">github.com/jidiotspam-hue/obsx</a>.
-      </p>
-    </article>
+    </div>
   </main>
 
-  <!-- Footer -->
   <footer>
     <div class="container footer-wrap">
       <div style="display: flex; align-items: center; gap: 8px;">
         <span class="brand-dot"></span>
         <strong style="color: var(--text);">OBSX Security</strong>
-        <span>· Dual-licensed: <a href="/terms.html">MIT (Core/SDK) &amp; ELv2 + OBSX Zone 2 Terms (Operator)</a>.</span>
+        <span>&middot; Dual-licensed: <a href="/terms.html">MIT (Core/SDK) &amp; OBSX Source-Available License v1.0 (Zone 2)</a>.</span>
       </div>
       <div style="display: flex; gap: 20px; flex-wrap: wrap;">
         <a href="/">Sandbox</a>
@@ -159,7 +97,7 @@
         <a href="/dashboard.html">Dashboard</a>
         <a href="/docs.html">Documentation</a>
         <a href="/privacy.html">Privacy</a>
-        <a href="/terms.html" style="color: var(--accent);">Terms</a>
+        <a href="/terms.html">Terms</a>
         <a href="https://github.com/jidiotspam-hue/obsx" target="_blank" rel="noopener">GitHub</a>
       </div>
     </div>

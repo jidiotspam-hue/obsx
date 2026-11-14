@@ -3,7 +3,7 @@
 /**
  * OBSX Security — HTTP Operator Server Harness & Telemetry Broadcaster
  * Copyright (c) 2026 Alexis Grimmace.
- * Licensed under the Elastic License 2.0 + OBSX Zone 2 Terms — See LICENSE file.
+ * Licensed under the OBSX Source-Available License v1.0 (Zone 2) — See LICENSE file.
  */
 
 // Load local environment configuration if present (.env)
@@ -29,7 +29,7 @@ const PKG_VERSION = (() => {
     return '2.3.0';
   }
 })();
-const ALLOWED_SDK_FILES = new Set(['obsx.min.js', 'obsx.js']);
+const ALLOWED_SDK_FILES = new Set(['obsx.min.js', 'tracer.min.js']);
 
 const BIND = process.env.OBSX_BIND || "0.0.0.0";
 const PORT = parseInt(process.env.PORT || '3000', 10);
@@ -58,10 +58,13 @@ const CORS_HEADERS = {
 function readBody(req, maxBytes = 512 * 1024, timeoutMs = 10000) {
   return new Promise((resolve, reject) => {
     const rawCt = String((req.headers && req.headers['content-type']) || '').trim().toLowerCase();
-    if (rawCt && !rawCt.includes('application/json')) {
+    const mediaType = rawCt ? rawCt.split(';')[0].trim() : '';
+    if (mediaType && mediaType !== 'application/json') {
       req.resume();
       return reject(new Error('Unsupported Content-Type'));
     }
+    const method = String((req && req.method) || 'GET').toUpperCase();
+    const expectsJsonBody = method === 'POST' || method === 'PUT' || method === 'PATCH';
 
     const chunks = [];
     let received = 0;
@@ -94,6 +97,9 @@ function readBody(req, maxBytes = 512 * 1024, timeoutMs = 10000) {
       try {
         const text = Buffer.concat(chunks).toString('utf8');
         if (!text.trim()) return resolve({});
+        if (expectsJsonBody && mediaType !== 'application/json') {
+          return reject(new Error('Unsupported Content-Type'));
+        }
         const parsed = JSON.parse(text);
         if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
           return reject(new Error('Invalid JSON'));
@@ -302,13 +308,14 @@ function isTrustedSameOriginMutation(req, isHttps = false) {
     }
   }
   const contentType = String(req.headers['content-type'] || '').toLowerCase();
-  if (contentType && !contentType.includes('application/json') && !req.headers['x-requested-with']) {
+  const mediaType = contentType ? contentType.split(';')[0].trim() : '';
+  if (mediaType && mediaType !== 'application/json' && !req.headers['x-requested-with']) {
     return false;
   }
   if (origin || referer || secFetchSite) {
     const method = String(req.method || 'GET').toUpperCase();
     const hasDeclaredBody = Number(req.headers['content-length'] || 0) > 0 || Boolean(req.headers['transfer-encoding']);
-    if ((method === 'POST' || method === 'PUT' || method === 'PATCH') && hasDeclaredBody && !contentType.includes('application/json') && !req.headers['x-requested-with']) {
+    if ((method === 'POST' || method === 'PUT' || method === 'PATCH') && hasDeclaredBody && mediaType !== 'application/json' && !req.headers['x-requested-with']) {
       return false;
     }
   }
@@ -481,8 +488,9 @@ function recordPathHit(pathname) {
       .sort((a, b) => b[1] - a[1])
       .slice(0, 5)
       .map(([p, c]) => `${p}=${c}`)
+      .join(' ');
     console.log(
-      `[OBSX Sentinel] ${new Date().toISOString()} reqRate=${reqRate} conns=${activeConnections} inFlight=${inFlight} latency=${botshield.stats(false).health.workLatencyMs}ms topPaths: ${topPaths}`
+      `[OBSX Origin Shield] ${new Date().toISOString()} reqRate=${reqRate} conns=${activeConnections} inFlight=${inFlight} latency=${botshield.stats(false).health.workLatencyMs}ms topPaths: ${topPaths}`
     );
   }
   pathHits.clear();
@@ -586,6 +594,18 @@ const server = http.createServer(async (req, res) => {
 
   if (shield.handled) return;
 
+  // Global Hardened Security Headers (applied to all routes including /api/v1/health)
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  if (isHttps) {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
+  res.setHeader(
+    'Content-Security-Policy',
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self';"
+  );
+
   if (pathname === '/api/v1/health') {
     const bs = botshield.stats();
     return sendJson(res, 200, {
@@ -609,25 +629,13 @@ const server = http.createServer(async (req, res) => {
   // this origin down hit "/" exclusively, and "/" was never rate-limited.
   recordPathHit(pathname);
 
-  // Global Hardened Security Headers
-  res.setHeader('X-Frame-Options', 'DENY');
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  if (isHttps) {
-    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-  }
-  res.setHeader(
-    'Content-Security-Policy',
-    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self';"
-  );
-
   try {
     // --- 0. Global OpenAI / ChatGPT Scraper Gate, Google SEO Sitemap & robots.txt Policy ---
     const reqUa = req.headers['user-agent'] || '';
     const globalBlockOpenAi = process.env.BLOCK_OPENAI_SCRAPERS !== 'false';
     if (pathname === '/robots.txt' && (method === 'GET' || method === 'HEAD')) {
       const robotsTxt = globalBlockOpenAi
-        ? '# get your own ram\nUser-agent: GPTBot\nDisallow: /\n\nUser-agent: ChatGPT-User\nDisallow: /\n\nUser-agent: OAI-SearchBot\nDisallow: /\n\nUser-agent: Googlebot\nAllow: /\n\nUser-agent: Googlebot-Image\nAllow: /\n\nUser-agent: Google-InspectionTool\nAllow: /\n\nUser-agent: *\nAllow: /\n\nSitemap: https://obsx.tech/sitemap.xml\n'
+        ? '# Automated AI crawler policy — obsx.tech\nUser-agent: GPTBot\nDisallow: /\n\nUser-agent: ChatGPT-User\nDisallow: /\n\nUser-agent: OAI-SearchBot\nDisallow: /\n\nUser-agent: Googlebot\nAllow: /\n\nUser-agent: Googlebot-Image\nAllow: /\n\nUser-agent: Google-InspectionTool\nAllow: /\n\nUser-agent: *\nAllow: /\n\nSitemap: https://obsx.tech/sitemap.xml\n'
         : 'User-agent: Googlebot\nAllow: /\n\nUser-agent: *\nAllow: /\n\nSitemap: https://obsx.tech/sitemap.xml\n';
       res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
       return res.end(method === 'HEAD' ? undefined : robotsTxt);
@@ -668,85 +676,40 @@ const server = http.createServer(async (req, res) => {
       pathname === '/dram-dark.jpg' ||
       pathname === '/dram-light.jpg' ||
       pathname === '/dram-stick.svg';
-    const reqReferer = req.headers.referer || req.headers.referrer || '';
-    if (globalBlockOpenAi && !isTenantVerifyOrSession && core.isOpenAiScraperUa(reqUa, reqReferer, url.search)) {
-      res.setHeader('X-OBSX-Policy', 'get your own ram');
+    if (globalBlockOpenAi && !isTenantVerifyOrSession && core.isOpenAiScraperUa(reqUa)) {
+      res.setHeader('X-OBSX-Policy', 'ai-crawler-blocked');
       const acceptHeader = req.headers.accept || '';
       if (acceptHeader.includes('text/html') && !pathname.startsWith('/api/')) {
         res.writeHead(403, {
           'Content-Type': 'text/html; charset=utf-8',
           'Cache-Control': 'no-store',
-          'X-OBSX-Policy': 'get your own ram',
+          'X-OBSX-Policy': 'ai-crawler-blocked',
         });
         return res.end(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>403 Forbidden — get your own ram</title>
+  <title>403 Forbidden — Automated AI Crawler Blocked</title>
   <style>
-    body { background: #090d16; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 24px; box-sizing: border-box; overflow: hidden; position: relative; }
-    .dram-sky { position: fixed; inset: 0; pointer-events: none; z-index: 1; overflow: hidden; }
-    .dram-balloon { position: absolute; bottom: -140px; display: flex; flex-direction: column; align-items: center; animation: floatUp linear infinite; opacity: 0.9; filter: drop-shadow(0 8px 16px rgba(0,0,0,0.6)); }
-    .dram-balloon img { width: 110px; height: auto; image-rendering: pixelated; border-radius: 6px; }
-    .dram-string { width: 1.5px; height: 55px; background: linear-gradient(to bottom, rgba(250,204,21,0.85), rgba(255,255,255,0.05)); margin-top: -4px; }
-    .dram-tag { font-size: 10px; font-weight: 700; color: #facc15; background: rgba(17,24,39,0.9); border: 1px solid rgba(250,204,21,0.4); padding: 2px 6px; border-radius: 4px; margin-top: 2px; white-space: nowrap; }
-    @keyframes floatUp {
-      0% { transform: translateY(0) rotate(-3deg); opacity: 0; }
-      10% { opacity: 0.92; }
-      50% { transform: translateY(-55vh) rotate(4deg); }
-      90% { opacity: 0.92; }
-      100% { transform: translateY(-120vh) rotate(-3deg); opacity: 0; }
-    }
-    .card { position: relative; z-index: 10; max-width: 660px; width: 100%; background: rgba(17, 24, 39, 0.94); backdrop-filter: blur(10px); border: 1px solid #ef4444; border-radius: 14px; padding: 32px; box-shadow: 0 24px 60px rgba(0,0,0,0.75); text-align: center; }
-    .dram-hero-imgs { display: flex; justify-content: center; align-items: center; gap: 18px; margin-bottom: 18px; }
-    .dram-hero-imgs img { height: 74px; width: auto; image-rendering: pixelated; border-radius: 8px; border: 1px solid rgba(255,255,255,0.12); background: #000; padding: 4px; }
+    body { background: #090d16; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 24px; box-sizing: border-box; }
+    .card { max-width: 600px; width: 100%; background: #111827; border: 1px solid #ef4444; border-radius: 14px; padding: 32px; box-shadow: 0 24px 60px rgba(0,0,0,0.65); text-align: center; }
     .badge { display: inline-block; padding: 4px 10px; background: rgba(239,68,68,0.15); color: #f87171; border: 1px solid rgba(239,68,68,0.4); border-radius: 6px; font-size: 12px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
-    h1 { font-size: 40px; margin: 14px 0 10px; color: #ffffff; letter-spacing: -0.02em; }
-    blockquote { text-align: left; margin: 20px 0; padding: 14px 18px; border-left: 3px solid #ef4444; background: rgba(255,255,255,0.03); color: #94a3b8; font-size: 13.5px; line-height: 1.6; border-radius: 0 8px 8px 0; }
+    h1 { font-size: 32px; margin: 14px 0 10px; color: #ffffff; letter-spacing: -0.02em; }
     .footer { margin-top: 24px; font-size: 12px; color: #64748b; border-top: 1px solid #1f2937; padding-top: 16px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
     .btn-back { color: #38bdf8; text-decoration: none; font-weight: 600; }
   </style>
 </head>
 <body>
-  <div class="dram-sky">
-    <div class="dram-balloon" style="left: 6%; animation-duration: 9s; animation-delay: 0s;">
-      <img src="/dram-stick.svg" alt="DRAM" /><div class="dram-string"></div><span class="dram-tag">5% Utilized DRAM</span>
-    </div>
-    <div class="dram-balloon" style="left: 20%; animation-duration: 11s; animation-delay: 2s;">
-      <img src="/dram-dark.jpg" alt="DRAM" /><div class="dram-string"></div><span class="dram-tag">get your own ram</span>
-    </div>
-    <div class="dram-balloon" style="left: 36%; animation-duration: 8.5s; animation-delay: 4s;">
-      <img src="/dram-light.jpg" alt="DRAM" /><div class="dram-string"></div><span class="dram-tag">Personal Raspberry Pi RAM</span>
-    </div>
-    <div class="dram-balloon" style="left: 64%; animation-duration: 10.5s; animation-delay: 1s;">
-      <img src="/dram-stick.svg" alt="DRAM" /><div class="dram-string"></div><span class="dram-tag">Not for Cloud Scrapers</span>
-    </div>
-    <div class="dram-balloon" style="left: 78%; animation-duration: 9.5s; animation-delay: 3s;">
-      <img src="/dram-dark.jpg" alt="DRAM" /><div class="dram-string"></div><span class="dram-tag">get your own ram</span>
-    </div>
-    <div class="dram-balloon" style="left: 90%; animation-duration: 12s; animation-delay: 0.5s;">
-      <img src="/dram-light.jpg" alt="DRAM" /><div class="dram-string"></div><span class="dram-tag">100% Sovereign DRAM</span>
-    </div>
-  </div>
   <div class="card">
-    <div class="dram-hero-imgs">
-      <img src="/dram-dark.jpg" alt="Pixel DRAM Module Dark" />
-      <img src="/dram-stick.svg" alt="Pixel DRAM Stick" style="background:transparent; border:none; height:64px;" />
-      <img src="/dram-light.jpg" alt="Pixel DRAM Module Light" style="background:#fff;" />
-    </div>
-    <span class="badge">HTTP 403 · OPENAI / CHATGPT SCRAPER BLOCKED</span>
-    <h1>get your own ram</h1>
-    <p style="color:#cbd5e1; line-height:1.6; margin: 0 auto; max-width: 540px;">
-      This security node runs on dedicated personal hardware DRAM. OpenAI crawlers, ChatGPT agents, and ChatGPT referrals are explicitly denied access.
+    <span class="badge">HTTP 403 &middot; AUTOMATED AI CRAWLER BLOCKED</span>
+    <h1>Automated AI Crawlers Denied</h1>
+    <p style="color:#cbd5e1; line-height:1.6; margin: 0 auto; max-width: 500px;">
+      This origin restricts automated AI training and scraper user-agents under its configured access policy. Standard web browsers and human visitors are unaffected.
     </p>
-    <blockquote>
-      "From a global allocation perspective, actually, it's quite terrible to have everybody have a bunch of the world's limited supply of DRAM sitting in their own computer and being used five percent of the time."
-      <br/>— <strong>Sam Altman</strong> (Cheeky Pint Podcast, Oct 29)
-    </blockquote>
     <div class="footer">
-      <span>Enforced by OBSX Security Gate · Policy: <code>blockOpenAiScrapers=true</code></span>
-      <a href="/" class="btn-back">Return to Human Site &rarr;</a>
+      <span>Enforced by OBSX Security Gate &middot; Policy: <code>blockOpenAiScrapers=true</code></span>
+      <a href="/" class="btn-back">Return to Site &rarr;</a>
     </div>
   </div>
 </body>
@@ -755,7 +718,7 @@ const server = http.createServer(async (req, res) => {
       return sendJson(
         res,
         403,
-        { ok: false, error: 'openai_scraper_blocked', message: 'get your own ram' },
+        { ok: false, error: 'openai_scraper_blocked', message: 'Automated AI crawler blocked by project policy.' },
         CORS_HEADERS
       );
     }
@@ -768,9 +731,29 @@ const server = http.createServer(async (req, res) => {
 
     // --- 2. API Routes ---
     if (pathname.startsWith('/api/v1/')) {
+      const checkSafeModeBlock = () => {
+        const lic = updater.getLicenseStatus();
+        if (lic.safeMode && (lic.enforceAcceptance || (lic.missingCriticalFiles && lic.missingCriticalFiles.length > 0))) {
+          sendJson(
+            res,
+            503,
+            {
+              ok: false,
+              error: 'license_safe_mode',
+              reason: lic.safeModeReason,
+              message: 'Node is in Safe Mode pending LICENSE acceptance or integrity restoration.',
+            },
+            CORS_HEADERS
+          );
+          return true;
+        }
+        return false;
+      };
+
       // 1. Session Start (Public SDK Entry)
       if (pathname === '/api/v1/session') {
         if (method !== 'POST') return sendMethodNotAllowed(res, ['POST', 'OPTIONS']);
+        if (checkSafeModeBlock()) return;
         if (!withinSessionBudget(clientIp)) {
           return sendJson(res, 429, { ok: false, error: 'session_rate_limited', retry_after: 10 }, CORS_HEADERS);
         }
@@ -806,6 +789,7 @@ const server = http.createServer(async (req, res) => {
       // 3. Action Verification (Backend-to-Backend API)
       if (pathname === '/api/v1/verify') {
         if (method !== 'POST') return sendMethodNotAllowed(res, ['POST', 'OPTIONS']);
+        if (checkSafeModeBlock()) return;
         const auth = req.headers.authorization || '';
         const sk = auth.replace(/^Bearer\s+/i, '').trim();
         const project = await core.projectBySecretKey(sk);
@@ -871,6 +855,10 @@ const server = http.createServer(async (req, res) => {
       // Guarded by OBSX Client Attestation & Cryptographic PoW
       if (pathname === '/api/v1/auth/email') {
         if (method !== 'POST') return sendMethodNotAllowed(res, ['POST']);
+        if (!isTrustedSameOriginMutation(req, isHttps)) {
+          return sendJson(res, 403, { ok: false, error: 'cross_origin_forbidden' });
+        }
+        if (checkSafeModeBlock()) return;
         const body = await readBody(req);
 
         // Guard authentication with OBSX Attestation Gate
@@ -891,7 +879,9 @@ const server = http.createServer(async (req, res) => {
 
         if (body.action === 'verify') {
           try {
-            const authResult = await accounts.verifyEmailAuth(body.email, body.code, isHttps);
+            const authResult = await accounts.verifyEmailAuth(body.email, body.code, isHttps, {
+              termsAccepted: body.termsAccepted === true,
+            });
             return sendJson(
               res,
               200,
@@ -926,11 +916,30 @@ const server = http.createServer(async (req, res) => {
         );
       }
 
-      // 7. Get Current User Profile & Projects
+      // 7. Get or Delete Current User Account
       if (pathname === '/api/v1/me') {
+        if (method === 'GET') {
+          const user = await accounts.getSessionUser(req);
+          return sendJson(res, 200, { ok: true, user });
+        }
+        if (method === 'DELETE') {
+          if (!isTrustedSameOriginMutation(req, isHttps)) {
+            return sendJson(res, 403, { ok: false, error: 'cross_origin_forbidden' });
+          }
+          const user = await accounts.getSessionUser(req);
+          if (!user) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
+          const deleted = await accounts.deleteUserAccount(user.uid, req);
+          return sendJson(res, 200, { ok: true, deleted: deleted.ok }, { 'Set-Cookie': deleted.sessionCookie });
+        }
+        return sendMethodNotAllowed(res, ['GET', 'DELETE']);
+      }
+
+      if (pathname === '/api/v1/me/export') {
         if (method !== 'GET') return sendMethodNotAllowed(res, ['GET']);
         const user = await accounts.getSessionUser(req);
-        return sendJson(res, 200, { ok: true, user });
+        if (!user) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
+        const exportData = await accounts.exportUserData(user.uid);
+        return sendJson(res, 200, { ok: true, data: exportData }, { 'Cache-Control': 'no-store' });
       }
 
       // 8. List User Projects
@@ -944,6 +953,7 @@ const server = http.createServer(async (req, res) => {
       // 9. Project Management (Create New Project)
       if (pathname === '/api/v1/project') {
         if (method !== 'POST') return sendMethodNotAllowed(res, ['POST']);
+        if (checkSafeModeBlock()) return;
         const user = await accounts.getSessionUser(req);
         if (!user) {
           return sendJson(res, 401, { ok: false, error: 'unauthorized', message: 'Authentication required to create projects.' });
@@ -991,7 +1001,7 @@ const server = http.createServer(async (req, res) => {
         const alertRes = await mailer.notifyCriticalIncident({
           code: 'operator_test_probe',
           title: 'Manual Security Dispatch Pipeline Test',
-          detail: 'Operator requested outbound verification from official@obsx.tech.',
+          detail: 'Operator requested outbound SMTP alert pipeline verification.',
           clientIp,
           action: 'Dashboard Manual Trigger',
           severity: 'INFO',
@@ -1021,6 +1031,10 @@ const server = http.createServer(async (req, res) => {
       if (pathname === '/api/v1/metrics') {
         if (method !== 'GET') return sendMethodNotAllowed(res, ['GET']);
         const metrics = await core.getLiveMetrics();
+        const metricsUser = await accounts.getSessionUser(req);
+        if (!isOperatorAuthorized(req, metricsUser) && metrics && typeof metrics === 'object') {
+          metrics.topReasons = {};
+        }
         return sendJson(res, 200, { ok: true, metrics }, CORS_HEADERS);
       }
 
@@ -1028,12 +1042,14 @@ const server = http.createServer(async (req, res) => {
       if (pathname === '/api/v1/telemetry/live') {
         if (method !== 'GET') return sendMethodNotAllowed(res, ['GET']);
         const telemetry = await core.getLiveTelemetry();
-        // Detailed recent events and reason breakdowns stay operator-facing; anonymous visitors get totals only.
+        // Public visitors receive aggregated totals and sandbox-only (DEMO.pid) events; tenant events & reason counts stay operator-facing.
         const teleUser = await accounts.getSessionUser(req);
         if (!isOperatorAuthorized(req, teleUser) && telemetry && typeof telemetry === 'object') {
-          delete telemetry.recentEvents;
+          telemetry.recentEvents = Array.isArray(telemetry.recentEvents)
+            ? telemetry.recentEvents.filter((ev) => ev && ev.pid === core.DEMO.pid)
+            : [];
           if (telemetry.stats && typeof telemetry.stats === 'object') {
-            delete telemetry.stats.topReasons;
+            telemetry.stats.topReasons = {};
           }
         }
         return sendJson(res, 200, telemetry, CORS_HEADERS);
@@ -1139,7 +1155,7 @@ const server = http.createServer(async (req, res) => {
         if (syncSecret && ring && Array.isArray(ring.activeSubnets)) {
           const ts = Date.now();
           ring.ts = ts;
-          ring.sig = crypto.hmac(crypto.canon({ ts, activeSubnets: ring.activeSubnets }), syncSecret);
+          ring.sig = crypto.hmac(syncSecret, crypto.canon({ ts, activeSubnets: ring.activeSubnets }));
         }
         return sendJson(res, 200, ring);
       }
@@ -1367,26 +1383,33 @@ const server = http.createServer(async (req, res) => {
         return '';
       }
 
-      function getCallerUid(user, req, clientIp) {
-        if (user) return user.uid;
+      function resolveNotesIdentity(user, req) {
+        if (user) return { uid: user.uid, guestCookieHeader: null };
         const cookies = (req && req.headers ? req.headers.cookie : '') || '';
         const candidate = extractCookieValue(cookies, 'obsx_guest');
-        // x-guest-id is attacker-controlled: anyone could name another guest's
-        // mailbox. Only exact obsx_guest cookie values matching expected token format count.
         const guestSecret = /^[A-Za-z0-9_-]{8,128}$/.test(candidate) ? candidate : '';
         if (guestSecret) {
-          return `guest_${crypto.sha256(`${clientIp}:${guestSecret}`).slice(0, 14)}`;
+          return {
+            uid: `guest_${crypto.sha256(`obsx-guest:${guestSecret}`).slice(0, 16)}`,
+            guestCookieHeader: null,
+          };
         }
-        return `guest_${crypto.sha256(clientIp).slice(0, 12)}`;
+        const minted = crypto.randomId(18);
+        const secureSuffix = isHttps ? '; Secure' : '';
+        return {
+          uid: `guest_${crypto.sha256(`obsx-guest:${minted}`).slice(0, 16)}`,
+          guestCookieHeader: `obsx_guest=${minted}; Path=/; HttpOnly; SameSite=Lax${secureSuffix}; Max-Age=2592000`,
+        };
       }
 
       // List Notes
       if (pathname === '/api/v1/notes') {
         if (method === 'GET') {
           const user = await accounts.getSessionUser(req);
-          const uid = getCallerUid(user, req, clientIp);
+          const { uid, guestCookieHeader } = resolveNotesIdentity(user, req);
           const notes = await core.getUserNotes(uid);
-          return sendJson(res, 200, { ok: true, notes, isGuest: !user });
+          const extraHeaders = guestCookieHeader ? { 'Set-Cookie': guestCookieHeader } : {};
+          return sendJson(res, 200, { ok: true, notes, isGuest: !user }, extraHeaders);
         }
 
         if (method === 'POST') {
@@ -1397,7 +1420,7 @@ const server = http.createServer(async (req, res) => {
           if (!withinNotePostBudget(clientIp)) {
             return sendJson(res, 429, { ok: false, error: 'rate_limited', retry_after: 60 });
           }
-          const uid = getCallerUid(user, req, clientIp);
+          const { uid, guestCookieHeader } = resolveNotesIdentity(user, req);
           const body = await readBody(req);
           const mode = body.protectionMode === 'advisory' ? 'advisory' : 'obsx';
 
@@ -1463,11 +1486,17 @@ const server = http.createServer(async (req, res) => {
             protection: mode,
           });
 
-          return sendJson(res, 201, {
-            ok: true,
-            note,
-            verdict: trimVerdict(verificationVerdict),
-          });
+          const extraHeaders = guestCookieHeader ? { 'Set-Cookie': guestCookieHeader } : {};
+          return sendJson(
+            res,
+            201,
+            {
+              ok: true,
+              note,
+              verdict: trimVerdict(verificationVerdict),
+            },
+            extraHeaders
+          );
         }
 
         return sendMethodNotAllowed(res, ['GET', 'POST']);
@@ -1480,7 +1509,7 @@ const server = http.createServer(async (req, res) => {
         if (!isTrustedSameOriginMutation(req, isHttps)) {
           return sendJson(res, 403, { ok: false, error: 'cross_origin_forbidden' });
         }
-        const uid = getCallerUid(user, req, clientIp);
+        const { uid } = resolveNotesIdentity(user, req);
         const noteId = pathname.slice('/api/v1/notes/'.length);
         if (!isValidResourceId(noteId)) {
           return sendJson(res, 400, { ok: false, error: 'invalid_id' });
@@ -1650,6 +1679,9 @@ const server = http.createServer(async (req, res) => {
     }
     if (err.message === 'Body read timeout') {
       return sendJson(res, 408, { ok: false, error: 'request_timeout' });
+    }
+    if (err.message === 'note_quota_exceeded') {
+      return sendJson(res, 429, { ok: false, error: 'note_quota_exceeded' });
     }
     console.error('[Server Error]', err);
     if (!res.headersSent) {
