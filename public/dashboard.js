@@ -1008,11 +1008,49 @@
         if (metricRate) metricRate.textContent = `${stats.acceptRate || 100}%`;
 
         // Render Recent Events Feed
+        const REASON_DESCRIPTIONS = {
+          proxy_virtualization: 'Web proxy / unblocker shims or tunnel headers detected',
+          automation_cdp: 'Active Chrome DevTools Protocol / Playwright / Puppeteer detected',
+          automation_webdriver: 'navigator.webdriver automation flag present',
+          automation_headless: 'Headless browser fingerprint indicators',
+          bad_signature: 'OBSX.seal() HMAC signature mismatch (payload tampered)',
+          stale_signature: 'OBSX.seal() signature expired or clock skew exceeded',
+          invalid_pow: 'Micro-Proof-of-Work challenge failed or missing',
+          missing_telemetry: 'No client behavioral telemetry recorded',
+          missing_signals: 'Insufficient physical pointer/touch/keyboard signals',
+          synthetic_cadence: 'Scripted keystroke cadence lacking biological variance',
+          linear_pointer: 'Synthetic linear pointer trajectory (low jerk)',
+          tampered_builtins: 'Native JS built-ins or prototypes monkey-patched',
+          software_rasterizer_anomaly: 'Software GPU rasterizer (SwiftShader/llvmpipe)',
+          token_reused: 'Single-use attestation token replay rejected',
+          expired: 'Attestation token expired before submission',
+          invalid_token: 'Forged, malformed, or missing attestation token',
+          too_fast: 'Action completed faster than minimum human duration',
+          openai_scraper_blocked: 'OpenAI/ChatGPT crawler blocked by origin policy',
+        };
+
+        const btnFilterRejects = document.getElementById('btn-filter-rejects');
+        if (btnFilterRejects && !btnFilterRejects.dataset.bound) {
+          btnFilterRejects.dataset.bound = '1';
+          btnFilterRejects.addEventListener('click', () => {
+            const active = btnFilterRejects.dataset.active === '1';
+            btnFilterRejects.dataset.active = active ? '0' : '1';
+            btnFilterRejects.textContent = active ? 'Rejects Only' : 'Show All';
+            loadProjectTelemetry(activeTelemetryPid, false);
+          });
+        }
+        const onlyRejects = Boolean(btnFilterRejects && btnFilterRejects.dataset.active === '1');
+
         if (recentEvents && Array.isArray(data.recentEvents)) {
-          if (data.recentEvents.length === 0) {
-            recentEvents.innerHTML = '<p style="color:var(--text-muted); padding:10px 0;">Awaiting incoming actions...</p>';
+          const filteredEvents = onlyRejects
+            ? data.recentEvents.filter((ev) => ev.verdict === 'reject' || ev.shadowVerdict === 'reject')
+            : data.recentEvents;
+          if (filteredEvents.length === 0) {
+            recentEvents.innerHTML = onlyRejects
+              ? '<p style="color:var(--good); padding:10px 0;">Zero rejected events in recent stream.</p>'
+              : '<p style="color:var(--text-muted); padding:10px 0;">Awaiting incoming actions...</p>';
           } else {
-            recentEvents.innerHTML = data.recentEvents.map((ev) => {
+            recentEvents.innerHTML = filteredEvents.map((ev) => {
               const isPassive = ev.verdict === 'observe' || ev.mode === 'passive';
               const pillClass = ev.verdict === 'accept'
                 ? 'badge-good'
@@ -1035,7 +1073,7 @@
                     <span class="badge ${pillClass}">${escapeHtml(labelText)}</span>
                   </div>
                   <div style="font-size:11.5px; color:var(--text-muted); margin-top:3px;">
-                    ${ev.reasons && ev.reasons.length ? ev.reasons.map(escapeHtml).join(' · ') : 'All cryptographic invariants satisfied'}
+                    ${ev.reasons && ev.reasons.length ? ev.reasons.map((r) => escapeHtml(REASON_DESCRIPTIONS[r] ? `${r} (${REASON_DESCRIPTIONS[r]})` : r)).join(' · ') : 'All cryptographic invariants satisfied'}
                     <span style="float:right;">${timeAgo < 60 ? `${timeAgo}s ago` : `${Math.round(timeAgo / 60)}m ago`}</span>
                   </div>
                 </div>
@@ -1050,12 +1088,20 @@
           if (reasonEntries.length === 0) {
             threatBreakdown.innerHTML = '<p style="color:var(--good);">Zero active threat vectors. All current traffic attested legitimate.</p>';
           } else {
-            threatBreakdown.innerHTML = reasonEntries.map(([code, count]) => `
-              <div style="display:flex; justify-content:space-between; padding:5px 0; border-bottom:1px solid var(--border);">
-                <span><code>${escapeHtml(code)}</code></span>
-                <strong style="color:var(--bad);">${count} caught</strong>
-              </div>
-            `).join('');
+            const totalReasons = reasonEntries.reduce((acc, [, cnt]) => acc + Number(cnt || 0), 0) || 1;
+            threatBreakdown.innerHTML = reasonEntries.map(([code, count]) => {
+              const pct = Math.max(1, Math.round((Number(count || 0) / totalReasons) * 100));
+              const desc = REASON_DESCRIPTIONS[code] || 'Automated risk rule triggered';
+              return `
+                <div style="padding:7px 0; border-bottom:1px solid var(--border);">
+                  <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <span><code>${escapeHtml(code)}</code></span>
+                    <strong style="color:var(--bad);">${Number(count || 0)} caught (${pct}%)</strong>
+                  </div>
+                  <div style="font-size:11.5px; color:var(--text-muted); margin-top:2px;">${escapeHtml(desc)}</div>
+                </div>
+              `;
+            }).join('');
           }
         }
       }

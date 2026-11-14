@@ -194,6 +194,45 @@ app.post('/api/checkout', obsx.middleware({ secretKey: process.env.OBSX_SECRET_K
         AVCB is powered exclusively by the closed-source OBSX Sentinel™ engine on official <a href="https://obsx.tech" style="color: var(--accent); text-decoration: underline;">obsx.tech</a> edge infrastructure.
       </p>
     </div>
+
+    <!-- 5. 60-Second Migration from Google reCAPTCHA & Turnstile -->
+    <div class="card" style="margin-bottom: 32px;">
+      <div class="card-title">
+        <span>5. Migrate from Google reCAPTCHA / Turnstile in 60 Seconds</span>
+        <span class="badge badge-good">Zero Puzzle UX</span>
+      </div>
+      <p class="card-sub">
+        Swap out your existing Google reCAPTCHA script tag without rewriting frontend <code>grecaptcha.execute()</code> calls or backend form fields (<code>g-recaptcha-response</code> / <code>cf-turnstile-response</code>).
+      </p>
+
+      <div class="code-block">
+        <pre class="code-content"><code>&lt;!-- Replace https://www.google.com/recaptcha/api.js with: --&gt;
+&lt;script
+  src="https://obsx.tech/obsx.min.js"
+  data-obsx-site="pk_YOUR_SITE_KEY"
+  data-obsx-compat="recaptcha"
+  defer&gt;&lt;/script&gt;
+
+&lt;!-- Existing .g-recaptcha containers &amp; grecaptcha.ready/execute() keep working --&gt;
+&lt;script&gt;
+  grecaptcha.ready(async () =&gt; {
+    const token = await grecaptcha.execute('pk_YOUR_SITE_KEY', { action: 'checkout' });
+    // Posts cleanly as g-recaptcha-response or token
+  });
+&lt;/script&gt;</code></pre>
+      </div>
+
+      <div class="code-block" style="margin-top: 14px;">
+        <pre class="code-content"><code>// Backend (Next.js App Router / Web Request / Express):
+import { verifyRequest } from 'obsx-security';
+
+export async function POST(request: Request) {
+  const verdict = await verifyRequest(request, { secretKey: process.env.OBSX_SECRET_KEY! });
+  if (!verdict.allowed) return Response.json({ ok: false, reasons: verdict.reasons }, { status: 403 });
+  return Response.json({ ok: true, risk: verdict.risk });
+}</code></pre>
+      </div>
+    </div>
   </main>
 
   <!-- Footer -->

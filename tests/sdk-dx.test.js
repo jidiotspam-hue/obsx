@@ -772,11 +772,91 @@ test('dx: browser SDK DOM XSS safety, concurrent init/getAttestation queuing, an
     [
       '--input-type=module',
       '-e',
-      "import { verifyToken, verify, middleware, protect, verifyActionSeal } from 'obsx-security'; import { verifyActionSeal as v2, randomInt } from 'obsx-security/crypto'; import { MemoryStore, getKv } from 'obsx-security/kv'; console.log([typeof verifyToken, typeof verify, typeof middleware, typeof protect, typeof verifyActionSeal, typeof v2, typeof randomInt, typeof MemoryStore, typeof getKv].join(','));",
+      "import { verifyToken, verify, verifyRequest, middleware, protect, verifyActionSeal } from 'obsx-security'; import { verifyActionSeal as v2, randomInt } from 'obsx-security/crypto'; import { MemoryStore, getKv } from 'obsx-security/kv'; console.log([typeof verifyToken, typeof verify, typeof verifyRequest, typeof middleware, typeof protect, typeof verifyActionSeal, typeof v2, typeof randomInt, typeof MemoryStore, typeof getKv].join(','));",
     ],
     { cwd: ROOT, encoding: 'utf8' }
   ).trim();
-  assert.equal(esmOut, 'function,function,function,function,function,function,function,function,function');
+  assert.equal(esmOut, 'function,function,function,function,function,function,function,function,function,function');
+});
+
+test('dx: reCAPTCHA/Turnstile compat tokens, Web Request/Headers, and grecaptcha shim work end-to-end', async () => {
+  const chromeUa = 'Mozilla/5.0 Chrome/130.0.0.0 Safari/537.36';
+  const endpoint = `${baseUrl}/api/v1`;
+  // 1. g-recaptcha-response & cf-turnstile-response packed token::nonce
+  const humanA = await createGenuineSession(chromeUa);
+  const recaptchaVerdict = await obsx.verifyToken(
+    { 'g-recaptcha-response': `${humanA.token}::${humanA.nonce}`, email: 'secret@example.com' },
+    { secretKey: testProject.secretKey, endpoint, clientUa: chromeUa }
+  );
+  assert.equal(recaptchaVerdict.allowed, true);
+  assert.equal(recaptchaVerdict.verdict, 'accept');
+
+  const humanB = await createGenuineSession(chromeUa);
+  const turnstileVerdict = await obsx.verifyToken(
+    `${humanB.token}::${humanB.nonce}`,
+    { secretKey: testProject.secretKey, endpoint, clientUa: chromeUa }
+  );
+  assert.equal(turnstileVerdict.allowed, true);
+
+  // 2. Web Standard Request + Headers support (Next.js App Router / Edge)
+  const humanC = await createGenuineSession(chromeUa);
+  const webReq = new Request('https://app.example.com/api/checkout', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'User-Agent': chromeUa,
+    },
+    body: JSON.stringify({ 'cf-turnstile-response': `${humanC.token}::${humanC.nonce}` }),
+  });
+  const webVerdict = await obsx.verifyRequest(webReq, {
+    secretKey: testProject.secretKey,
+    endpoint,
+  });
+  assert.equal(webVerdict.allowed, true);
+  assert.equal(webVerdict.verdict, 'accept');
+
+  // 3. Browser SDK grecaptcha compatibility adapter
+  const bundleCode = fs.readFileSync(path.join(ROOT, 'public/obsx.min.js'), 'utf8');
+  const sb = {
+    console,
+    Date,
+    Math,
+    Object,
+    Function,
+    Promise,
+    TextEncoder,
+    Uint8Array,
+    URL,
+    crypto: globalThis.crypto,
+    fetch: globalThis.fetch,
+    setTimeout,
+    clearTimeout,
+    addEventListener() {},
+    document: {
+      readyState: 'complete',
+      currentScript: { src: `${baseUrl}/obsx.min.js`, getAttribute: (k) => (k === 'data-obsx-site' ? testProject.publicKey : null) },
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      addEventListener() {},
+      documentElement: null,
+    },
+    location: { origin: baseUrl },
+  };
+  sb.window = sb;
+  sb.globalThis = sb;
+  vm.runInNewContext(bundleCode, sb);
+
+  try {
+    const compat = sb.OBSX.enableRecaptchaCompat();
+    assert.equal(typeof sb.grecaptcha.execute, 'function');
+    assert.equal(typeof compat.ready, 'function');
+    await sb.OBSX.init({ site: testProject.publicKey, endpoint });
+    const packed = await sb.grecaptcha.execute(testProject.publicKey, { action: 'submit' });
+    assert.ok(packed.includes('::'), 'grecaptcha.execute() must return token::nonce compat string');
+    assert.equal(sb.grecaptcha.getResponse(), packed);
+  } finally {
+    sb.OBSX.reset();
+  }
 });
 
 test('dx: install.md SRI hashes match built obsx.min.js and LICENSE covers lib/index.js', () => {
