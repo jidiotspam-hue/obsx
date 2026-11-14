@@ -584,9 +584,13 @@ const server = http.createServer(async (req, res) => {
   // budgets, challenges and quarantine, and it measures its own health (RSS,
   // event-loop lag, served rate) so the decision to refuse happens before any
   // application work starts.
+  const rawSocketIp = req.socket && req.socket.remoteAddress ? req.socket.remoteAddress : '127.0.0.1';
+  const proxyTrustEnabled = process.env.TRUST_PROXY === 'true' && isTrustedProxyPeer(rawSocketIp);
   const shield = botshield.evaluate(req, res, clientIp, pathname, reqRateNow, url, {
     activeConnections,
     inFlight,
+    isHttps,
+    proxyTrustEnabled,
   });
   res.on('close', () => {
     inFlight--;
@@ -882,6 +886,9 @@ const server = http.createServer(async (req, res) => {
           try {
             const authResult = await accounts.verifyEmailAuth(body.email, body.code, isHttps, {
               termsAccepted: body.termsAccepted === true,
+              ...(typeof body.termsVersion === 'string' && body.termsVersion.trim()
+                ? { termsVersion: body.termsVersion.trim().slice(0, 64) }
+                : {}),
             });
             return sendJson(
               res,
@@ -1008,7 +1015,9 @@ const server = http.createServer(async (req, res) => {
           severity: 'INFO',
           recipient: targetEmail,
         });
-        const alertStatus = alertRes && alertRes.ok === false && alertRes.dispatch && alertRes.dispatch.error === 'smtp_unconfigured' ? 503 : 200;
+        const alertStatus = alertRes && alertRes.ok === false
+          ? (alertRes.dispatch && alertRes.dispatch.error === 'smtp_unconfigured' ? 503 : 502)
+          : 200;
         return sendJson(res, alertStatus, { ...alertRes, ok: Boolean(alertRes && alertRes.ok !== false) });
       }
 

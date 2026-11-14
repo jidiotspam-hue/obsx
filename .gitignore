@@ -15,5 +15,16 @@ dist/
 .obsx-license-state.json
 *.tmp.*
 
+
+# Internal Audit & Paperwork Artifacts (Keep local only in AI_Outputs)
+results/
+audit-reports/
+redteam-reports/
+legal-results/
+marketing-results/
+git-polish-reports/
+generalist-reports/
+github-reports/
+
 # Private Operational Modules (Never commit to public repository)
 lib/sentinel.js

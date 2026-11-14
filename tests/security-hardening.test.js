@@ -1471,3 +1471,468 @@ test('hardening: seal monotonicity, blank score rejection, semver prerelease ord
   assert.equal(noCtMime.json.error, 'unsupported_media_type');
 });
 
+test('core, telemetry, mailer, updater, kv, and botshield handle review regressions cleanly', async () => {
+  const { execFileSync } = require('child_process');
+  const telemetryMod = require('../lib/telemetry');
+  const updaterMod = require('../lib/updater');
+  const { MemoryStore } = require('../lib/kv');
+
+  // 1. project settings.origins normalizes trailing slashes & mixed case; mobile touchPoints satisfy human interaction
+  const originProj = await core.createProject({
+    name: 'Normalized Origin & Touch Project',
+    origins: [
+      'HTTPS://Shop.Example.COM/checkout/',
+      'https://shop.example.com',
+      'javascript:alert(1)',
+    ],
+    settings: { minDurationMs: 0 },
+  });
+  assert.deepEqual(originProj.settings.origins, ['https://shop.example.com']);
+  const loadedOriginProj = await core.loadProject(originProj.pid);
+
+  const mobileUa = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)';
+  const touchSess = await core.startSession(loadedOriginProj, { ip: '198.51.100.201', action: 'checkout' });
+  const touchNonce = solvePow(touchSess.challenge, touchSess.difficulty);
+  const touchSignals = {
+    sh: 'trc_v1_live',
+    gpuRenderer: 'Apple GPU',
+    mousePoints: [],
+    touchPoints: [
+      { x: 110, y: 240, t: 15 },
+      { x: 115, y: 248, t: 48 },
+      { x: 121, y: 256, t: 84 },
+    ],
+    dwellTimeMs: 420,
+    elapsedMs: 1100,
+    keyIntervals: [118, 142, 99],
+    rum: { dns: 10, tcp: 14, ttfb: 38, domReady: 165 },
+    audio: 0.00023456,
+  };
+  const touchTsig = crypto.hmac(
+    crypto.unb64u(touchSess.rk),
+    `obsx.sig.v1\n${touchSess.session}\n${touchNonce}\n${crypto.canon(touchSignals)}`
+  );
+  const recTouch = await core.recordSignals({
+    token: touchSess.token,
+    nonce: touchNonce,
+    signals: touchSignals,
+    tsig: touchTsig,
+  });
+  assert.equal(recTouch.ok, true);
+  const acceptOriginVerdict = await core.verify(
+    loadedOriginProj,
+    { token: touchSess.token, nonce: touchNonce },
+    { ip: '198.51.100.201', ua: mobileUa, origin: 'https://shop.example.com/cart' }
+  );
+  assert.equal(acceptOriginVerdict.verdict, 'accept');
+  assert.equal(acceptOriginVerdict.risk, 0);
+
+  const touchSessWrongOrigin = await core.startSession(loadedOriginProj, { ip: '198.51.100.202', action: 'checkout' });
+  const touchNonceWrong = solvePow(touchSessWrongOrigin.challenge, touchSessWrongOrigin.difficulty);
+  const recWrong = await core.recordSignals({
+    token: touchSessWrongOrigin.token,
+    nonce: touchNonceWrong,
+    signals: touchSignals,
+    tsig: crypto.hmac(
+      crypto.unb64u(touchSessWrongOrigin.rk),
+      `obsx.sig.v1\n${touchSessWrongOrigin.session}\n${touchNonceWrong}\n${crypto.canon(touchSignals)}`
+    ),
+  });
+  assert.equal(recWrong.ok, true);
+  const badOriginVerdict = await core.verify(
+    loadedOriginProj,
+    { token: touchSessWrongOrigin.token, nonce: touchNonceWrong },
+    { ip: '198.51.100.202', ua: mobileUa, origin: 'https://evil.example.com' }
+  );
+  assert.ok(badOriginVerdict.reasons.some((r) => r.code === 'origin_mismatch'));
+
+  // 2. telemetry.evaluatePointerDynamics rejects null/''/false coercion and sets isInstant: false for < 3 points
+  const twoPtEval = telemetryMod.evaluatePointerDynamics([
+    { x: 10, y: 10, t: 0 },
+    { x: 20, y: 20, t: 25 },
+  ]);
+  assert.equal(twoPtEval.isInstant, false);
+  const nonFiniteEval = telemetryMod.evaluatePointerDynamics([
+    { x: null, y: '', t: false },
+    { x: '  ', y: false, t: null },
+    { x: 10, y: 12, t: 10 },
+    { x: 20, y: 24, t: 30 },
+  ]);
+  assert.equal(nonFiniteEval.isInstant, false);
+  assert.equal(nonFiniteEval.isLinear, false);
+
+  // 3. mailer non-production unconfigured console OTP fallback & caught SMTP alert error
+  const prevNodeEnv = process.env.NODE_ENV;
+  const prevTestMode = process.env.OBSX_TEST_MODE;
+  const prevForceSmtp = process.env.FORCE_SMTP;
+  const prevSmtpHost = process.env.SMTP_HOST;
+  const prevSmtpPort = process.env.SMTP_PORT;
+  const prevSmtpUser = process.env.SMTP_USER;
+  const prevSmtpPass = process.env.SMTP_PASS;
+  const prevSmtpFrom = process.env.SMTP_FROM;
+  const prevSmtpSecure = process.env.SMTP_SECURE;
+  const origConsoleLog = console.log;
+  const origConsoleWarn = console.warn;
+  const origConsoleError = console.error;
+  const closedSrv = net.createServer();
+  await new Promise((resolve) => closedSrv.listen(0, '127.0.0.1', resolve));
+  const deadSmtpPort = closedSrv.address().port;
+  await new Promise((resolve) => closedSrv.close(resolve));
+
+  try {
+    delete process.env.SMTP_HOST;
+    delete process.env.SMTP_PASS;
+    const childEnv = { PATH: process.env.PATH || '', NODE_ENV: 'development' };
+    const devFallbackOut = execFileSync(
+      process.execPath,
+      [
+        '-e',
+        'const m = require("./lib/mailer"); m.sendVerificationCode("dev-otp@example.com", "654321").then((r) => { console.log("__RESULT__=" + JSON.stringify(r)); });',
+      ],
+      { cwd: path.resolve(__dirname, '..'), env: childEnv, encoding: 'utf8' }
+    );
+    const devResultLine = devFallbackOut.split('\n').find((l) => l.startsWith('__RESULT__='));
+    assert.ok(devResultLine, 'Dev fallback child process must emit __RESULT__');
+    const devFallbackRes = JSON.parse(devResultLine.slice('__RESULT__='.length));
+    assert.equal(devFallbackRes.ok, true);
+    assert.equal(devFallbackRes.devMode, true);
+    assert.equal(devFallbackRes.code, undefined, 'Non-test dev fallback must not return code field in response');
+    assert.ok(devFallbackOut.includes('654321'), 'Dev fallback must print OTP code box to console');
+
+    process.env.OBSX_TEST_MODE = '1';
+    process.env.FORCE_SMTP = 'true';
+    process.env.SMTP_HOST = '127.0.0.1';
+    process.env.SMTP_PORT = String(deadSmtpPort);
+    process.env.SMTP_USER = 'ops@example.com';
+    process.env.SMTP_PASS = 'secret-pass';
+    process.env.SMTP_FROM = 'ops@example.com';
+    process.env.SMTP_SECURE = 'false';
+    console.log = () => {};
+    console.warn = () => {};
+    console.error = () => {};
+    const failedAlert = await mailer.sendSecurityAlert('security@example.com', {
+      title: 'SMTP Failure Isolation Test',
+      summary: 'Verify sendSecurityAlert catches transport exceptions',
+    });
+    assert.equal(failedAlert.ok, false);
+    assert.equal(failedAlert.devMode, false);
+    assert.ok(typeof failedAlert.error === 'string' && failedAlert.error.length > 0);
+  } finally {
+    console.log = origConsoleLog;
+    console.warn = origConsoleWarn;
+    console.error = origConsoleError;
+    if (prevNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = prevNodeEnv;
+    if (prevTestMode === undefined) delete process.env.OBSX_TEST_MODE;
+    else process.env.OBSX_TEST_MODE = prevTestMode;
+    if (prevForceSmtp === undefined) delete process.env.FORCE_SMTP;
+    else process.env.FORCE_SMTP = prevForceSmtp;
+    if (prevSmtpHost === undefined) delete process.env.SMTP_HOST;
+    else process.env.SMTP_HOST = prevSmtpHost;
+    if (prevSmtpPort === undefined) delete process.env.SMTP_PORT;
+    else process.env.SMTP_PORT = prevSmtpPort;
+    if (prevSmtpUser === undefined) delete process.env.SMTP_USER;
+    else process.env.SMTP_USER = prevSmtpUser;
+    if (prevSmtpPass === undefined) delete process.env.SMTP_PASS;
+    else process.env.SMTP_PASS = prevSmtpPass;
+    if (prevSmtpFrom === undefined) delete process.env.SMTP_FROM;
+    else process.env.SMTP_FROM = prevSmtpFrom;
+    if (prevSmtpSecure === undefined) delete process.env.SMTP_SECURE;
+    else process.env.SMTP_SECURE = prevSmtpSecure;
+  }
+
+  // 4. updater.getSystemVersionInfo respects custom env & getOperatorDriftAdvisory tracks configured branch
+  const tmpGitBase = fs.mkdtempSync(path.join(os.tmpdir(), 'obsx-branch-drift-'));
+  try {
+    const bareDir = path.join(tmpGitBase, 'remote.git');
+    const cloneDir = path.join(tmpGitBase, 'clone');
+    const gitEnv = {
+      ...process.env,
+      GIT_AUTHOR_NAME: 'OBSX Test',
+      GIT_AUTHOR_EMAIL: 'test@obsx.tech',
+      GIT_COMMITTER_NAME: 'OBSX Test',
+      GIT_COMMITTER_EMAIL: 'test@obsx.tech',
+    };
+    execFileSync('git', ['init', '--bare', bareDir], { stdio: 'ignore' });
+    execFileSync('git', ['clone', bareDir, cloneDir], { stdio: 'ignore' });
+    execFileSync('git', ['-C', cloneDir, 'checkout', '-b', 'release/v2.4'], { stdio: 'ignore' });
+    fs.writeFileSync(path.join(cloneDir, 'package.json'), JSON.stringify({ name: 'obsx-security', version: '2.4.0' }));
+    fs.writeFileSync(path.join(cloneDir, 'LICENSE'), 'Copyright\n');
+    execFileSync('git', ['-C', cloneDir, 'add', '.'], { stdio: 'ignore' });
+    execFileSync('git', ['-C', cloneDir, 'commit', '-m', 'init'], { env: gitEnv, stdio: 'ignore' });
+    execFileSync('git', ['-C', cloneDir, 'push', '-u', 'origin', 'release/v2.4'], { stdio: 'ignore' });
+
+    const clone2Dir = path.join(tmpGitBase, 'clone2');
+    execFileSync('git', ['clone', '-b', 'release/v2.4', bareDir, clone2Dir], { stdio: 'ignore' });
+    fs.writeFileSync(path.join(clone2Dir, 'VERSION'), '2.4.1\n');
+    execFileSync('git', ['-C', clone2Dir, 'add', '.'], { stdio: 'ignore' });
+    execFileSync('git', ['-C', clone2Dir, 'commit', '-m', 'upstream'], { env: gitEnv, stdio: 'ignore' });
+    execFileSync('git', ['-C', clone2Dir, 'push', 'origin', 'release/v2.4'], { stdio: 'ignore' });
+    execFileSync('git', ['-C', cloneDir, 'fetch', 'origin'], { stdio: 'ignore' });
+
+    const verInfo = updaterMod.getSystemVersionInfo({
+      rootDir: cloneDir,
+      env: { OBSX_UPSTREAM_REPO: 'custom-org/obsx-mirror', OBSX_AUTO_UPDATE: 'true' },
+    });
+    assert.equal(verInfo.upstream, 'custom-org/obsx-mirror');
+    assert.equal(verInfo.autoUpdate.enabled, true);
+
+    const branchAdvisory = updaterMod.getOperatorDriftAdvisory({
+      rootDir: cloneDir,
+      branch: 'release/v2.4',
+      fresh: true,
+    });
+    assert.ok(branchAdvisory.commitsBehind >= 1);
+    assert.ok(branchAdvisory.upstreamCommits.length >= 1);
+    assert.match(branchAdvisory.adaptationCommand, /git fetch origin release\/v2\.4 .*pull --rebase origin release\/v2\.4/);
+  } finally {
+    fs.rmSync(tmpGitBase, { recursive: true, force: true });
+  }
+
+  // 5. MemoryStore._evictIfFull pass-local counters preserve tr:used:* / tr:ec:* and Pass 5 evicts oldest tr:auth:* before replay locks
+  const boundedMem = new MemoryStore(5, null);
+  try {
+    await boundedMem.set('tr:used:tok_keep', '1', 'EX', 300);
+    await boundedMem.set('tr:ec:mail_keep', '123456', 'EX', 300);
+    await boundedMem.set('tr:rl:volatile_1', '5', 'EX', 300);
+    await boundedMem.set('tr:rl:volatile_2', '5', 'EX', 300);
+    await boundedMem.set('tr:s:sess_unverified', { ok: 1 }, 'EX', 300);
+    await boundedMem.set('tr:rl:trigger_evict', '1', 'EX', 300);
+    assert.equal(await boundedMem.get('tr:used:tok_keep'), '1');
+    assert.equal(await boundedMem.get('tr:ec:mail_keep'), '123456');
+
+    const authMem = new MemoryStore(4, null);
+    try {
+      await authMem.set('tr:used:critical', '1', 'EX', 300);
+      await authMem.set('tr:auth:oldest', 'a', 'EX', 300);
+      await authMem.set('tr:auth:second', 'b', 'EX', 300);
+      await authMem.set('tr:auth:third', 'c', 'EX', 300);
+      await authMem.set('tr:auth:newest', 'd', 'EX', 300);
+      assert.equal(await authMem.get('tr:used:critical'), '1');
+      assert.equal(await authMem.get('tr:auth:oldest'), null);
+      assert.equal(await authMem.get('tr:auth:newest'), 'd');
+    } finally {
+      authMem.close();
+    }
+  } finally {
+    boundedMem.close();
+  }
+
+  // 6. botshield: short OBSX_OPERATOR_KEY falls back to OBSX_SECRET, maskSubnet masks CIDR, and Secure flag follows reqIsHttps
+  const prevOpKey = process.env.OBSX_OPERATOR_KEY;
+  const prevSecret = process.env.OBSX_SECRET;
+  const origWarn = console.warn;
+  console.warn = () => {};
+  try {
+    restoreBotShield();
+    botshield.configure({
+      enabled: true,
+      mode: 'always',
+      calmBudget: 1,
+      ipBudget: 1,
+      subnetQuarantinePerMin: 2,
+      quarantineMs: 5000,
+    });
+    process.env.OBSX_OPERATOR_KEY = 'short';
+    process.env.OBSX_SECRET = 'obsx_secret_min_16_chars_fallback';
+
+    for (let i = 0; i < 5; i++) {
+      botshield.evaluate(
+        {
+          method: 'POST',
+          headers: {
+            host: 'example.com',
+            'user-agent': 'Mozilla/5.0 Chrome/130.0.0.0 Safari/537.36',
+            accept: 'application/json',
+          },
+        },
+        makeFakeRes(),
+        '198.51.100.88',
+        '/api/v1/verify',
+        1,
+        new URL('http://example.com/api/v1/verify')
+      );
+    }
+
+    const statsMaskedReq = makeFakeRes();
+    botshield.evaluate(
+      { method: 'GET', headers: { host: 'example.com', 'x-obsx-operator-key': 'short' } },
+      statsMaskedReq,
+      '203.0.113.89',
+      '/api/v1/bot-protection',
+      1,
+      new URL('http://example.com/api/v1/bot-protection')
+    );
+    const maskedStats = JSON.parse(statsMaskedReq.out.body);
+    assert.ok(maskedStats.quarantinedSubnets.some((s) => s.subnet === '198.51.*.*/24'));
+
+    const statsDetailedReq = makeFakeRes();
+    botshield.evaluate(
+      { method: 'GET', headers: { host: 'example.com', 'x-obsx-operator-key': process.env.OBSX_SECRET } },
+      statsDetailedReq,
+      '203.0.113.90',
+      '/api/v1/bot-protection',
+      1,
+      new URL('http://example.com/api/v1/bot-protection')
+    );
+    const detailedStats = JSON.parse(statsDetailedReq.out.body);
+    assert.ok(detailedStats.quarantinedSubnets.some((s) => s.subnet === '198.51.100.0/24'));
+
+    // Challenge solve cookie omits ; Secure when capacity.isHttps=false even with spoofed X-Forwarded-Proto
+    const chalRes = makeFakeRes();
+    botshield.evaluate(
+      {
+        method: 'GET',
+        headers: {
+          host: 'example.com',
+          'user-agent': 'Mozilla/5.0 Chrome/130.0.0.0 Safari/537.36',
+          accept: 'text/html',
+        },
+      },
+      chalRes,
+      '203.0.113.91',
+      '/',
+      1,
+      new URL('http://example.com/'),
+      { isHttps: false, proxyTrustEnabled: false }
+    );
+    const parsedChal = parseBotShieldChallenge(chalRes.out.body);
+    const solvedNonce = solveBotShieldPow(parsedChal.challenge, parsedChal.bits);
+
+    const solveHttpRes = makeFakeRes();
+    botshield.evaluate(
+      {
+        method: 'GET',
+        headers: {
+          host: 'example.com',
+          'user-agent': 'Mozilla/5.0 Chrome/130.0.0.0 Safari/537.36',
+          'x-forwarded-proto': 'https',
+        },
+      },
+      solveHttpRes,
+      '203.0.113.91',
+      '/',
+      1,
+      new URL(`http://example.com/?__bs=${parsedChal.cid}&__bn=${solvedNonce}`),
+      { isHttps: false, proxyTrustEnabled: false }
+    );
+    const httpCookie = String(solveHttpRes.out.headers['Set-Cookie'] || '');
+    assert.ok(httpCookie.includes('obsx_bs='));
+    assert.ok(!httpCookie.includes('; Secure'));
+
+    const chalRes2 = makeFakeRes();
+    botshield.evaluate(
+      {
+        method: 'GET',
+        headers: {
+          host: 'example.com',
+          'user-agent': 'Mozilla/5.0 Chrome/130.0.0.0 Safari/537.36',
+          accept: 'text/html',
+        },
+      },
+      chalRes2,
+      '203.0.113.92',
+      '/',
+      1,
+      new URL('https://example.com/'),
+      { isHttps: true, proxyTrustEnabled: false }
+    );
+    const parsedChal2 = parseBotShieldChallenge(chalRes2.out.body);
+    const solvedNonce2 = solveBotShieldPow(parsedChal2.challenge, parsedChal2.bits);
+    const solveHttpsRes = makeFakeRes();
+    botshield.evaluate(
+      {
+        method: 'GET',
+        headers: {
+          host: 'example.com',
+          'user-agent': 'Mozilla/5.0 Chrome/130.0.0.0 Safari/537.36',
+        },
+      },
+      solveHttpsRes,
+      '203.0.113.92',
+      '/',
+      1,
+      new URL(`https://example.com/?__bs=${parsedChal2.cid}&__bn=${solvedNonce2}`),
+      { isHttps: true, proxyTrustEnabled: false }
+    );
+    const httpsCookie = String(solveHttpsRes.out.headers['Set-Cookie'] || '');
+    assert.ok(httpsCookie.includes('obsx_bs='));
+    assert.ok(httpsCookie.includes('; Secure'));
+  } finally {
+    console.warn = origWarn;
+    if (prevOpKey === undefined) delete process.env.OBSX_OPERATOR_KEY;
+    else process.env.OBSX_OPERATOR_KEY = prevOpKey;
+    if (prevSecret === undefined) delete process.env.OBSX_SECRET;
+    else process.env.OBSX_SECRET = prevSecret;
+    restoreBotShield();
+  }
+});
+
+test('accounts handle SMTP rollback, cross-subnet grace verification, multi-session delete, and termsVersion', async () => {
+  // 1. startEmailAuth rolls back cooldown on SMTP failure so immediate retry succeeds
+  const origSendVerification = mailer.sendVerificationCode;
+  mailer.sendVerificationCode = async () => ({ ok: false, error: 'smtp_down' });
+  try {
+    await assert.rejects(
+      () => accounts.startEmailAuth('rollback-retry@obsx.tech', '198.51.100.210'),
+      (err) => err && err.status === 503 && err.message === 'smtp_down'
+    );
+  } finally {
+    mailer.sendVerificationCode = origSendVerification;
+  }
+  const immediateRetry = await accounts.startEmailAuth('rollback-retry@obsx.tech', '198.51.100.210');
+  assert.equal(immediateRetry.ok, true);
+  assert.ok(/^\d{6}$/.test(immediateRetry.devCode));
+
+  // 2. Cross-subnet OTP grace window accepts initial active code once with shared 5-attempt cap
+  const graceEmail = 'cross-subnet-grace@obsx.tech';
+  const g1 = await accounts.startEmailAuth(graceEmail, '198.51.100.220');
+  const g2 = await accounts.startEmailAuth(graceEmail, '203.0.113.221');
+  assert.notEqual(g1.devCode, g2.devCode);
+  // First wrong attempt increments shared failure budget
+  await assert.rejects(() => accounts.verifyEmailAuth(graceEmail, '000000', false));
+  // Original code from g1 succeeds via grace window once
+  const graceVerified = await accounts.verifyEmailAuth(graceEmail, g1.devCode, false, { termsAccepted: true });
+  assert.ok(graceVerified.uid && graceVerified.sid);
+  assert.equal(graceVerified.email, graceEmail);
+  // Replay of g1 must fail because grace entry is deleted upon consumption
+  await assert.rejects(() => accounts.verifyEmailAuth(graceEmail, g1.devCode, false));
+
+  // 3. HTTP /api/v1/auth/email forwards termsVersion & DELETE /api/v1/me revokes sessions across devices
+  const multiEmail = 'multi-session-revoke@obsx.tech';
+  const sA = await request('POST', '/api/v1/auth/email', {
+    headers: { 'X-Forwarded-For': '198.51.100.230' },
+    body: { action: 'start', email: multiEmail },
+  });
+  assert.equal(sA.status, 200);
+  const vA = await request('POST', '/api/v1/auth/email', {
+    headers: { 'X-Forwarded-For': '198.51.100.230' },
+    body: { action: 'verify', email: multiEmail, code: sA.json.devCode, termsAccepted: true, termsVersion: '2026-11-14-rev2' },
+  });
+  assert.equal(vA.status, 200);
+  const cookieA = String(vA.headers['set-cookie']).split(';')[0];
+
+  const sB = await request('POST', '/api/v1/auth/email', {
+    headers: { 'X-Forwarded-For': '203.0.113.231' },
+    body: { action: 'start', email: multiEmail },
+  });
+  assert.equal(sB.status, 200);
+  const vB = await request('POST', '/api/v1/auth/email', {
+    headers: { 'X-Forwarded-For': '203.0.113.231' },
+    body: { action: 'verify', email: multiEmail, code: sB.json.devCode },
+  });
+  assert.equal(vB.status, 200);
+  const cookieB = String(vB.headers['set-cookie']).split(';')[0];
+
+  const exportTermsRes = await request('GET', '/api/v1/me/export', { headers: { Cookie: cookieA } });
+  assert.equal(exportTermsRes.status, 200);
+  assert.equal(exportTermsRes.json.data.account.termsVersion, '2026-11-14-rev2');
+
+  const delAccountRes = await request('DELETE', '/api/v1/me', { headers: { Cookie: cookieA } });
+  assert.equal(delAccountRes.status, 200);
+  assert.equal(delAccountRes.json.deleted, true);
+
+  const deviceBProjects = await request('GET', '/api/v1/projects', { headers: { Cookie: cookieB } });
+  assert.equal(deviceBProjects.status, 401, 'Deleting account must immediately invalidate all device sessions');
+});
+

@@ -935,3 +935,99 @@ test('dx: verifyToken(Web Request) preserves req tracking when User-Agent is omi
     await new Promise((resolve) => captureSrv.close(resolve));
   }
 });
+
+test('dx: tracer.min.js exposes Tracer global, honors data-tracer-site, and supports protectForm failOpen', async () => {
+  const tracerBundle = fs.readFileSync(path.join(ROOT, 'public/tracer.min.js'), 'utf8');
+  const scriptEl = {
+    src: `${baseUrl}/tracer.min.js?v=2.3.0`,
+    getAttribute(name) {
+      if (name === 'data-tracer-site') return testProject.publicKey;
+      if (name === 'data-obsx-auto') return 'false';
+      return null;
+    },
+  };
+
+  let failOpenSubmits = 0;
+  const openListeners = {};
+  const openForm = {
+    dataset: { tracerSite: testProject.publicKey },
+    getAttribute(name) { return name === 'data-tracer-site' ? testProject.publicKey : null; },
+    querySelector() { return null; },
+    appendChild() {},
+    addEventListener(ev, fn) { openListeners[ev] = fn; },
+    dispatchEvent() { return true; },
+    submit() { failOpenSubmits++; },
+  };
+
+  let failAttest = false;
+  const sandbox = {
+    window: null,
+    document: {
+      currentScript: scriptEl,
+      readyState: 'complete',
+      referrer: '',
+      body: { appendChild() {} },
+      getElementById() { return null; },
+      querySelector(sel) {
+        if (sel.includes('data-tracer-site') || sel.includes('data-obsx-site') || sel.includes('tracer.min.js')) {
+          return scriptEl;
+        }
+        return null;
+      },
+      querySelectorAll() { return []; },
+      createElement() { return { type: '', name: '', value: '', dataset: {}, style: {} }; },
+      addEventListener() {},
+    },
+    navigator: { userAgent: 'Mozilla/5.0 Chrome/130.0.0.0' },
+    location: { origin: 'https://tracer-compat.example.com', href: 'https://tracer-compat.example.com/', search: '' },
+    screen: { width: 1440, height: 900 },
+    TextEncoder,
+    Uint8Array,
+    URL,
+    atob: (s) => Buffer.from(s, 'base64').toString('binary'),
+    btoa: (s) => Buffer.from(s, 'binary').toString('base64'),
+    CustomEvent: function CustomEvent(name, init) { return { type: name, detail: init && init.detail }; },
+    crypto: nodeCrypto.webcrypto,
+    fetch: async (url, init = {}) => {
+      if (failAttest && String(url).endsWith('/session')) {
+        return { ok: false, status: 500, json: async () => ({ ok: false, error: 'upstream_down' }) };
+      }
+      const body = init.body ? JSON.parse(init.body) : undefined;
+      const res = await httpJson(init.method || 'GET', url, body, {
+        'User-Agent': 'Mozilla/5.0 Chrome/130.0.0.0',
+        ...(init.headers || {}),
+      });
+      return { ok: res.status >= 200 && res.status < 300, status: res.status, json: async () => res.json };
+    },
+    setTimeout,
+    clearTimeout,
+    addEventListener() {},
+  };
+  sandbox.window = sandbox;
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  sandbox.performance = { now: vm.runInContext('Date.now', sandbox) };
+  vm.runInContext(tracerBundle, sandbox);
+
+  assert.ok(sandbox.OBSX, 'tracer.min.js must expose window.OBSX');
+  assert.strictEqual(sandbox.Tracer, sandbox.OBSX, 'tracer.min.js must expose window.Tracer alias');
+
+  try {
+    const active = await sandbox.Tracer.init();
+    assert.equal(active.siteKey, testProject.publicKey);
+    assert.equal(active.endpoint, `${baseUrl}/api/v1`);
+
+    sandbox.Tracer.reset();
+    failAttest = true;
+    sandbox.Tracer.protectForm(openForm, { failOpen: true });
+    let prevented = false;
+    await openListeners.submit({
+      defaultPrevented: false,
+      preventDefault() { prevented = true; },
+    });
+    assert.equal(prevented, true);
+    assert.equal(failOpenSubmits, 1, 'protectForm with failOpen: true must submit when attestation fails');
+  } finally {
+    sandbox.OBSX.reset();
+  }
+});

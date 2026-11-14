@@ -36,6 +36,12 @@
   const tamperedFlags = [];
   let cachedGpu = null;
 
+  function pushTamperedFlag(flag) {
+    if (flag && !tamperedFlags.includes(flag)) {
+      tamperedFlags.push(flag);
+    }
+  }
+
   // Client diagnostic accessors and instrumentation integrity hooks
   let probeFlags = 0;
   try {
@@ -119,7 +125,7 @@
           const cleanAcc = 'get' in cleanDesc || 'set' in cleanDesc;
           const currAcc = 'get' in currentDesc || 'set' in currentDesc;
           if (cleanAcc !== currAcc) {
-            tamperedFlags.push('tampered_descriptor:' + target.name);
+            pushTamperedFlag('tampered_descriptor:' + target.name);
             continue;
           }
         }
@@ -148,9 +154,7 @@
           const flag = (BENIGN_APM.has(target.prop) || BENIGN_APM.has(target.name))
             ? 'wrapped:' + target.name
             : 'tampered:' + target.name;
-          if (!tamperedFlags.includes(flag)) {
-            tamperedFlags.push(flag);
-          }
+          pushTamperedFlag(flag);
         }
       }
     } catch {} finally {
@@ -175,9 +179,7 @@
       if (obj && prop in obj) {
         if (!isNativeFunction(obj[prop])) {
           const flag = benign ? 'wrapped:' + prop : 'tampered:' + prop;
-          if (!tamperedFlags.includes(flag)) {
-            tamperedFlags.push(flag);
-          }
+          pushTamperedFlag(flag);
         }
       }
     }
@@ -185,10 +187,10 @@
     // Audit WebRTC & WebSocket for proxy wiretaps / SDP scrubbing
     const peerConn = global.RTCPeerConnection || global.webkitRTCPeerConnection;
     if (peerConn && !isNativeFunction(peerConn) && (global.__bare || global.__uv$bare || global.__sovereignHookActive)) {
-      tamperedFlags.push('proxy_virtualization:wrapped_RTCPeerConnection');
+      pushTamperedFlag('proxy_virtualization:wrapped_RTCPeerConnection');
     }
     if (global.WebSocket && !isNativeFunction(global.WebSocket) && (global.__bare || global.__uv$bare || global.__sovereignHookActive)) {
-      tamperedFlags.push('proxy_virtualization:wrapped_WebSocket');
+      pushTamperedFlag('proxy_virtualization:wrapped_WebSocket');
     }
 
     // Advanced Web Proxy & Anti-Filter Virtualization Detection
@@ -256,7 +258,7 @@
             const rawGpu = `${vendor} ~ ${renderer}`;
             if (/SwiftShader|llvmpipe|Mesa OffScreen|Software Rasterizer|Microsoft Basic Render Driver|VirtualBox|VMware SVGA/i.test(rawGpu)) {
               cachedGpu = 'sw_rasterizer';
-              tamperedFlags.push('gpu:software_rasterizer');
+              pushTamperedFlag('gpu:software_rasterizer');
             } else {
               cachedGpu = 'gpu_hw_' + hashGpuToken(rawGpu);
             }
@@ -275,26 +277,26 @@
       const cdcPattern = /^cdc_[a-zA-Z0-9]+/;
       for (const k of _Object.keys(global)) {
         if (cdcPattern.test(k) || k.startsWith('__webdriver_') || k.startsWith('__selenium_')) {
-          tamperedFlags.push('automation_cdp:' + k);
+          pushTamperedFlag('automation_cdp:' + k);
         }
       }
       if (global.document) {
         for (const k of _Object.keys(global.document)) {
           if (cdcPattern.test(k) || k.startsWith('$cdc_')) {
-            tamperedFlags.push('automation_cdp_doc:' + k);
+            pushTamperedFlag('automation_cdp_doc:' + k);
           }
         }
       }
       // 2. Playwright / Puppeteer execution markers
       if ('__playwright' in global || '__puppeteer_evaluation_script__' in global) {
-        tamperedFlags.push('automation_framework:playwright_puppeteer');
+        pushTamperedFlag('automation_framework:playwright_puppeteer');
       }
       // 3. Desktop browser empty plugin anomaly
       if (global.navigator && typeof global.navigator.plugins !== 'undefined') {
         const isDesktop = /Macintosh|Windows NT|Linux x86_64/i.test(global.navigator.userAgent);
         const isMobile = /Android|iPhone|iPad/i.test(global.navigator.userAgent);
         if (isDesktop && !isMobile && global.navigator.plugins.length === 0) {
-          tamperedFlags.push('env_anomaly:desktop_empty_plugins');
+          pushTamperedFlag('env_anomaly:desktop_empty_plugins');
         }
       }
     } catch {}
@@ -313,7 +315,7 @@
     ];
     for (const art of proxyArtifacts) {
       if (art in global) {
-        tamperedFlags.push('proxy_artifact:' + art);
+        pushTamperedFlag('proxy_artifact:' + art);
       }
     }
 
@@ -324,7 +326,7 @@
         // Legitimate modern browsers have native getter/setter on window.location ([native code]).
         // Web proxy unblockers (Ultraviolet/Scramjet) override it with synthetic JS closures!
         if ((locDesc.get && !isNativeFunction(locDesc.get)) || (locDesc.set && !isNativeFunction(locDesc.set))) {
-          tamperedFlags.push('proxy_virtualization:location_getter_trap');
+          pushTamperedFlag('proxy_virtualization:location_getter_trap');
         }
       }
     } catch {}
@@ -333,7 +335,7 @@
     try {
       if (global.document && global.location && global.document.domain && global.location.hostname) {
         if (!global.location.hostname.endsWith(global.document.domain)) {
-          tamperedFlags.push('proxy_virtualization:domain_mismatch');
+          pushTamperedFlag('proxy_virtualization:domain_mismatch');
         }
       }
     } catch {}
@@ -343,7 +345,7 @@
       if (global.navigator && global.navigator.serviceWorker && global.navigator.serviceWorker.controller) {
         const swUrl = global.navigator.serviceWorker.controller.scriptURL || '';
         if (/\/uv\/|\/scramjet\/|\/bare\/|\/wisp\/|sw\.js\?uv|sw-proxy\.js|sovereign-sw-/i.test(swUrl)) {
-          tamperedFlags.push('proxy_virtualization:sw_controller');
+          pushTamperedFlag('proxy_virtualization:sw_controller');
         }
       }
     } catch {}
@@ -353,7 +355,7 @@
       if (global.document && typeof global.document.cookie === 'string') {
         const cookies = global.document.cookie;
         if (/__crammerhead=|uv-token=|bare-mux=|sovereign_proxy_origin=/i.test(cookies)) {
-          tamperedFlags.push('proxy_virtualization:cookie_signature');
+          pushTamperedFlag('proxy_virtualization:cookie_signature');
         }
       }
     } catch {}
@@ -362,10 +364,10 @@
     try {
       if (global.document && typeof global.document.querySelector === 'function') {
         if (global.document.querySelector('#proxy-hud-injected, #proxy-pill-injected, #proxy-panic-injected, #ss-proxy-hud')) {
-          tamperedFlags.push('proxy_virtualization:dom_hud_injected');
+          pushTamperedFlag('proxy_virtualization:dom_hud_injected');
         }
         if (global.document.querySelector('script[data-origin][data-base]')) {
-          tamperedFlags.push('proxy_virtualization:script_hook_injected');
+          pushTamperedFlag('proxy_virtualization:script_hook_injected');
         }
       }
     } catch {}
@@ -377,15 +379,15 @@
         const scr = global.screen;
         // Headless browsers often spawn with 0x0 display or impossible geometry
         if (scr.width === 0 || scr.height === 0) {
-          tamperedFlags.push('env_geometry:zero_screen_dimensions');
+          pushTamperedFlag('env_geometry:zero_screen_dimensions');
         }
         if (scr.availWidth > scr.width || scr.availHeight > scr.height) {
-          tamperedFlags.push('env_geometry:impossible_screen_bounds');
+          pushTamperedFlag('env_geometry:impossible_screen_bounds');
         }
       }
       if (typeof global.outerWidth !== 'undefined' && typeof global.outerHeight !== 'undefined') {
         if (global.outerWidth === 0 && global.outerHeight === 0 && typeof global.innerWidth !== 'undefined' && global.innerWidth > 0) {
-          tamperedFlags.push('env_geometry:zero_outer_dimensions');
+          pushTamperedFlag('env_geometry:zero_outer_dimensions');
         }
       }
     } catch {}
@@ -618,6 +620,7 @@
     if (typeof document === 'undefined') return null;
     return (
       document.querySelector('script[data-obsx-site]') ||
+      document.querySelector('script[data-tracer-site]') ||
       document.querySelector('script[data-site]') ||
       document.querySelector('script[src*="obsx.min.js"]') ||
       document.querySelector('script[src*="tracer.min.js"]') ||
@@ -634,6 +637,7 @@
     return {
       site:
         el.getAttribute('data-obsx-site') ||
+        el.getAttribute('data-tracer-site') ||
         el.getAttribute('data-site') ||
         null,
       mode: el.getAttribute('data-obsx-mode') || el.getAttribute('data-mode') || null,
@@ -1030,7 +1034,7 @@
       }
 
       const attestOpts = {};
-      const fSite = options.site || (form.getAttribute && (form.getAttribute('data-obsx-site') || form.getAttribute('data-site')));
+      const fSite = options.site || (form.getAttribute && (form.getAttribute('data-obsx-site') || form.getAttribute('data-tracer-site') || form.getAttribute('data-site')));
       const fEndpoint = options.endpoint || (form.getAttribute && (form.getAttribute('data-obsx-endpoint') || form.getAttribute('data-endpoint')));
       const fMode = options.mode || (form.getAttribute && (form.getAttribute('data-obsx-mode') || form.getAttribute('data-mode')));
       if (fSite) attestOpts.site = fSite;
@@ -1396,6 +1400,7 @@
   }
 
   global.OBSX = OBSX;
+  global.Tracer = OBSX;
 
   function autoMountSdk() {
     if (typeof window === 'undefined' || typeof document === 'undefined' || typeof _fetch !== 'function') return;

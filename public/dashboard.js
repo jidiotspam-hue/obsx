@@ -791,21 +791,41 @@
     });
   }
 
+  async function dispatchTestAlertRequest(button, { idleLabel, loadingLabel, recipient = '' }) {
+    if (!button) return;
+    button.disabled = true;
+    button.textContent = loadingLabel;
+    try {
+      const { token, nonce } = await harvestAttestation();
+      const res = await fetch('/api/v1/alert/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ recipient, token, nonce }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        alert(data.throttled
+          ? 'Alert recorded, but throttled by 5-minute circuit breaker to protect operator inbox!'
+          : `Critical security advisory dispatched successfully to ${data.alert?.recipient || 'operator'}!`);
+        fetchAlertsHistory();
+      } else {
+        alert('Alert dispatch failed: ' + (data.error || 'Unknown error'));
+      }
+    } catch (err) {
+      alert('Alert test error: ' + err.message);
+    } finally {
+      button.disabled = false;
+      button.textContent = idleLabel;
+    }
+  }
+
   // 6. Test Security Alert Dispatch
   if (btnTestAlert) {
-    btnTestAlert.addEventListener('click', async () => {
-      btnTestAlert.disabled = true;
-      btnTestAlert.textContent = 'Sending...';
-      try {
-        const res = await fetch('/api/v1/alert/test', { method: 'POST' });
-        const data = await res.json();
-        alert(data.ok ? 'Security alert successfully queued/dispatched!' : ('Error: ' + data.error));
-      } catch (err) {
-        alert('Alert test error: ' + err.message);
-      } finally {
-        btnTestAlert.disabled = false;
-        btnTestAlert.textContent = 'Send Test Alert';
-      }
+    btnTestAlert.addEventListener('click', () => {
+      dispatchTestAlertRequest(btnTestAlert, {
+        idleLabel: 'Send Test Alert',
+        loadingLabel: 'Attesting & sending...',
+      });
     });
   }
 
@@ -1500,33 +1520,13 @@
     }
   }
 
-  btnDispatchTestAlert?.addEventListener('click', async () => {
-    btnDispatchTestAlert.disabled = true;
-    btnDispatchTestAlert.textContent = 'Attesting & dispatching...';
-
-    const { token, nonce } = await harvestAttestation();
+  btnDispatchTestAlert?.addEventListener('click', () => {
     const recipient = (inpAlertRecipient ? inpAlertRecipient.value : '').trim();
-    try {
-      const res = await fetch('/api/v1/alert/test', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ recipient, token, nonce }),
-      });
-      const data = await res.json();
-      if (data.ok) {
-        alert(data.throttled
-          ? 'Alert recorded, but throttled by 5-minute circuit breaker to protect operator inbox!'
-          : `Critical security advisory dispatched successfully to ${data.alert?.recipient || 'operator'}!`);
-        fetchAlertsHistory();
-      } else {
-        alert('Alert dispatch failed: ' + (data.error || 'Unknown error'));
-      }
-    } catch (err) {
-      alert('Error: ' + err.message);
-    } finally {
-      btnDispatchTestAlert.disabled = false;
-      btnDispatchTestAlert.textContent = 'Dispatch Test Alert';
-    }
+    dispatchTestAlertRequest(btnDispatchTestAlert, {
+      idleLabel: 'Dispatch Test Alert',
+      loadingLabel: 'Attesting & dispatching...',
+      recipient,
+    });
   });
 
   // Initialize

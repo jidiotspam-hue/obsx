@@ -13,7 +13,7 @@ Add the OBSX SDK script to the `<head>` of your HTML document before any applica
 <script
   src="https://obsx.tech/sdk/v2.3.0/obsx.min.js"
   data-obsx-site="pk_YOUR_SITE_KEY"
-  integrity="sha384-OnAGn2kPJzISZTUNwJdOlxN1xqY/nMGz1jsnfKBBoJV9zmSEfzPYv/c9J3t9MMJu"
+  integrity="sha384-gNXa01hnhxrzfkcH46VD7YdZZRvGU81Pc38R3WVNw0i0EnOKQu6XKUXjuptND2bU"
   crossorigin="anonymous"
   defer>
 </script>
@@ -138,6 +138,6 @@ Add `data-obsx-compat="recaptcha"` to keep existing `grecaptcha.ready()`, `greca
 
 | Asset | Version | Algorithm | Hash |
 | :--- | :--- | :--- | :--- |
-| `obsx.min.js` | `v2.3.0` | **SHA-384** | `sha384-OnAGn2kPJzISZTUNwJdOlxN1xqY/nMGz1jsnfKBBoJV9zmSEfzPYv/c9J3t9MMJu` |
-| `obsx.min.js` | `v2.3.0` | **SHA-256** | `sha256-pv5qf1Re8XJdjLzKEa5ZwG76oP6Sw8A804mEQ+5h6lA=` |
-| `tracer.min.js` | `v2.3.0` | **SHA-384** | `sha384-OnAGn2kPJzISZTUNwJdOlxN1xqY/nMGz1jsnfKBBoJV9zmSEfzPYv/c9J3t9MMJu` |
+| `obsx.min.js` | `v2.3.0` | **SHA-384** | `sha384-gNXa01hnhxrzfkcH46VD7YdZZRvGU81Pc38R3WVNw0i0EnOKQu6XKUXjuptND2bU` |
+| `obsx.min.js` | `v2.3.0` | **SHA-256** | `sha256-5WP0fbE1nfRwRVLolaDUHkwQPsXuXUOulh1ZHo3iAis=` |
+| `tracer.min.js` | `v2.3.0` | **SHA-384** | `sha384-gNXa01hnhxrzfkcH46VD7YdZZRvGU81Pc38R3WVNw0i0EnOKQu6XKUXjuptND2bU` |

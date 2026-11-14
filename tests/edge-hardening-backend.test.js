@@ -1,5 +1,6 @@
 'use strict';
 
+const priorTrustProxy = process.env.TRUST_PROXY;
 process.env.NODE_ENV = 'test';
 process.env.TRUST_PROXY = 'true';
 
@@ -27,6 +28,11 @@ test.before(async () => {
 });
 
 test.after(async () => {
+  if (priorTrustProxy === undefined) {
+    delete process.env.TRUST_PROXY;
+  } else {
+    process.env.TRUST_PROXY = priorTrustProxy;
+  }
   if (testServer) {
     if (typeof testServer.closeAllConnections === 'function') {
       testServer.closeAllConnections();
@@ -341,4 +347,48 @@ test('edge-hardening: guest sandbox partitions notes via obsx_guest cookie even 
   });
   assert.equal(g1Delete.status, 200);
   assert.equal(g1Delete.json.ok, true);
+});
+
+test('me and me/export enforce auth, CSRF origin checks, and allowed HTTP methods', async () => {
+  const unauthMe = await request('GET', '/api/v1/me', {
+    headers: { 'X-Forwarded-For': '198.51.100.77' },
+  });
+  assert.equal(unauthMe.status, 200);
+  assert.equal(unauthMe.json.ok, true);
+  assert.equal(unauthMe.json.user, null);
+
+  const crossOriginDeleteMe = await request('DELETE', '/api/v1/me', {
+    headers: {
+      'X-Forwarded-For': '198.51.100.77',
+      Origin: 'https://evil.example',
+    },
+  });
+  assert.equal(crossOriginDeleteMe.status, 403);
+  assert.equal(crossOriginDeleteMe.json.error, 'cross_origin_forbidden');
+
+  const unauthDeleteMe = await request('DELETE', '/api/v1/me', {
+    headers: {
+      'X-Forwarded-For': '198.51.100.77',
+      Origin: baseUrl,
+      'Content-Type': 'application/json',
+    },
+  });
+  assert.equal(unauthDeleteMe.status, 401);
+  assert.equal(unauthDeleteMe.json.error, 'unauthorized');
+
+  const putMe = await request('PUT', '/api/v1/me', {
+    headers: { 'X-Forwarded-For': '198.51.100.77' },
+  });
+  assert.equal(putMe.status, 405);
+
+  const unauthExport = await request('GET', '/api/v1/me/export', {
+    headers: { 'X-Forwarded-For': '198.51.100.77' },
+  });
+  assert.equal(unauthExport.status, 401);
+  assert.equal(unauthExport.json.error, 'unauthorized');
+
+  const postExport = await request('POST', '/api/v1/me/export', {
+    headers: { 'X-Forwarded-For': '198.51.100.77' },
+  });
+  assert.equal(postExport.status, 405);
 });

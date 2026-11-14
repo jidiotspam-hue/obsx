@@ -32,7 +32,7 @@ jobs:
       - name: Verify bundle matches source
         run: |
           npm run build
-          git diff --exit-code public/obsx.min.js
+          git diff --exit-code public/obsx.min.js public/tracer.min.js
 
       - name: Run test suite
         run: npm test
