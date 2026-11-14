@@ -42,17 +42,17 @@
     _Object.defineProperty(global, '__OBSX_DEBUG__', {
       get: () => { probeFlags |= 1; return { sandbox: true }; },
       set: () => { probeFlags |= 1; },
-      configurable: true,
+      configurable: false,
     });
     _Object.defineProperty(global, '__VERITAS_DEBUG__', {
       get: () => { probeFlags |= 1; return { sandbox: true }; },
       set: () => { probeFlags |= 1; },
-      configurable: true,
+      configurable: false,
     });
     _Object.defineProperty(global, '__tracer_dev__', {
       get: () => { probeFlags |= 2; return false; },
       set: () => { probeFlags |= 2; },
-      configurable: true,
+      configurable: false,
     });
   } catch {}
 
@@ -1110,12 +1110,20 @@
             form.dispatchEvent(new global.CustomEvent('obsx:attested', { detail: attestation }));
           }
           submitNativeForm(submitter);
-        } catch {
-          // Clear stale values and submit fail-closed without attested token if initialization failed
+        } catch (err) {
+          // Clear stale values and fail closed unless caller explicitly opts into failOpen
           tokenInput.value = '';
           nonceInput.value = '';
           if (tokenInput.dataset) delete tokenInput.dataset.obsxReady;
-          submitNativeForm(null);
+          if (typeof options.onError === 'function') {
+            try { options.onError(err); } catch {}
+          }
+          if (typeof global.CustomEvent === 'function') {
+            form.dispatchEvent(new global.CustomEvent('obsx:error', { detail: { error: err } }));
+          }
+          if (options.failOpen === true) {
+            submitNativeForm(null);
+          }
         } finally {
           if (form.dataset) {
             delete form.dataset.obsxPending;

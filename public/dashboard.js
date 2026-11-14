@@ -231,7 +231,7 @@
               <div>
                 <strong style="font-size: 15px; color: var(--text);">${escapeHtml(p.name)}</strong>
                 <code style="margin-left: 8px; font-size: 11.5px; color: var(--text-muted); background: var(--bg); padding: 2px 6px; border-radius: 4px; border: 1px solid var(--border);">${escapeHtml(p.pid)}</code>
-                <span style="font-size: 11.5px; color: var(--text-muted); margin-left: 8px;">Created ${createdDate}</span>
+                <span style="font-size: 11.5px; color: var(--text-muted); margin-left: 8px;">Created ${escapeHtml(createdDate)}</span>
               </div>
               <div style="display: flex; gap: 8px;">
                 <button type="button" class="btn btn-secondary btn-rotate-sk" data-pid="${escapeHtml(p.pid)}" style="font-size: 11.5px; padding: 4px 10px;">Rotate Secret Key</button>
@@ -1060,8 +1060,8 @@
                 ? 'badge-warn'
                 : 'badge-bad';
               const labelText = isPassive && ev.shadowVerdict
-                ? `OBSERVE (Shadow ${ev.shadowVerdict.toUpperCase()} - Risk ${ev.risk})`
-                : `${ev.verdict.toUpperCase()} (Risk ${ev.risk})`;
+                ? `OBSERVE (Shadow ${String(ev.shadowVerdict || '').toUpperCase()} - Risk ${ev.risk})`
+                : `${String(ev.verdict || '').toUpperCase()} (Risk ${ev.risk})`;
               const timeAgo = Math.max(0, Math.round((Date.now() - ev.timestamp) / 1000));
               return `
                 <div style="padding: 9px 0; border-bottom: 1px solid var(--border);">
@@ -1428,4 +1428,33 @@
   initKinematicRadar();
   fetchAlertsHistory();
   setInterval(fetchAlertsHistory, 6000);
+
+  if (document.getElementById('shield-state')) {
+    const fmtCount = (n) => (n || 0).toLocaleString();
+    const pollBotProtection = () => {
+      fetch('/api/v1/bot-protection')
+        .then((r) => r.json())
+        .then((d) => {
+          if (!d || !d.ok) return;
+          const st = document.getElementById('shield-state');
+          if (!st) return;
+          st.textContent = !d.enabled ? 'DISABLED' : (d.engaged ? 'UNDER ATTACK — ENGAGED' : 'ARMED');
+          st.style.color = d.engaged ? '#e11d48' : '#16a34a';
+          document.getElementById('shield-req').textContent = fmtCount(d.counters.requests);
+          document.getElementById('shield-chal').textContent = fmtCount(d.counters.challenged);
+          document.getElementById('shield-solved').textContent = fmtCount(d.counters.solved);
+          document.getElementById('shield-blocked').textContent = fmtCount(d.counters.blocked);
+          document.getElementById('shield-quar').textContent = fmtCount(d.counters.quarantined);
+          document.getElementById('shield-mode').textContent = d.mode + ' · ' + d.thresholds.difficultyBits + '-bit proof-of-work';
+          const list = document.getElementById('shield-offenders');
+          const offs = (d.topOffenders || []).slice(0, 6);
+          list.textContent = offs.length
+            ? 'Top offenders: ' + offs.map((o) => o.ip + ' (' + o.hits + '×, ' + o.reason + ')').join(' · ')
+            : 'No offenders currently flagged.';
+        })
+        .catch(() => {});
+    };
+    pollBotProtection();
+    setInterval(pollBotProtection, 10000);
+  }
 })();

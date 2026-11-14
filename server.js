@@ -10,6 +10,7 @@
 require('./lib/config');
 
 const http = require('http');
+const net = require('net');
 const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
@@ -20,6 +21,15 @@ const mailer = require('./lib/mailer');
 const updater = require('./lib/updater');
 const { getKv } = require('./lib/kv');
 const botshield = require('./lib/botshield');
+
+const PKG_VERSION = (() => {
+  try {
+    return String(JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8')).version || '2.3.0');
+  } catch {
+    return '2.3.0';
+  }
+})();
+const ALLOWED_SDK_FILES = new Set(['obsx.min.js', 'obsx.js']);
 
 const BIND = process.env.OBSX_BIND || "0.0.0.0";
 const PORT = parseInt(process.env.PORT || '3000', 10);
@@ -47,6 +57,12 @@ const CORS_HEADERS = {
 
 function readBody(req, maxBytes = 512 * 1024, timeoutMs = 10000) {
   return new Promise((resolve, reject) => {
+    const rawCt = String((req.headers && req.headers['content-type']) || '').trim().toLowerCase();
+    if (rawCt && !rawCt.includes('application/json')) {
+      req.resume();
+      return reject(new Error('Unsupported Content-Type'));
+    }
+
     const chunks = [];
     let received = 0;
     let settled = false;
@@ -115,30 +131,90 @@ function sendMethodNotAllowed(res, allowedMethods) {
   });
 }
 
-// Trusted-hop IP resolution: proxy headers are honoured only when a proxy is
-// configured, and the client-appendable LAST x-forwarded-for hop is no longer trusted.
+function ipv4ToUint32(octets) {
+  return ((octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]) >>> 0;
+}
+
+function ipMatchesCidr(parsedIp, cidrText) {
+  if (!parsedIp || !cidrText) return false;
+  const slashIdx = cidrText.indexOf('/');
+  const baseStr = slashIdx >= 0 ? cidrText.slice(0, slashIdx).trim() : cidrText.trim();
+  const base = crypto.parseCanonicalIp(baseStr);
+  if (!base || base.family !== parsedIp.family) return false;
+  if (slashIdx < 0) return base.ip === parsedIp.ip;
+  const prefixLen = Number(cidrText.slice(slashIdx + 1).trim());
+  const maxBits = parsedIp.family === 4 ? 32 : 128;
+  if (!Number.isInteger(prefixLen) || prefixLen < 0 || prefixLen > maxBits) return false;
+  if (parsedIp.family === 4) {
+    const mask = prefixLen === 0 ? 0 : (0xffffffff << (32 - prefixLen)) >>> 0;
+    return (ipv4ToUint32(parsedIp.octets) & mask) === (ipv4ToUint32(base.octets) & mask);
+  }
+  let bits = prefixLen;
+  for (let i = 0; i < 8 && bits > 0; i++) {
+    const take = Math.min(16, bits);
+    const mask = (0xffff << (16 - take)) & 0xffff;
+    if ((parsedIp.groups[i] & mask) !== (base.groups[i] & mask)) return false;
+    bits -= take;
+  }
+  return true;
+}
+
+function isTrustedProxyPeer(rawSocketIp) {
+  const parsed = crypto.parseCanonicalIp(rawSocketIp);
+  if (!parsed) return false;
+  if (parsed.isLoopback) return true;
+  const rawList = String(process.env.TRUSTED_PROXY_CIDRS || '').trim();
+  if (!rawList) return false;
+  for (const cidr of rawList.split(',')) {
+    const entry = cidr.trim();
+    if (entry && ipMatchesCidr(parsed, entry)) return true;
+  }
+  return false;
+}
+
+// Trusted-hop IP resolution: proxy headers are honored ONLY when TRUST_PROXY=true
+// AND the direct TCP socket peer is loopback or in TRUSTED_PROXY_CIDRS.
+// Walks X-Forwarded-For right-to-left skipping trusted proxies to avoid spoofing.
 function getClientIp(req) {
-  const socketIp = req.socket && req.socket.remoteAddress ? req.socket.remoteAddress : '127.0.0.1';
-  if (process.env.TRUST_PROXY === 'true') {
+  const rawSocketIp = req.socket && req.socket.remoteAddress ? req.socket.remoteAddress : '127.0.0.1';
+  const socketIp = crypto.normalizeIp(rawSocketIp) || '127.0.0.1';
+  if (process.env.TRUST_PROXY === 'true' && isTrustedProxyPeer(rawSocketIp)) {
     const cf = String(req.headers['cf-connecting-ip'] || '').trim();
-    if (cf) return cf;
-    const xff = String(req.headers['x-forwarded-for'] || '').split(',').map((s) => s.trim()).filter(Boolean);
-    if (xff.length > 0) return xff[0];
+    if (cf && cf.length <= 45 && net.isIP(cf) !== 0) {
+      return crypto.normalizeIp(cf) || cf;
+    }
+    const xffRaw = String(req.headers['x-forwarded-for'] || '');
+    if (xffRaw) {
+      const hops = xffRaw.split(',').map((s) => s.trim()).filter(Boolean);
+      for (let i = hops.length - 1; i >= 0; i--) {
+        const hop = hops[i];
+        if (hop.length <= 45 && net.isIP(hop) !== 0) {
+          if (!isTrustedProxyPeer(hop) || i === 0) {
+            return crypto.normalizeIp(hop) || hop;
+          }
+        }
+      }
+    }
   }
   return socketIp;
 }
 
 function isRequestHttps(req) {
   if (req.socket && req.socket.encrypted) return true;
-  if (req.headers['x-forwarded-proto'] === 'https') return true;
-  if (req.headers['cf-visitor']) {
-    try {
-      return JSON.parse(req.headers['cf-visitor']).scheme === 'https';
-    } catch {
-      // ignore
+  const rawSocketIp = req.socket && req.socket.remoteAddress ? req.socket.remoteAddress : '127.0.0.1';
+  if (process.env.TRUST_PROXY === 'true' && isTrustedProxyPeer(rawSocketIp)) {
+    const xfp = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
+    if (xfp === 'https') return true;
+    if (xfp === 'http') return false;
+    if (req.headers['cf-visitor']) {
+      try {
+        return JSON.parse(req.headers['cf-visitor']).scheme === 'https';
+      } catch {
+        // ignore
+      }
     }
   }
-  return process.env.NODE_ENV === 'production';
+  return false;
 }
 
 function detectProxyHeaders(req) {
@@ -160,9 +236,21 @@ function detectProxyHeaders(req) {
 const activeSockets = new Set();
 
 function hasValidOperatorKey(req) {
+  const dedicatedOpKey = String(process.env.OBSX_OPERATOR_KEY || '');
+  const headerVal = String(req.headers['x-obsx-operator-key'] || req.headers['x-obsx-key'] || '');
+  if (dedicatedOpKey.length >= 16) {
+    return crypto.safeEqual(headerVal, dedicatedOpKey);
+  }
   const operatorSecret = String(process.env.OBSX_SECRET || '');
   if (operatorSecret.length < 16) return false;
-  return crypto.safeEqual(String(req.headers['x-obsx-key'] || ''), operatorSecret);
+  return crypto.safeEqual(headerVal, operatorSecret);
+}
+
+function hasValidCloudRingKey(req) {
+  const cloudKey = String(process.env.OBSX_CLOUD_KEY || '').trim();
+  if (cloudKey.length < 16) return false;
+  const headerKey = String(req.headers['x-obsx-cloud-key'] || '');
+  return crypto.safeEqual(headerKey, cloudKey);
 }
 
 function getOperatorAllowlist() {
@@ -185,27 +273,49 @@ function isOperatorAuthorized(req, user) {
   return Boolean(normalized && getOperatorAllowlist().has(normalized));
 }
 
-function isTrustedSameOriginMutation(req) {
+function isTrustedSameOriginMutation(req, isHttps = false) {
   const secFetchSite = String(req.headers['sec-fetch-site'] || '').toLowerCase();
   if (secFetchSite && secFetchSite !== 'same-origin' && secFetchSite !== 'none') {
     return false;
   }
+  const reqHost = String(req.headers.host || '').toLowerCase();
+  const expectedProto = isHttps ? 'https:' : 'http:';
   const origin = req.headers.origin;
+  const referer = req.headers.referer;
   if (typeof origin === 'string' && origin.trim()) {
     try {
-      const originHost = new URL(origin).host.toLowerCase();
-      const reqHost = String(req.headers.host || '').toLowerCase();
-      if (!reqHost || originHost !== reqHost) return false;
+      const parsed = new URL(origin);
+      if (!reqHost || parsed.host.toLowerCase() !== reqHost || parsed.protocol !== expectedProto) {
+        return false;
+      }
+    } catch {
+      return false;
+    }
+  } else if (typeof referer === 'string' && referer.trim()) {
+    try {
+      const parsedRef = new URL(referer);
+      if (!reqHost || parsedRef.host.toLowerCase() !== reqHost || parsedRef.protocol !== expectedProto) {
+        return false;
+      }
     } catch {
       return false;
     }
   }
   const contentType = String(req.headers['content-type'] || '').toLowerCase();
-  const xrw = req.headers['x-requested-with'];
-  return contentType.includes('application/json') || Boolean(xrw);
+  if (contentType && !contentType.includes('application/json') && !req.headers['x-requested-with']) {
+    return false;
+  }
+  if (origin || referer || secFetchSite) {
+    const method = String(req.method || 'GET').toUpperCase();
+    const hasDeclaredBody = Number(req.headers['content-length'] || 0) > 0 || Boolean(req.headers['transfer-encoding']);
+    if ((method === 'POST' || method === 'PUT' || method === 'PATCH') && hasDeclaredBody && !contentType.includes('application/json') && !req.headers['x-requested-with']) {
+      return false;
+    }
+  }
+  return true;
 }
 
-async function requireOperatorAccess(req, res) {
+async function requireOperatorAccess(req, res, isHttps = false) {
   if (hasValidOperatorKey(req)) return { via: 'key', email: null };
   const user = await accounts.getSessionUser(req);
   if (!user) {
@@ -216,7 +326,7 @@ async function requireOperatorAccess(req, res) {
     sendJson(res, 403, { ok: false, error: 'operator_required' });
     return null;
   }
-  if (req.method !== 'GET' && req.method !== 'HEAD' && !isTrustedSameOriginMutation(req)) {
+  if (req.method !== 'GET' && req.method !== 'HEAD' && !isTrustedSameOriginMutation(req, isHttps)) {
     sendJson(res, 403, { ok: false, error: 'cross_origin_forbidden' });
     return null;
   }
@@ -392,21 +502,29 @@ function trimVerdict(v) {
   };
 }
 
-// Session issuance is the entry point for gate farming: cap it per IP.
+// Session issuance and note posting budgets cap per-IP burst abuse.
 const sessionIssueBudget = new Map();
-function withinSessionBudget(ip) {
+const notePostBudget = new Map();
+function withinRateBudget(budgetMap, ip, limit, windowMs = 60000, maxEntries = 20000) {
   const now = Date.now();
-  const limit = Number(process.env.OBSX_SESSION_BUDGET || 40);
-  const entry = sessionIssueBudget.get(ip);
+  const entry = budgetMap.get(ip);
   if (!entry || now >= entry.reset) {
-    if (sessionIssueBudget.size > 20000) {
-      for (const [k, v] of sessionIssueBudget) if (now >= v.reset) sessionIssueBudget.delete(k);
+    if (budgetMap.size > maxEntries) {
+      for (const [k, v] of budgetMap) if (now >= v.reset) budgetMap.delete(k);
     }
-    sessionIssueBudget.set(ip, { count: 1, reset: now + 60000 });
+    budgetMap.set(ip, { count: 1, reset: now + windowMs });
     return true;
   }
   entry.count++;
   return entry.count <= limit;
+}
+
+function withinSessionBudget(ip) {
+  return withinRateBudget(sessionIssueBudget, ip, Number(process.env.OBSX_SESSION_BUDGET || 40));
+}
+
+function withinNotePostBudget(ip) {
+  return withinRateBudget(notePostBudget, ip, Number(process.env.OBSX_NOTE_POST_BUDGET || 20));
 }
 
 const shedOffenders = new Map();   // ip -> {count, reason, first}
@@ -500,7 +618,7 @@ const server = http.createServer(async (req, res) => {
   }
   res.setHeader(
     'Content-Security-Policy',
-    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data:; connect-src 'self';"
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self';"
   );
 
   try {
@@ -665,6 +783,7 @@ const server = http.createServer(async (req, res) => {
           ua: req.headers['user-agent'],
           origin: req.headers.origin || '',
           proxyHeaders,
+          fromHttp: true,
           mode: body.mode || undefined,
         });
         return sendJson(res, 200, { ok: true, ...session }, CORS_HEADERS);
@@ -674,7 +793,13 @@ const server = http.createServer(async (req, res) => {
       if (pathname === '/api/v1/signal') {
         if (method !== 'POST') return sendMethodNotAllowed(res, ['POST', 'OPTIONS']);
         const body = await readBody(req);
-        const result = await core.recordSignals(body, { ip: clientIp, proxyHeaders });
+        const result = await core.recordSignals(body, {
+          ip: clientIp,
+          proxyHeaders,
+          ua: req.headers['user-agent'],
+          origin: req.headers.origin || '',
+          fromHttp: true,
+        });
         return sendJson(res, result.ok ? 200 : 400, result, CORS_HEADERS);
       }
 
@@ -694,6 +819,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         const body = await readBody(req);
+        const hasClientUa = 'x-obsx-client-ua' in req.headers;
         const forwardedClientUa =
           typeof req.headers['x-obsx-client-ua'] === 'string'
             ? req.headers['x-obsx-client-ua'].replace(/[\r\n\0]+/g, ' ').trim().slice(0, 512)
@@ -703,6 +829,7 @@ const server = http.createServer(async (req, res) => {
           proxyHeaders,
           headers: req.headers,
           ua: forwardedClientUa,
+          hasClientUa,
           serverToServer: true,
         });
         res.setHeader('X-OBSX-Mode', verdict.mode || 'enforce');
@@ -720,6 +847,8 @@ const server = http.createServer(async (req, res) => {
           proxyHeaders,
           headers: req.headers,
           ua: req.headers['user-agent'],
+          fromHttp: true,
+          hasClientUa: true,
           requireBiometrics: isStrictGateActive(),
         });
         res.setHeader('X-OBSX-Mode', verdict.mode || 'enforce');
@@ -785,6 +914,9 @@ const server = http.createServer(async (req, res) => {
       // 6. User Auth - Logout
       if (pathname === '/api/v1/auth/logout') {
         if (method !== 'POST') return sendMethodNotAllowed(res, ['POST']);
+        if (!isTrustedSameOriginMutation(req, isHttps)) {
+          return sendJson(res, 403, { ok: false, error: 'cross_origin_forbidden' });
+        }
         const result = await accounts.deleteUserSession(req);
         return sendJson(
           res,
@@ -816,6 +948,9 @@ const server = http.createServer(async (req, res) => {
         if (!user) {
           return sendJson(res, 401, { ok: false, error: 'unauthorized', message: 'Authentication required to create projects.' });
         }
+        if (!isTrustedSameOriginMutation(req, isHttps)) {
+          return sendJson(res, 403, { ok: false, error: 'cross_origin_forbidden' });
+        }
         const body = await readBody(req);
         const gate = await gateSelfRequest(req, body, 'Operator Create Project', OPERATOR_GATE);
         if (!gate.allowed) {
@@ -833,8 +968,8 @@ const server = http.createServer(async (req, res) => {
       // 10. Security Alert Dispatcher Test & Incident Stream
       if (pathname === '/api/v1/alert/test') {
         if (method !== 'POST') return sendMethodNotAllowed(res, ['POST']);
-        const user = await accounts.getSessionUser(req);
-        if (!user) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
+        const op = await requireOperatorAccess(req, res, isHttps);
+        if (!op) return;
 
         const body = await readBody(req);
         const gate = await gateSelfRequest(req, body, 'Security Alert Dispatch Probe', OPERATOR_GATE);
@@ -847,8 +982,11 @@ const server = http.createServer(async (req, res) => {
           });
         }
 
-        // Strictly constrain alert dispatches to the authenticated operator email (Prevents Open Mail Relay)
-        const targetEmail = user.email;
+        // Strictly constrain alert dispatches to an allowlisted operator address (Prevents Open Mail Relay)
+        const targetEmail = op.email || getOperatorAllowlist().values().next().value || '';
+        if (!targetEmail) {
+          return sendJson(res, 400, { ok: false, error: 'operator_email_required' });
+        }
 
         const alertRes = await mailer.notifyCriticalIncident({
           code: 'operator_test_probe',
@@ -864,7 +1002,7 @@ const server = http.createServer(async (req, res) => {
 
       if (pathname === '/api/v1/alerts') {
         if (method !== 'GET') return sendMethodNotAllowed(res, ['GET']);
-        if (!(await requireOperatorAccess(req, res))) return;
+        if (!(await requireOperatorAccess(req, res, isHttps))) return;
 
         const alerts = mailer.getRecentAlerts();
         const mailConfig = mailer.getConfig();
@@ -890,9 +1028,14 @@ const server = http.createServer(async (req, res) => {
       if (pathname === '/api/v1/telemetry/live') {
         if (method !== 'GET') return sendMethodNotAllowed(res, ['GET']);
         const telemetry = await core.getLiveTelemetry();
-        // Reason breakdown is operator-facing; anonymous visitors get totals only.
+        // Detailed recent events and reason breakdowns stay operator-facing; anonymous visitors get totals only.
         const teleUser = await accounts.getSessionUser(req);
-        if (!teleUser && telemetry && telemetry.stats) delete telemetry.stats.topReasons;
+        if (!isOperatorAuthorized(req, teleUser) && telemetry && typeof telemetry === 'object') {
+          delete telemetry.recentEvents;
+          if (telemetry.stats && typeof telemetry.stats === 'object') {
+            delete telemetry.stats.topReasons;
+          }
+        }
         return sendJson(res, 200, telemetry, CORS_HEADERS);
       }
 
@@ -900,40 +1043,63 @@ const server = http.createServer(async (req, res) => {
       if (pathname === '/api/v1/system/version') {
         if (method !== 'GET') return sendMethodNotAllowed(res, ['GET', 'OPTIONS']);
         const info = updater.getSystemVersionInfo();
-        res.setHeader('X-OBSX-Build', `${info.version}-${info.shortCommit}-${info.edition}`);
+        const opUser = await accounts.getSessionUser(req);
+        const isOp = isOperatorAuthorized(req, opUser);
+        res.setHeader(
+          'X-OBSX-Build',
+          isOp ? `${info.version}-${info.shortCommit}-${info.edition}` : String(info.version || PKG_VERSION)
+        );
+        if (!isOp) {
+          return sendJson(res, 200, {
+            ok: info.ok,
+            product: info.product,
+            version: info.version,
+            edition: info.edition,
+            safeMode: info.safeMode,
+            safeModeReason: info.safeModeReason,
+            licenseFingerprint: info.licenseFingerprint,
+            licensePolicy: info.licensePolicy,
+            autoUpdate: {
+              enabled: Boolean(info.autoUpdate && info.autoUpdate.enabled),
+              httpSyncEnabled: Boolean(info.autoUpdate && info.autoUpdate.httpSyncEnabled),
+              autoRestartEnabled: Boolean(info.autoUpdate && info.autoUpdate.autoRestartEnabled),
+            },
+            timestamp: info.timestamp,
+          }, CORS_HEADERS);
+        }
         return sendJson(res, 200, info, CORS_HEADERS);
       }
 
       if (pathname === '/api/v1/system/update') {
         if (method !== 'POST') return sendMethodNotAllowed(res, ['POST']);
         // Operator identity required: either configured operator key or operator allowlist email.
-        if (!(await requireOperatorAccess(req, res))) return;
+        if (!(await requireOperatorAccess(req, res, isHttps))) return;
         const updateRes = await updater.checkAndApplyUpstreamUpdate({ force: true });
         return sendJson(res, 200, { ok: true, ...updateRes, versionInfo: updater.getSystemVersionInfo() });
       }
 
       if (pathname === '/api/v1/system/diff') {
         if (method !== 'GET') return sendMethodNotAllowed(res, ['GET']);
-        if (!(await requireOperatorAccess(req, res))) return;
+        if (!(await requireOperatorAccess(req, res, isHttps))) return;
         return sendJson(res, 200, updater.getUpstreamCodeDiff());
       }
 
       if (pathname === '/api/v1/system/adapt') {
         if (method !== 'POST') return sendMethodNotAllowed(res, ['POST']);
-        if (!(await requireOperatorAccess(req, res))) return;
+        if (!(await requireOperatorAccess(req, res, isHttps))) return;
         const adaptRes = updater.autoAdaptDirtyNode();
         return sendJson(res, adaptRes.ok ? 200 : 409, adaptRes);
       }
 
       if (pathname === '/api/v1/system/license') {
         if (method !== 'GET') return sendMethodNotAllowed(res, ['GET']);
-        if (!(await requireOperatorAccess(req, res))) return;
+        if (!(await requireOperatorAccess(req, res, isHttps))) return;
         return sendJson(res, 200, updater.getLicenseStatus());
       }
 
       if (pathname === '/api/v1/system/license/accept') {
         if (method !== 'POST') return sendMethodNotAllowed(res, ['POST']);
-        const op = await requireOperatorAccess(req, res);
+        const op = await requireOperatorAccess(req, res, isHttps);
         if (!op) return;
         const result = updater.acceptLicenseTerms({ acceptedBy: op.email || 'operator-key' });
         const status = result.ok ? 200 : (result.statusCode || 409);
@@ -941,37 +1107,50 @@ const server = http.createServer(async (req, res) => {
       }
 
       if (pathname === '/api/v1/bot-protection') {
-        if (method !== 'GET') return sendMethodNotAllowed(res, ['GET']);
+        if (method !== 'GET' && method !== 'HEAD') return sendMethodNotAllowed(res, ['GET', 'HEAD']);
         // Full addresses only to whoever holds a configured non-empty operator key.
-        return sendJson(res, 200, botshield.stats(hasValidOperatorKey(req)), CORS_HEADERS);
+        const body = JSON.stringify(botshield.stats(hasValidOperatorKey(req)));
+        res.writeHead(200, {
+          'Content-Type': 'application/json; charset=utf-8',
+          'Cache-Control': 'no-store',
+          'X-Content-Type-Options': 'nosniff',
+          ...CORS_HEADERS,
+        });
+        return res.end(method === 'HEAD' ? undefined : body);
       }
 
       if (pathname === '/api/v1/bot-protection/mode') {
         if (method !== 'POST') return sendMethodNotAllowed(res, ['POST']);
         if (!hasValidOperatorKey(req)) {
-          return sendJson(res, 401, { ok: false, error: 'invalid_key' }, CORS_HEADERS);
+          return sendJson(res, 401, { ok: false, error: 'invalid_key' });
         }
         const body = await readBody(req);
         if (!botshield.setMode(body && body.mode)) {
-          return sendJson(res, 400, { ok: false, error: 'invalid_mode' }, CORS_HEADERS);
+          return sendJson(res, 400, { ok: false, error: 'invalid_mode' });
         }
-        return sendJson(res, 200, botshield.stats(true), CORS_HEADERS);
+        return sendJson(res, 200, botshield.stats(true));
       }
 
       if (pathname === '/api/v1/sentinel/ring') {
-        if (method !== 'GET') return sendMethodNotAllowed(res, ['GET', 'OPTIONS']);
+        if (method !== 'GET') return sendMethodNotAllowed(res, ['GET']);
+        if (!hasValidCloudRingKey(req) && !(await requireOperatorAccess(req, res, isHttps))) return;
         const ring = await core.getGlobalThreatRing();
-        return sendJson(res, 200, ring, CORS_HEADERS);
+        const syncSecret = String(process.env.OBSX_CLOUD_SYNC_SECRET || '').trim();
+        if (syncSecret && ring && Array.isArray(ring.activeSubnets)) {
+          const ts = Date.now();
+          ring.ts = ts;
+          ring.sig = crypto.hmac(crypto.canon({ ts, activeSubnets: ring.activeSubnets }), syncSecret);
+        }
+        return sendJson(res, 200, ring);
       }
 
       // 11c. High-Stakes Vault Payment & Scratch Exploit Arena
       if (pathname === '/api/v1/vault/drain') {
         if (method !== 'POST') return sendMethodNotAllowed(res, ['POST', 'OPTIONS']);
         const body = await readBody(req);
-        // Client-supplied "advisory" mode used to short-circuit scoring.
-        // Protection mode comes from project settings, not the caller.
+        // Vault evaluation enforces full OBSX cryptographic verification regardless of caller hints.
         const result = await core.processVaultDrain({
-          mode: body.mode === 'advisory' && !body.seal ? 'obsx' : (body.mode || 'obsx'),
+          mode: 'obsx',
           token: body.token,
           nonce: body.nonce,
           signals: body.signals,
@@ -989,21 +1168,20 @@ const server = http.createServer(async (req, res) => {
       }
 
       if (pathname === '/api/v1/vault/reset') {
-        if (method !== 'POST') return sendMethodNotAllowed(res, ['POST', 'OPTIONS']);
-        const resetUser = await accounts.getSessionUser(req);
-        if (!resetUser) return sendJson(res, 401, { ok: false, error: 'unauthorized' }, CORS_HEADERS);
+        if (method !== 'POST') return sendMethodNotAllowed(res, ['POST']);
+        if (!(await requireOperatorAccess(req, res, isHttps))) return;
         const body = await readBody(req);
-        const gate = await gateSelfRequest(req, body, 'Reset Security Vault Pool');
+        const gate = await gateSelfRequest(req, body, 'Reset Security Vault Pool', OPERATOR_GATE);
         if (!gate.allowed) {
           return sendJson(res, gate.statusCode || 403, {
             ok: false,
             error: gate.error || 'security_gate_rejected',
             reasons: gate.reasons,
             verdict: gate.verdict,
-          }, CORS_HEADERS);
+          });
         }
         const result = await core.resetVault();
-        return sendJson(res, 200, result, CORS_HEADERS);
+        return sendJson(res, 200, result);
       }
 
       // 12. Project Settings Management & Secret Key Rotation
@@ -1026,6 +1204,7 @@ const server = http.createServer(async (req, res) => {
           if (method !== 'POST') return sendMethodNotAllowed(res, ['POST']);
           const user = await accounts.getSessionUser(req);
           if (!user) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
+          if (!isTrustedSameOriginMutation(req, isHttps)) return sendJson(res, 403, { ok: false, error: 'cross_origin_forbidden' });
           const project = await core.loadProject(pid);
           if (!project || project.owner !== user.uid) return sendJson(res, 404, { ok: false, error: 'project_not_found' });
 
@@ -1049,6 +1228,7 @@ const server = http.createServer(async (req, res) => {
           if (method !== 'PATCH' && method !== 'POST') return sendMethodNotAllowed(res, ['PATCH', 'POST']);
           const user = await accounts.getSessionUser(req);
           if (!user) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
+          if (!isTrustedSameOriginMutation(req, isHttps)) return sendJson(res, 403, { ok: false, error: 'cross_origin_forbidden' });
           const project = await core.loadProject(pid);
           if (!project || project.owner !== user.uid) return sendJson(res, 404, { ok: false, error: 'project_not_found' });
           const body = await readBody(req);
@@ -1086,6 +1266,7 @@ const server = http.createServer(async (req, res) => {
           if (method !== 'POST') return sendMethodNotAllowed(res, ['POST']);
           const user = await accounts.getSessionUser(req);
           if (!user) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
+          if (!isTrustedSameOriginMutation(req, isHttps)) return sendJson(res, 403, { ok: false, error: 'cross_origin_forbidden' });
           const project = await core.loadProject(pid);
           if (!project || project.owner !== user.uid) return sendJson(res, 404, { ok: false, error: 'project_not_found' });
 
@@ -1151,6 +1332,9 @@ const server = http.createServer(async (req, res) => {
         if (method === 'DELETE') {
           const user = await accounts.getSessionUser(req);
           if (!user) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
+          if (!isTrustedSameOriginMutation(req, isHttps)) {
+            return sendJson(res, 403, { ok: false, error: 'cross_origin_forbidden' });
+          }
 
           const body = await readBody(req);
           const gate = await gateSelfRequest(req, body, 'Operator Delete Project', OPERATOR_GATE);
@@ -1170,13 +1354,26 @@ const server = http.createServer(async (req, res) => {
       }
 
       // 11. Notes Application API (Benchmark Arena)
+      function extractCookieValue(cookieHeader, targetName) {
+        if (!cookieHeader || typeof cookieHeader !== 'string') return '';
+        for (const part of cookieHeader.split(';')) {
+          const eqIdx = part.indexOf('=');
+          if (eqIdx <= 0) continue;
+          const name = part.slice(0, eqIdx).trim();
+          if (name === targetName) {
+            return part.slice(eqIdx + 1).trim();
+          }
+        }
+        return '';
+      }
+
       function getCallerUid(user, req, clientIp) {
         if (user) return user.uid;
         const cookies = (req && req.headers ? req.headers.cookie : '') || '';
-        const guestCookieMatch = cookies.match(/obsx_guest=([A-Za-z0-9_-]+)/);
+        const candidate = extractCookieValue(cookies, 'obsx_guest');
         // x-guest-id is attacker-controlled: anyone could name another guest's
-        // mailbox. Only the server-set cookie counts as guest identity.
-        const guestSecret = guestCookieMatch ? guestCookieMatch[1] : '';
+        // mailbox. Only exact obsx_guest cookie values matching expected token format count.
+        const guestSecret = /^[A-Za-z0-9_-]{8,128}$/.test(candidate) ? candidate : '';
         if (guestSecret) {
           return `guest_${crypto.sha256(`${clientIp}:${guestSecret}`).slice(0, 14)}`;
         }
@@ -1194,9 +1391,15 @@ const server = http.createServer(async (req, res) => {
 
         if (method === 'POST') {
           const user = await accounts.getSessionUser(req);
+          if (!isTrustedSameOriginMutation(req, isHttps)) {
+            return sendJson(res, 403, { ok: false, error: 'cross_origin_forbidden' });
+          }
+          if (!withinNotePostBudget(clientIp)) {
+            return sendJson(res, 429, { ok: false, error: 'rate_limited', retry_after: 60 });
+          }
           const uid = getCallerUid(user, req, clientIp);
           const body = await readBody(req);
-          const mode = body.protectionMode || 'obsx';
+          const mode = body.protectionMode === 'advisory' ? 'advisory' : 'obsx';
 
           console.log('[NOTES DEBUG] POST /api/v1/notes', {
             mode,
@@ -1214,6 +1417,8 @@ const server = http.createServer(async (req, res) => {
               proxyHeaders,
               headers: req.headers,
               ua: req.headers['user-agent'],
+              fromHttp: true,
+              hasClientUa: true,
               action: 'Save Protected Note',
               requireBiometrics: isStrictGateActive(),
             });
@@ -1252,9 +1457,9 @@ const server = http.createServer(async (req, res) => {
           }
 
           const note = await core.createUserNote(uid, {
-            title: body.title || 'Untitled Note',
-            content: body.content || '',
-            category: body.category || 'General',
+            title: String(body.title || 'Untitled Note').slice(0, 120),
+            content: String(body.content || '').slice(0, 2000),
+            category: String(body.category || 'General').slice(0, 40),
             protection: mode,
           });
 
@@ -1272,6 +1477,9 @@ const server = http.createServer(async (req, res) => {
       if (pathname.startsWith('/api/v1/notes/')) {
         if (method !== 'DELETE') return sendMethodNotAllowed(res, ['DELETE']);
         const user = await accounts.getSessionUser(req);
+        if (!isTrustedSameOriginMutation(req, isHttps)) {
+          return sendJson(res, 403, { ok: false, error: 'cross_origin_forbidden' });
+        }
         const uid = getCallerUid(user, req, clientIp);
         const noteId = pathname.slice('/api/v1/notes/'.length);
         if (!isValidResourceId(noteId)) {
@@ -1301,15 +1509,15 @@ const server = http.createServer(async (req, res) => {
     if (sdkMatch && (method === 'GET' || method === 'HEAD')) {
       const versionTag = sdkMatch[1];
       const scriptFile = sdkMatch[2];
-      const targetScript = path.resolve(PUBLIC_DIR, scriptFile);
+      const targetScript = ALLOWED_SDK_FILES.has(scriptFile) ? path.resolve(PUBLIC_DIR, scriptFile) : '';
 
-      if (targetScript.startsWith(PUBLIC_DIR + path.sep) && fs.existsSync(targetScript)) {
+      if (targetScript && targetScript.startsWith(PUBLIC_DIR + path.sep) && fs.existsSync(targetScript)) {
         const stat = await fsp.stat(targetScript);
         const etag = `W/"${stat.size.toString(16)}-${stat.mtimeMs.toString(16)}"`;
-        const cacheControl =
-          versionTag === 'latest'
-            ? 'public, max-age=3600, stale-while-revalidate=86400'
-            : 'public, max-age=31536000, immutable';
+        const isCurrentPinnedVersion = versionTag === `v${PKG_VERSION}`;
+        const cacheControl = isCurrentPinnedVersion
+          ? 'public, max-age=31536000, immutable'
+          : 'public, max-age=3600, stale-while-revalidate=86400';
 
         const headers = {
           'Content-Type': 'application/javascript; charset=utf-8',
@@ -1431,6 +1639,9 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
     res.end('404 Not Found');
   } catch (err) {
+    if (err.message === 'Unsupported Content-Type') {
+      return sendJson(res, 415, { ok: false, error: 'unsupported_media_type' });
+    }
     if (err.message === 'Payload too large') {
       return sendJson(res, 413, { ok: false, error: 'payload_too_large' });
     }
@@ -1520,9 +1731,7 @@ server.on('connection', (socket) => {
     shedCount++;
     noteShed(peer, 'per_ip_conn_ceiling');
     botshield.noteSocketShed(peer, 'per_ip_conn_ceiling');
-    try {
-      socket.write('HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nRetry-After: 10\r\nConnection: close\r\nX-OBSX-BotShield: shed:per_ip_conn_ceiling\r\nContent-Length: 46\r\n\r\n{"ok":false,"error":"too_many_connections","retryAfter":10}');
-    } catch (err) { /* socket already gone */ }
+    writeSocket503(socket, 'per_ip_conn_ceiling', { ok: false, error: 'too_many_connections', retryAfter: 10 }, 10);
     socket.destroy();
     return;
   }
@@ -1531,12 +1740,25 @@ server.on('connection', (socket) => {
     shedCount++;
     noteShed(socket.remoteAddress || 'unknown', 'hard_conn_ceiling');
     botshield.noteSocketShed(socket.remoteAddress || 'unknown', 'hard_conn_ceiling');
-    try {
-      socket.write('HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nRetry-After: 5\r\nConnection: close\r\nX-OBSX-BotShield: shed:hard_conn_ceiling\r\nContent-Length: 44\r\n\r\n{"ok":false,"error":"overloaded","retryAfter":5}');
-    } catch (err) { /* socket already gone */ }
+    writeSocket503(socket, 'hard_conn_ceiling', { ok: false, error: 'overloaded', retryAfter: 5 }, 5);
     socket.destroy();
   }
 });
+
+function writeSocket503(socket, reason, payload, retryAfterSec) {
+  const body = JSON.stringify(payload);
+  const msg =
+    `HTTP/1.1 503 Service Unavailable\r\n` +
+    `Content-Type: application/json\r\n` +
+    `Retry-After: ${retryAfterSec}\r\n` +
+    `Connection: close\r\n` +
+    `X-OBSX-BotShield: shed:${reason}\r\n` +
+    `Content-Length: ${Buffer.byteLength(body)}\r\n\r\n` +
+    body;
+  try {
+    socket.write(msg);
+  } catch (err) { /* socket already gone */ }
+}
 
 // Graceful process termination
 function handleShutdown(signal) {

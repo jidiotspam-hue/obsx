@@ -10,7 +10,7 @@
   <link rel="alternate icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
   <link rel="stylesheet" href="/style.css?v=2.3.5" />
-  <script src="/obsx.min.js?v=2.3.5" data-obsx-site="pk_obsx_sandbox"></script>
+  <script src="/obsx.min.js?v=2.3.5" data-obsx-site="pk_obsx_sandbox" integrity="sha384-Qk8aUl7O9F3C0UUNPjpH8bzVxG1BrTtJymbutgkWwuQOlLF+tiONlFO7kgvPRH4d" crossorigin="anonymous"></script>
 </head>
 <body>
   <!-- Header / Navigation -->
@@ -327,34 +327,5 @@
   </footer>
 
   <script src="/dashboard.js?v=2.3.5"></script>
-
-<script>
-(function () {
-  var fmt = function (n) { return (n || 0).toLocaleString(); };
-  function poll() {
-    fetch('/api/v1/bot-protection')
-      .then(function (r) { return r.json(); })
-      .then(function (d) {
-        if (!d || !d.ok) return;
-        var st = document.getElementById('shield-state');
-        st.textContent = !d.enabled ? 'DISABLED' : (d.engaged ? 'UNDER ATTACK — ENGAGED' : 'ARMED');
-        st.style.color = d.engaged ? '#e11d48' : '#16a34a';
-        document.getElementById('shield-req').textContent = fmt(d.counters.requests);
-        document.getElementById('shield-chal').textContent = fmt(d.counters.challenged);
-        document.getElementById('shield-solved').textContent = fmt(d.counters.solved);
-        document.getElementById('shield-blocked').textContent = fmt(d.counters.blocked);
-        document.getElementById('shield-quar').textContent = fmt(d.counters.quarantined);
-        document.getElementById('shield-mode').textContent = d.mode + ' · ' + d.thresholds.difficultyBits + '-bit proof-of-work';
-        var list = document.getElementById('shield-offenders');
-        var offs = (d.topOffenders || []).slice(0, 6);
-        list.textContent = offs.length
-          ? 'Top offenders: ' + offs.map(function (o) { return o.ip + ' (' + o.hits + '×, ' + o.reason + ')'; }).join(' · ')
-          : 'No offenders currently flagged.';
-      })
-      .catch(function () {});
-  }
-  if (document.getElementById('shield-state')) { poll(); setInterval(poll, 10000); }
-})();
-</script>
 </body>
 </html>

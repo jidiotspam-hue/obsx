@@ -17,6 +17,7 @@ jobs:
   test:
     name: Run Test Suite
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -28,7 +29,10 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Run build and test suite
+      - name: Verify bundle matches source
         run: |
           npm run build
-          npm test
+          git diff --exit-code public/obsx.min.js
+
+      - name: Run test suite
+        run: npm test

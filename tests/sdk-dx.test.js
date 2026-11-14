@@ -452,6 +452,34 @@ test('dx: compiled obsx.min.js auto-resolves cross-origin script endpoints and p
     );
     assert.equal(formVerify.allowed, true, `Form verification failed: ${JSON.stringify(formVerify.reasons)}`);
     assert.equal(formVerify.verdict, 'accept');
+
+    // Failed attestation must keep protectForm fail-closed (no native submit) unless failOpen: true
+    let failSubmitCount = 0;
+    let failPrevented = false;
+    let capturedError = null;
+    const dispatchedEvents = [];
+    const failListeners = {};
+    const failForm = {
+      dataset: {},
+      querySelector() { return null; },
+      appendChild() {},
+      addEventListener(ev, fn) { failListeners[ev] = fn; },
+      dispatchEvent(ev) { dispatchedEvents.push(ev); return true; },
+      requestSubmit() { failSubmitCount++; },
+      submit() { failSubmitCount++; },
+    };
+    sdk.protectForm(failForm, {
+      site: 'pk_nonexistent_site_key',
+      onError(err) { capturedError = err; },
+    });
+    await failListeners.submit({
+      defaultPrevented: false,
+      preventDefault() { failPrevented = true; },
+    });
+    assert.equal(failPrevented, true);
+    assert.equal(failSubmitCount, 0, 'protectForm must fail closed when attestation fails');
+    assert.ok(capturedError, 'protectForm must invoke onError when attestation fails');
+    assert.ok(dispatchedEvents.some((ev) => ev && ev.type === 'obsx:error'), 'protectForm must dispatch obsx:error event');
   } finally {
     sdk.reset();
   }

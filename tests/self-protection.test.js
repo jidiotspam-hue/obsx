@@ -95,17 +95,37 @@ async function makeAttestedRequest(port, method, path, headers = {}, body = null
   }
 }
 
-test('self-protection: mutating administrative endpoints strictly reject forged or tampered attestation tokens', async () => {
+test('self-protection: mutating administrative endpoints strictly reject forged or tampered attestation tokens and non-operators', async () => {
   const testServer = http.createServer((req, res) => server.emit('request', req, res));
   await new Promise((r) => testServer.listen(0, '127.0.0.1', r));
   const port = testServer.address().port;
+  const prevOperators = process.env.OPERATOR_EMAILS;
 
   try {
-    // 1. Create project with tampered token
+    // 1. Non-operator sessions are rejected on operator-only routes (/alert/test, /vault/reset)
     const fakeToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.forged.signature';
+    process.env.OPERATOR_EMAILS = 'other_admin@obsx.tech';
     const start = await accounts.startEmailAuth('operator_test_gate@obsx.tech', '127.0.0.1');
     const userAuth = await accounts.verifyEmailAuth('operator_test_gate@obsx.tech', start.devCode, false);
     const cookie = `obsx_session=${userAuth.sid}`;
+
+    const nonOpAlertRes = await makeRequest(port, 'POST', '/api/v1/alert/test', { Cookie: cookie }, {
+      recipient: 'operator_test_gate@obsx.tech',
+      token: fakeToken,
+      nonce: '0',
+    });
+    assert.equal(nonOpAlertRes.status, 403);
+    assert.equal(nonOpAlertRes.json.error, 'operator_required');
+
+    const nonOpVaultRes = await makeRequest(port, 'POST', '/api/v1/vault/reset', { Cookie: cookie }, {
+      token: fakeToken,
+      nonce: '0',
+    });
+    assert.equal(nonOpVaultRes.status, 403);
+    assert.equal(nonOpVaultRes.json.error, 'operator_required');
+
+    // Promote user to operator and verify the cryptographic gate also blocks tampered tokens
+    process.env.OPERATOR_EMAILS = 'operator_test_gate@obsx.tech';
 
     const projRes = await makeRequest(port, 'POST', '/api/v1/project', { Cookie: cookie }, {
       name: 'Attacked Project',
@@ -131,9 +151,6 @@ test('self-protection: mutating administrative endpoints strictly reject forged 
 
     // 3. Vault reset with tampered token.
     // /api/v1/vault/reset now needs an operator session before the gate runs
-    // (server.js): loopback/header identity is not an identity. So the stale
-    // expectation "no session -> 403 gate rejection" is replaced by "no session
-    // -> 401", and the gate rejection is still proven with a real session.
     const anonVaultRes = await makeRequest(port, 'POST', '/api/v1/vault/reset', {}, {
       token: fakeToken,
       nonce: '0',
@@ -150,6 +167,8 @@ test('self-protection: mutating administrative endpoints strictly reject forged 
     assert.equal(vaultRes.json.ok, false);
     assert.equal(vaultRes.json.error, 'security_gate_rejected');
   } finally {
+    if (prevOperators === undefined) delete process.env.OPERATOR_EMAILS;
+    else process.env.OPERATOR_EMAILS = prevOperators;
     await new Promise((r) => testServer.close(r));
   }
 });
