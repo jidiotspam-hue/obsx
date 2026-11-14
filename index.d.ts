@@ -96,6 +96,7 @@ export interface OBSXClient {
   sign(payload?: Record<string, unknown>): Promise<OBSXSeal['obsx']>;
   seal<T extends Record<string, unknown>>(payload?: T): Promise<T & OBSXSeal>;
   verify(payload?: Record<string, unknown>): Promise<OBSXVerdict>;
+  enableRecaptchaCompat(options?: { site?: string; force?: boolean }): unknown;
 }
 
 declare global {
@@ -107,11 +108,12 @@ declare global {
 }
 
 export function verifyToken(
-  tokenOrPayload: string | OBSXSeal | OBSXRequestLike | Record<string, unknown>,
+  tokenOrPayload: string | OBSXSeal | OBSXRequestLike | Request | Record<string, unknown>,
   options?: OBSXVerifyOptions
 ): Promise<OBSXVerdict>;
 
 export const verify: typeof verifyToken;
+export const verifyRequest: typeof verifyToken;
 
 export function middleware(
   options?: OBSXMiddlewareOptions

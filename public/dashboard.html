@@ -222,7 +222,10 @@
           <div class="card">
             <div class="card-title">
               <span>Recent Attestation Stream</span>
-              <span class="badge badge-good">Project Polling</span>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <button type="button" class="btn btn-secondary" id="btn-filter-rejects" style="font-size: 11px; padding: 3px 9px;">Rejects Only</button>
+                <span class="badge badge-good">Project Polling</span>
+              </div>
             </div>
             <div id="recent-events" style="font-family: var(--font-mono); font-size: 12.5px; max-height: 240px; overflow-y: auto;">
               <p style="color: var(--text-muted);">Awaiting incoming verifications...</p>

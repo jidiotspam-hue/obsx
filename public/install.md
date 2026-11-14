@@ -13,7 +13,7 @@ Add the OBSX SDK script to the `<head>` of your HTML document before any applica
 <script
   src="https://obsx.tech/sdk/v2.3.1/obsx.min.js"
   data-obsx-site="pk_YOUR_SITE_KEY"
-  integrity="sha384-+4l1iIK2VDIXhaetDJU45YSDl6zHBm2OwD85zj9TKqTMcyfXIClNLxntUcMyEK+i"
+  integrity="sha384-zjDlyXRfz2+UkWMPjUhvyBA8wEWqxEj/OBYXdqwhAYdleL/vk5dqd6KQEPY3e+3i"
   crossorigin="anonymous"
   defer>
 </script>
@@ -108,6 +108,28 @@ app.post('/api/manual-transfer', async (req, res) => {
   await processTransfer(req.body.recipient, req.body.amount, req.body.currency);
   res.json({ ok: true });
 });
+
+// Option 3: Web Standard Request (Next.js App Router / Edge / Deno / Bun)
+import { verifyRequest } from 'obsx-security';
+
+export async function POST(request) {
+  const result = await verifyRequest(request, { secretKey: process.env.OBSX_SECRET_KEY });
+  if (!result.allowed) {
+    return Response.json({ ok: false, reasons: result.reasons }, { status: 403 });
+  }
+  return Response.json({ ok: true, risk: result.risk });
+}
+```
+
+### Migrating from Google reCAPTCHA / Turnstile (60-Second Drop-In)
+Add `data-obsx-compat="recaptcha"` to keep existing `grecaptcha.ready()`, `grecaptcha.execute()`, `.g-recaptcha` containers, and `g-recaptcha-response` / `cf-turnstile-response` server fields working with zero image puzzles:
+```html
+<script
+  src="https://obsx.tech/obsx.min.js"
+  data-obsx-site="pk_YOUR_SITE_KEY"
+  data-obsx-compat="recaptcha"
+  defer>
+</script>
 ```
 
 ---
@@ -116,7 +138,7 @@ app.post('/api/manual-transfer', async (req, res) => {
 
 | Asset | Version | Algorithm | Hash |
 | :--- | :--- | :--- | :--- |
-| `obsx.min.js` | `v2.3.1` | **SHA-384** | `sha384-+4l1iIK2VDIXhaetDJU45YSDl6zHBm2OwD85zj9TKqTMcyfXIClNLxntUcMyEK+i` |
-| `obsx.min.js` | `v2.3.1` | **SHA-256** | `sha256-5c+Su2yRmW9lXZ1T+UHhthNuUn0M1oeE7Zdc+PoPqGU=` |
-| `tracer.min.js` | `v2.3.1` | **SHA-384** | `sha384-+4l1iIK2VDIXhaetDJU45YSDl6zHBm2OwD85zj9TKqTMcyfXIClNLxntUcMyEK+i` |
-| `veritas.min.js` | `v2.3.1` | **SHA-384** | `sha384-+4l1iIK2VDIXhaetDJU45YSDl6zHBm2OwD85zj9TKqTMcyfXIClNLxntUcMyEK+i` |
+| `obsx.min.js` | `v2.3.1` | **SHA-384** | `sha384-zjDlyXRfz2+UkWMPjUhvyBA8wEWqxEj/OBYXdqwhAYdleL/vk5dqd6KQEPY3e+3i` |
+| `obsx.min.js` | `v2.3.1` | **SHA-256** | `sha256-4RTLhRChl8GMOVS/iFOEz5lhdQu04KeQKNxwSwDIjKM=` |
+| `tracer.min.js` | `v2.3.1` | **SHA-384** | `sha384-zjDlyXRfz2+UkWMPjUhvyBA8wEWqxEj/OBYXdqwhAYdleL/vk5dqd6KQEPY3e+3i` |
+| `veritas.min.js` | `v2.3.1` | **SHA-384** | `sha384-zjDlyXRfz2+UkWMPjUhvyBA8wEWqxEj/OBYXdqwhAYdleL/vk5dqd6KQEPY3e+3i` |

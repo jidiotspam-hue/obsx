@@ -627,7 +627,7 @@
   function getScriptConfig() {
     const el = findSdkScript();
     if (!el || typeof el.getAttribute !== 'function') {
-      return { site: null, mode: null, endpoint: null, auto: null, src: '' };
+      return { site: null, mode: null, endpoint: null, auto: null, compat: null, src: '' };
     }
     return {
       site:
@@ -639,6 +639,7 @@
       mode: el.getAttribute('data-obsx-mode') || el.getAttribute('data-mode') || null,
       endpoint: el.getAttribute('data-obsx-endpoint') || el.getAttribute('data-endpoint') || null,
       auto: el.getAttribute('data-obsx-auto') || el.getAttribute('data-auto') || null,
+      compat: el.getAttribute('data-obsx-compat') || el.getAttribute('data-compat') || null,
       src: el.src || el.getAttribute('src') || '',
     };
   }
@@ -1296,6 +1297,117 @@
         throw err;
       }
     },
+
+    enableRecaptchaCompat(opts = {}) {
+      if (global.grecaptcha && !(opts && opts.force)) {
+        return global.grecaptcha;
+      }
+      const sdk = this;
+      const widgetResponses = [];
+      let lastResponse = '';
+
+      const formatCompat = (att) => {
+        if (!att || !att.token) return '';
+        return att.nonce !== null && att.nonce !== undefined && att.nonce !== ''
+          ? `${att.token}::${att.nonce}`
+          : String(att.token);
+      };
+
+      const compatApi = {
+        ready(cb) {
+          const run = () => {
+            sdk.init(opts && opts.site ? { site: opts.site } : {}).catch(() => {});
+            if (typeof cb === 'function') cb();
+          };
+          if (typeof document !== 'undefined' && document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', run, { once: true });
+          } else {
+            _setTimeout(run, 0);
+          }
+        },
+        async execute(siteKey, actionOpts = {}) {
+          const reqOpts = {};
+          if (typeof siteKey === 'string' && siteKey.startsWith('pk_')) {
+            reqOpts.site = siteKey;
+          }
+          const att = await sdk.getAttestation(reqOpts);
+          const packed = formatCompat(att);
+          lastResponse = packed;
+          if (actionOpts && typeof actionOpts.callback === 'function') {
+            actionOpts.callback(packed);
+          }
+          return packed;
+        },
+        render(containerOrSelector, renderOpts = {}) {
+          if (typeof document === 'undefined') return 0;
+          const el = typeof containerOrSelector === 'string'
+            ? document.querySelector(containerOrSelector)
+            : containerOrSelector;
+          if (!el) return 0;
+          const wid = widgetResponses.length;
+          widgetResponses.push('');
+
+          let hidden = null;
+          const parentForm = typeof el.closest === 'function' ? el.closest('form') : null;
+          if (parentForm) {
+            hidden = parentForm.querySelector('input[name="g-recaptcha-response"]');
+            if (!hidden) {
+              hidden = document.createElement('input');
+              hidden.type = 'hidden';
+              hidden.name = 'g-recaptcha-response';
+              parentForm.appendChild(hidden);
+            }
+          }
+
+          const recordResponse = (att) => {
+            const packed = formatCompat(att);
+            widgetResponses[wid] = packed;
+            lastResponse = packed;
+            if (hidden) hidden.value = packed;
+            return packed;
+          };
+
+          const siteArg = typeof renderOpts.sitekey === 'string' && renderOpts.sitekey.startsWith('pk_')
+            ? renderOpts.sitekey
+            : undefined;
+          sdk.render(el, {
+            site: siteArg,
+            theme: renderOpts.theme === 'light' ? 'light' : 'dark',
+            callback: (_tok, att) => {
+              const packed = recordResponse(att);
+              if (typeof renderOpts.callback === 'function') {
+                renderOpts.callback(packed);
+              }
+            },
+          });
+
+          if (parentForm && (!parentForm.dataset || parentForm.dataset.obsxCompatBound !== '1')) {
+            if (parentForm.dataset) parentForm.dataset.obsxCompatBound = '1';
+            sdk.protectForm(parentForm, {
+              site: siteArg,
+              onAttested: recordResponse,
+            });
+          }
+          return wid;
+        },
+        getResponse(widgetId) {
+          if (typeof widgetId === 'number' && widgetResponses[widgetId] !== undefined) {
+            return widgetResponses[widgetId];
+          }
+          return lastResponse;
+        },
+        reset(widgetId) {
+          if (typeof widgetId === 'number' && widgetResponses[widgetId] !== undefined) {
+            widgetResponses[widgetId] = '';
+          }
+          lastResponse = '';
+          sdk.reset();
+        },
+      };
+
+      global.grecaptcha = compatApi;
+      return compatApi;
+    },
   };
 
   if (_freeze) {
@@ -1310,6 +1422,19 @@
     if (typeof window === 'undefined' || typeof document === 'undefined' || typeof _fetch !== 'function') return;
     const cfg = getScriptConfig();
     if (cfg.auto === 'false') return;
+
+    if (cfg.compat === 'recaptcha') {
+      const compat = OBSX.enableRecaptchaCompat({ site: cfg.site || undefined });
+      const recaptchaEls = document.querySelectorAll('.g-recaptcha');
+      for (let i = 0; i < recaptchaEls.length; i++) {
+        if (!recaptchaEls[i].querySelector('.obsx-widget-box')) {
+          compat.render(recaptchaEls[i], {
+            sitekey: recaptchaEls[i].getAttribute('data-sitekey') || undefined,
+            theme: recaptchaEls[i].getAttribute('data-theme') || undefined,
+          });
+        }
+      }
+    }
 
     const widgets = document.querySelectorAll('.obsx-widget');
     for (let i = 0; i < widgets.length; i++) {
