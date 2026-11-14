@@ -1148,3 +1148,326 @@ test('hardening: telemetry privacy, scrub on verify, KV eviction, MIME checks, r
   }
 });
 
+test('hardening: seal monotonicity, blank score rejection, semver prerelease order, mailer fail-closed, cookie conflicts, and missing Content-Type', async () => {
+  const telemetryMod = require('../lib/telemetry');
+  const kvMod = require('../lib/kv');
+  const updater = require('../lib/updater');
+  const nodeCrypto = require('node:crypto');
+  const kv = kvMod.getKv();
+
+  // 1. evaluatePointerDynamics marks instant jump (>50px/ms) invalid directly
+  const instantEval = telemetryMod.evaluatePointerDynamics([
+    { x: 0, y: 0, t: 0 },
+    { x: 500, y: 500, t: 1 },
+    { x: 520, y: 510, t: 40 },
+    { x: 530, y: 525, t: 85 },
+  ]);
+  assert.equal(instantEval.isInstant, true);
+  assert.equal(instantEval.valid, false);
+
+  const proj = await core.createProject({ name: 'inverse_hardening_proj' }, 'u_inverse_test');
+  await core.updateProjectSettings(proj.pid, { minDurationMs: 0 });
+  const freshProj = await core.loadProject(proj.pid);
+
+  // 2. Empty / whitespace score coerces to NaN -> hard score_exceeded rejection
+  const sBlankScore = await core.startSession(freshProj, { ip: '198.51.100.201', action: 'checkout' });
+  const nBlankScore = solvePow(sBlankScore.challenge, sBlankScore.difficulty);
+  const blankSignals = {
+    sh: 'trc_v1_live',
+    hrp: 'hrp_1a2b3c4d',
+    mousePoints: NATURAL_CURVE,
+    keyIntervals: [95, 118, 102, 129],
+    elapsedMs: 1300,
+    audio: 0.00012345,
+  };
+  await core.recordSignals({
+    token: sBlankScore.token,
+    nonce: nBlankScore,
+    signals: blankSignals,
+    tsig: crypto.hmac(
+      crypto.unb64u(sBlankScore.rk),
+      `obsx.sig.v1\n${sBlankScore.session}\n${nBlankScore}\n${crypto.canon(blankSignals)}`
+    ),
+  });
+  const blankScoreVerdict = await core.verify(
+    freshProj,
+    { token: sBlankScore.token, nonce: nBlankScore, score: '   ' },
+    { ip: '198.51.100.201', ua: 'Mozilla/5.0' }
+  );
+  assert.equal(blankScoreVerdict.verdict, 'reject');
+  assert.ok(blankScoreVerdict.reasons.some((r) => r.code === 'score_exceeded'));
+
+  // 3. tampered:bad_hrp adds synthetic_environment weight (>= rejectAt) and is rejected
+  const sBadHrp = await core.startSession(freshProj, { ip: '198.51.100.202', action: 'login' });
+  const nBadHrp = solvePow(sBadHrp.challenge, sBadHrp.difficulty);
+  const badHrpSignals = {
+    sh: 'trc_v1_live',
+    hrp: 'forged_hrp_value',
+    mousePoints: NATURAL_CURVE,
+    keyIntervals: [95, 118, 102, 129],
+    elapsedMs: 1300,
+    audio: 0.00012345,
+  };
+  await core.recordSignals(
+    {
+      token: sBadHrp.token,
+      nonce: nBadHrp,
+      signals: badHrpSignals,
+      tsig: crypto.hmac(
+        crypto.unb64u(sBadHrp.rk),
+        `obsx.sig.v1\n${sBadHrp.session}\n${nBadHrp}\n${crypto.canon(badHrpSignals)}`
+      ),
+    },
+    { fromHttp: true, ip: '198.51.100.202', ua: 'Mozilla/5.0' }
+  );
+  const badHrpVerdict = await core.verify(
+    freshProj,
+    { token: sBadHrp.token, nonce: nBadHrp },
+    { fromHttp: true, ip: '198.51.100.202', ua: 'Mozilla/5.0' }
+  );
+  assert.equal(badHrpVerdict.allowed, false);
+  assert.equal(badHrpVerdict.verdict, 'reject');
+  assert.ok(badHrpVerdict.reasons.some((r) => r.code === 'synthetic_environment'));
+
+  // 4. missing_http stays sticky if signal #1 over HTTP omits tsig and signal #2 provides valid tsig
+  const sMissingHttp = await core.startSession(freshProj, { ip: '198.51.100.203', action: 'login' });
+  const nMissingHttp = solvePow(sMissingHttp.challenge, sMissingHttp.difficulty);
+  await core.recordSignals(
+    {
+      token: sMissingHttp.token,
+      nonce: nMissingHttp,
+      signals: blankSignals,
+    },
+    { fromHttp: true, ip: '198.51.100.203', ua: 'Mozilla/5.0' }
+  );
+  await core.recordSignals(
+    {
+      token: sMissingHttp.token,
+      nonce: nMissingHttp,
+      signals: blankSignals,
+      tsig: crypto.hmac(
+        crypto.unb64u(sMissingHttp.rk),
+        `obsx.sig.v1\n${sMissingHttp.session}\n${nMissingHttp}\n${crypto.canon(blankSignals)}`
+      ),
+    },
+    { fromHttp: true, ip: '198.51.100.203', ua: 'Mozilla/5.0' }
+  );
+  const stickyMissingVerdict = await core.verify(
+    freshProj,
+    { token: sMissingHttp.token, nonce: nMissingHttp },
+    { fromHttp: true, ip: '198.51.100.203', ua: 'Mozilla/5.0' }
+  );
+  assert.equal(stickyMissingVerdict.verdict, 'reject');
+  assert.ok(stickyMissingVerdict.reasons.some((r) => r.code === 'missing_telemetry_seal'));
+
+  // 4b. Signal #1 with valid tsig followed by Signal #2 over HTTP without tsig still flags missing_telemetry_seal
+  const sDowngradeHttp = await core.startSession(freshProj, { ip: '198.51.100.208', action: 'login' });
+  const nDowngradeHttp = solvePow(sDowngradeHttp.challenge, sDowngradeHttp.difficulty);
+  await core.recordSignals(
+    {
+      token: sDowngradeHttp.token,
+      nonce: nDowngradeHttp,
+      signals: blankSignals,
+      tsig: crypto.hmac(
+        crypto.unb64u(sDowngradeHttp.rk),
+        `obsx.sig.v1\n${sDowngradeHttp.session}\n${nDowngradeHttp}\n${crypto.canon(blankSignals)}`
+      ),
+    },
+    { fromHttp: true, ip: '198.51.100.208', ua: 'Mozilla/5.0' }
+  );
+  await core.recordSignals(
+    {
+      token: sDowngradeHttp.token,
+      nonce: nDowngradeHttp,
+      signals: blankSignals,
+    },
+    { fromHttp: true, ip: '198.51.100.208', ua: 'Mozilla/5.0' }
+  );
+  const downgradeMissingVerdict = await core.verify(
+    freshProj,
+    { token: sDowngradeHttp.token, nonce: nDowngradeHttp },
+    { fromHttp: true, ip: '198.51.100.208', ua: 'Mozilla/5.0' }
+  );
+  assert.equal(downgradeMissingVerdict.verdict, 'reject');
+  assert.ok(downgradeMissingVerdict.reasons.some((r) => r.code === 'missing_telemetry_seal'));
+
+  // 5. Future clock-skew > 60s reports stale_signature
+  const sFutureSkew = await core.startSession(freshProj, { ip: '198.51.100.204', action: 'login' });
+  const nFutureSkew = solvePow(sFutureSkew.challenge, sFutureSkew.difficulty);
+  await core.recordSignals({
+    token: sFutureSkew.token,
+    nonce: nFutureSkew,
+    signals: blankSignals,
+    tsig: crypto.hmac(
+      crypto.unb64u(sFutureSkew.rk),
+      `obsx.sig.v1\n${sFutureSkew.session}\n${nFutureSkew}\n${crypto.canon(blankSignals)}`
+    ),
+  });
+  const futureTs = Date.now() + 120000;
+  const futureAction = { token: sFutureSkew.token, nonce: nFutureSkew, action: 'transfer', amount: 10 };
+  const futureSig = crypto.signActionSeal(sFutureSkew.rk, sFutureSkew.session, futureTs, nFutureSkew, { action: 'transfer', amount: 10 });
+  const futureVerdict = await core.verify(
+    freshProj,
+    { ...futureAction, seal: { ts: futureTs, sig: futureSig } },
+    { ip: '198.51.100.204', ua: 'Mozilla/5.0' }
+  );
+  assert.equal(futureVerdict.verdict, 'reject');
+  assert.ok(futureVerdict.reasons.some((r) => r.code === 'stale_signature'));
+
+  // 6. Conflicting or malformed duplicate __Host-obsx_session fails closed
+  const victimEmail = `dup_cookie_${crypto.randomId(4).toLowerCase()}@example.com`;
+  const victimOtp = await accounts.startEmailAuth(victimEmail, '198.51.100.205');
+  const victimSession = await accounts.verifyEmailAuth(victimEmail, victimOtp.devCode, true);
+  assert.equal(
+    await accounts.getSessionUser({
+      headers: { cookie: `__Host-obsx_session=x; __Host-obsx_session=${victimSession.sid}` },
+    }),
+    null
+  );
+  assert.equal(
+    (
+      await accounts.getSessionUser({
+        headers: { cookie: `obsx_session=attacker_noise_1234; obsx_session=more_noise; __Host-obsx_session=${victimSession.sid}` },
+      })
+    )?.email,
+    victimEmail
+  );
+
+  // 7. 25th distinct /24 subnet is NOT locked out globally by earlier probes on victim mailbox
+  const multiIpEmail = `fresh_subnet_${crypto.randomId(4)}@example.com`;
+  for (let i = 1; i <= 24; i++) {
+    await accounts.startEmailAuth(multiIpEmail, `100.65.${i}.10`);
+  }
+  const fresh25 = await accounts.startEmailAuth(multiIpEmail, '100.66.1.10');
+  assert.equal(fresh25.ok, true);
+
+  // 8. Production unconfigured SMTP fails closed for alerts & does not persist OTP hash
+  const savedEnv = {
+    NODE_ENV: process.env.NODE_ENV,
+    SMTP_HOST: process.env.SMTP_HOST,
+    SMTP_USER: process.env.SMTP_USER,
+    SMTP_PASS: process.env.SMTP_PASS,
+  };
+  try {
+    process.env.NODE_ENV = 'production';
+    delete process.env.SMTP_HOST;
+    delete process.env.SMTP_USER;
+    delete process.env.SMTP_PASS;
+    const prodAlert = await mailer.sendSecurityAlert('op@obsx.tech', {
+      title: 'Prod Alert Fail Closed',
+      summary: 'Should not succeed without SMTP in production',
+      severity: 'HIGH',
+    });
+    assert.equal(prodAlert.ok, false);
+    assert.equal(prodAlert.error, 'smtp_unconfigured');
+
+    const failEmail = `no_persist_${crypto.randomId(4)}@example.com`;
+    await assert.rejects(
+      () => accounts.startEmailAuth(failEmail, '100.67.1.10'),
+      /smtp_unconfigured/i
+    );
+    const leakedOtp = await kv.hgetall(`tr:ec:${crypto.sha256(failEmail)}`);
+    assert.deepEqual(leakedOtp, {});
+  } finally {
+    if (savedEnv.NODE_ENV === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = savedEnv.NODE_ENV;
+    if (savedEnv.SMTP_HOST !== undefined) process.env.SMTP_HOST = savedEnv.SMTP_HOST;
+    if (savedEnv.SMTP_USER !== undefined) process.env.SMTP_USER = savedEnv.SMTP_USER;
+    if (savedEnv.SMTP_PASS !== undefined) process.env.SMTP_PASS = savedEnv.SMTP_PASS;
+  }
+
+  // 9. Updater blocks prerelease downgrade (2.3.1 -> 2.3.1-alpha.1) and numeric prerelease downgrade
+  const tmpPreDir = fs.mkdtempSync(path.join(os.tmpdir(), 'obsx-semver-pre-'));
+  try {
+    const keyPair = nodeCrypto.generateKeyPairSync('ed25519');
+    const pubPem = keyPair.publicKey.export({ type: 'spki', format: 'pem' });
+    fs.writeFileSync(path.join(tmpPreDir, 'package.json'), JSON.stringify({ name: 'obsx-security', version: '2.3.1-alpha.10' }));
+    const downPkgBuf = Buffer.from(JSON.stringify({ name: 'obsx-security', version: '2.3.1-alpha.2' }));
+    const commitSha = 'a'.repeat(40);
+    const manifestBuf = Buffer.from(
+      JSON.stringify({
+        commit: commitSha,
+        files: { 'package.json': nodeCrypto.createHash('sha256').update(downPkgBuf).digest('hex') },
+      })
+    );
+    const manifestSig = nodeCrypto.sign(null, manifestBuf, keyPair.privateKey);
+    const preRes = await updater.checkAndApplyUpstreamUpdate({
+      rootDir: tmpPreDir,
+      force: true,
+      silent: true,
+      env: { OBSX_HTTP_SYNC: 'true', OBSX_UPDATE_PUBLIC_KEY: pubPem },
+      assetFiles: ['package.json'],
+      manifestBuffer: manifestBuf,
+      manifestSigBuffer: manifestSig,
+      fetchBuffer: async (url) => {
+        if (url.includes('/commits/')) return Buffer.from(JSON.stringify({ sha: commitSha }));
+        return downPkgBuf;
+      },
+    });
+    assert.equal(preRes.updated, false);
+    assert.match(preRes.status, /version_downgrade_rejected/);
+
+    // Also block 2.3.1 -> 2.3.1-alpha.1 prerelease downgrade
+    fs.writeFileSync(path.join(tmpPreDir, 'package.json'), JSON.stringify({ name: 'obsx-security', version: '2.3.1' }));
+    const downAlphaBuf = Buffer.from(JSON.stringify({ name: 'obsx-security', version: '2.3.1-alpha.1' }));
+    const alphaManifestBuf = Buffer.from(
+      JSON.stringify({
+        commit: commitSha,
+        files: { 'package.json': nodeCrypto.createHash('sha256').update(downAlphaBuf).digest('hex') },
+      })
+    );
+    const alphaManifestSig = nodeCrypto.sign(null, alphaManifestBuf, keyPair.privateKey);
+    const alphaRes = await updater.checkAndApplyUpstreamUpdate({
+      rootDir: tmpPreDir,
+      force: true,
+      silent: true,
+      env: { OBSX_HTTP_SYNC: 'true', OBSX_UPDATE_PUBLIC_KEY: pubPem },
+      assetFiles: ['package.json'],
+      manifestBuffer: alphaManifestBuf,
+      manifestSigBuffer: alphaManifestSig,
+      fetchBuffer: async (url) => {
+        if (url.includes('/commits/')) return Buffer.from(JSON.stringify({ sha: commitSha }));
+        return downAlphaBuf;
+      },
+    });
+    assert.equal(alphaRes.updated, false);
+    assert.match(alphaRes.status, /version_downgrade_rejected/);
+  } finally {
+    fs.rmSync(tmpPreDir, { recursive: true, force: true });
+  }
+
+  // 10. POST with missing Content-Type and non-empty body rejects with 403 cross_origin_forbidden (and 415 with X-Requested-With)
+  const postNoCt = (extraHeaders = {}) =>
+    new Promise((resolve, reject) => {
+      const req = http.request(
+        {
+          hostname: '127.0.0.1',
+          port: Number(new URL(baseUrl).port),
+          path: '/api/v1/notes',
+          method: 'POST',
+          headers: {
+            Host: new URL(baseUrl).host,
+            Origin: baseUrl,
+            'Content-Length': 15,
+            ...extraHeaders,
+          },
+        },
+        (res) => {
+          let body = '';
+          res.on('data', (c) => (body += c));
+          res.on('end', () => resolve({ status: res.statusCode, json: JSON.parse(body) }));
+        }
+      );
+      req.on('error', reject);
+      req.write('{"title":"x"}  ');
+      req.end();
+    });
+  const noCtCsrf = await postNoCt();
+  assert.equal(noCtCsrf.status, 403);
+  assert.equal(noCtCsrf.json.error, 'cross_origin_forbidden');
+
+  const noCtMime = await postNoCt({ 'X-Requested-With': 'fetch' });
+  assert.equal(noCtMime.status, 415);
+  assert.equal(noCtMime.json.error, 'unsupported_media_type');
+});
+

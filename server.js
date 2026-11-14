@@ -59,12 +59,13 @@ function readBody(req, maxBytes = 512 * 1024, timeoutMs = 10000) {
   return new Promise((resolve, reject) => {
     const rawCt = String((req.headers && req.headers['content-type']) || '').trim().toLowerCase();
     const mediaType = rawCt ? rawCt.split(';')[0].trim() : '';
-    if (mediaType && mediaType !== 'application/json') {
+    const method = String((req && req.method) || 'GET').toUpperCase();
+    const expectsJsonBody = method === 'POST' || method === 'PUT' || method === 'PATCH';
+    const hasDeclaredBody = Number((req.headers && req.headers['content-length']) || 0) > 0 || Boolean(req.headers && req.headers['transfer-encoding']);
+    if ((mediaType && mediaType !== 'application/json') || (expectsJsonBody && hasDeclaredBody && mediaType !== 'application/json')) {
       req.resume();
       return reject(new Error('Unsupported Content-Type'));
     }
-    const method = String((req && req.method) || 'GET').toUpperCase();
-    const expectsJsonBody = method === 'POST' || method === 'PUT' || method === 'PATCH';
 
     const chunks = [];
     let received = 0;
@@ -1007,7 +1008,8 @@ const server = http.createServer(async (req, res) => {
           severity: 'INFO',
           recipient: targetEmail,
         });
-        return sendJson(res, 200, { ok: true, ...alertRes });
+        const alertStatus = alertRes && alertRes.ok === false && alertRes.dispatch && alertRes.dispatch.error === 'smtp_unconfigured' ? 503 : 200;
+        return sendJson(res, alertStatus, { ...alertRes, ok: Boolean(alertRes && alertRes.ok !== false) });
       }
 
       if (pathname === '/api/v1/alerts') {
