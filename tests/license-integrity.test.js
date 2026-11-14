@@ -5,6 +5,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const nodeCrypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 
 const updater = require('../lib/updater');
@@ -294,12 +295,58 @@ test('updater: drift advisory covers non-git Safe Mode and Strategy B / restart 
     assert.equal(invalidShaRes.updated, false);
     assert.equal(invalidShaRes.status, 'up_to_date');
 
-    // 3. With OBSX_HTTP_SYNC=true: CRLF match skips write, empty buffer skips write, valid change writes & rebuilds
+    // 3a. Unsigned Strategy B fails closed unless Ed25519 manifest or OBSX_ALLOW_UNVERIFIED_UPDATES=true is set
+    const unsignedBlocked = await updater.checkAndApplyUpstreamUpdate({
+      force: true,
+      rootDir: tmpDir,
+      env: { OBSX_HTTP_SYNC: 'true' },
+      assetFiles: ['LICENSE', 'lib/updater.js'],
+      fetchBuffer: async (url) => {
+        if (url.includes('/commits/')) return commitPayload;
+        return Buffer.from('unsigned-payload');
+      },
+    });
+    assert.equal(unsignedBlocked.updated, false);
+    assert.equal(unsignedBlocked.status, 'signature_verification_required');
+
+    // 3b. Valid Ed25519 signed manifest updates files atomically
+    const { publicKey, privateKey } = nodeCrypto.generateKeyPairSync('ed25519');
+    const pubPem = publicKey.export({ type: 'spki', format: 'pem' }).toString();
+    const updatedCorePayload = Buffer.from('module.exports = { signed: true };\n');
+    const manifestObj = {
+      commit: validSha,
+      files: {
+        'lib/core.js': nodeCrypto.createHash('sha256').update(updatedCorePayload).digest('hex'),
+      },
+    };
+    const manifestBuf = Buffer.from(JSON.stringify(manifestObj));
+    const sigBuf = nodeCrypto.sign(null, manifestBuf, privateKey);
+    const signedSyncRes = await updater.checkAndApplyUpstreamUpdate({
+      force: true,
+      rootDir: tmpDir,
+      env: { OBSX_HTTP_SYNC: 'true', OBSX_UPDATE_PUBLIC_KEY: pubPem },
+      assetFiles: ['lib/core.js'],
+      triggerRestart: () => {},
+      fetchBuffer: async (url) => {
+        if (url.includes('/commits/')) return commitPayload;
+        if (url.endsWith('/obsx-release-manifest.json')) return manifestBuf;
+        if (url.endsWith('/obsx-release-manifest.sig')) return sigBuf;
+        if (url.endsWith('/lib/core.js')) return updatedCorePayload;
+        return Buffer.alloc(0);
+      },
+    });
+    assert.equal(signedSyncRes.updated, true);
+    assert.equal(fs.readFileSync(path.join(tmpDir, 'lib/core.js'), 'utf8'), 'module.exports = { signed: true };\n');
+
+    // Reset lib/core.js before break-glass CRLF/empty-buffer test
+    fs.writeFileSync(path.join(tmpDir, 'lib/core.js'), 'module.exports = { v: 1 };\n');
+
+    // 3c. With OBSX_HTTP_SYNC=true + break-glass opt-in: CRLF match skips write, empty buffer skips write, valid change writes & rebuilds
     let restarted = false;
     const syncRes = await updater.checkAndApplyUpstreamUpdate({
       force: true,
       rootDir: tmpDir,
-      env: { OBSX_HTTP_SYNC: 'true' },
+      env: { OBSX_HTTP_SYNC: 'true', OBSX_ALLOW_UNVERIFIED_UPDATES: 'true' },
       assetFiles: ['LICENSE', 'lib/core.js', 'lib/updater.js'],
       triggerRestart: () => { restarted = true; },
       fetchBuffer: async (url) => {
@@ -316,6 +363,15 @@ test('updater: drift advisory covers non-git Safe Mode and Strategy B / restart 
     assert.equal(fs.readFileSync(path.join(tmpDir, 'LICENSE'), 'utf8'), 'line1\nline2\n');
     assert.equal(fs.readFileSync(path.join(tmpDir, 'lib/core.js'), 'utf8'), 'module.exports = { v: 1 };\n');
     assert.equal(fs.readFileSync(path.join(tmpDir, 'lib/updater.js'), 'utf8'), 'module.exports = { updated: true };\n');
+
+    // 3d. Rejects branch flag injection & validates hybrid ring entries strictly
+    const badBranchRes = await updater.checkAndApplyUpstreamUpdate({
+      force: true,
+      rootDir: tmpDir,
+      env: { OBSX_UPSTREAM_BRANCH: '--upload-pack=touch /tmp/pwn' },
+    });
+    assert.equal(badBranchRes.updated, false);
+    assert.equal(badBranchRes.status, 'invalid_upstream_config');
 
     // 4. triggerHotRestartIfConfigured stays opt-in unless OBSX_AUTO_RESTART === 'true'
     let spawnCount = 0;
