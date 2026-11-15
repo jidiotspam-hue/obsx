@@ -79,12 +79,29 @@
     authMsg.textContent = text;
   }
 
+  async function readJsonSafe(res) {
+    try {
+      const data = await res.json();
+      return data && typeof data === 'object' ? data : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function extractResponseError(res, data, fallback = 'Request failed') {
+    if (data && typeof data === 'object') {
+      const msg = data.message || data.error || (data.dispatch && data.dispatch.error) || data.reason;
+      if (msg) return String(msg);
+    }
+    return res && Number.isFinite(res.status) && res.status > 0 ? `HTTP ${res.status}` : fallback;
+  }
+
   // 1. Check Session State on Load
   async function checkAuth() {
     try {
       const res = await fetch('/api/v1/me');
-      const data = await res.json();
-      if (data.ok && data.user) {
+      const data = await readJsonSafe(res);
+      if (res.ok && data && data.ok && data.user) {
         renderLoggedIn(data.user);
       } else {
         renderLoggedOut();
@@ -176,12 +193,7 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, origins, token, nonce }),
       });
-      let data = null;
-      try {
-        data = await res.json();
-      } catch {
-        data = null;
-      }
+      const data = await readJsonSafe(res);
       if (res.ok && data && data.ok && data.project) {
         if (formCreateProject) formCreateProject.style.display = 'none';
         if (inpNewProjectName) inpNewProjectName.value = '';
@@ -189,8 +201,7 @@
         showRevealedKey(data.project.secretKey);
         await loadProjects();
       } else {
-        const errMsg = (data && (data.message || data.error)) || `HTTP ${res.status}`;
-        alert('Failed to create project: ' + errMsg);
+        alert('Failed to create project: ' + extractResponseError(res, data));
       }
     } catch (err) {
       alert('Error creating project: ' + err.message);
@@ -204,8 +215,8 @@
     if (!projectsList) return;
     try {
       const res = await fetch('/api/v1/projects');
-      const data = await res.json();
-      if (!data.ok || !Array.isArray(data.projects)) {
+      const data = await readJsonSafe(res);
+      if (!res.ok || !data || !data.ok || !Array.isArray(data.projects)) {
         projectsList.innerHTML = '<p style="color:var(--text-muted); font-size:13px;">Unable to load projects.</p>';
         return;
       }
@@ -373,11 +384,11 @@
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ token, nonce }),
             });
-            const data = await res.json();
-            if (data.ok && data.secretKey) {
+            const data = await readJsonSafe(res);
+            if (res.ok && data && data.ok && data.secretKey) {
               showRevealedKey(data.secretKey);
             } else {
-              alert('Key rotation failed: ' + (data.error || 'Unknown error'));
+              alert('Key rotation failed: ' + extractResponseError(res, data));
             }
           } catch (err) {
             alert('Error rotating key: ' + err.message);
@@ -388,149 +399,117 @@
         });
       });
 
-      projectsList.querySelectorAll('.btn-delete-proj').forEach((btn) => {
-        btn.addEventListener('click', async () => {
-          const pid = btn.getAttribute('data-pid');
-          const name = btn.getAttribute('data-name');
-          if (!pid) return;
-          if (!confirm(`Are you sure you want to permanently delete "${name}" (${pid})?\n\nAll client requests using this site key will immediately be blocked.`)) {
-            return;
-          }
-          btn.disabled = true;
-          const { token, nonce } = await harvestAttestation();
-          try {
-            const res = await fetch(`/api/v1/project/${pid}`, {
-              method: 'DELETE',
-              headers: {
-                'Content-Type': 'application/json',
-                'X-OBSX-Token': token || '',
-                'X-OBSX-Nonce': nonce || '',
-              },
-              body: JSON.stringify({ token, nonce }),
-            });
-            const data = await res.json();
-            if (data.ok) {
-              await loadProjects();
-            } else {
-              alert('Failed to delete project: ' + (data.error || 'Unknown error'));
+      function bindProjectMutation(selector, { buildRequest, failurePrefix, errorPrefix, confirmAction }) {
+        projectsList.querySelectorAll(selector).forEach((btn) => {
+          btn.addEventListener('click', async () => {
+            const pid = btn.getAttribute('data-pid');
+            if (!pid) return;
+            if (confirmAction && !confirmAction(btn, pid)) return;
+            btn.disabled = true;
+            const { token, nonce } = await harvestAttestation();
+            try {
+              const { url, init } = buildRequest(btn, pid, { token, nonce });
+              const res = await fetch(url, init);
+              const data = await readJsonSafe(res);
+              if (res.ok && data && data.ok) {
+                await loadProjects();
+              } else {
+                alert(`${failurePrefix}: ` + extractResponseError(res, data));
+                btn.disabled = false;
+              }
+            } catch (err) {
+              alert(`${errorPrefix}: ` + err.message);
               btn.disabled = false;
             }
-          } catch (err) {
-            alert('Error deleting project: ' + err.message);
-            btn.disabled = false;
-          }
+          });
         });
+      }
+
+      bindProjectMutation('.btn-delete-proj', {
+        confirmAction: (btn, pid) => {
+          const name = btn.getAttribute('data-name');
+          return confirm(`Are you sure you want to permanently delete "${name}" (${pid})?\n\nAll client requests using this site key will immediately be blocked.`);
+        },
+        buildRequest: (_btn, pid, { token, nonce }) => ({
+          url: `/api/v1/project/${pid}`,
+          init: {
+            method: 'DELETE',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-OBSX-Token': token || '',
+              'X-OBSX-Nonce': nonce || '',
+            },
+            body: JSON.stringify({ token, nonce }),
+          },
+        }),
+        failurePrefix: 'Failed to delete project',
+        errorPrefix: 'Error deleting project',
       });
 
       // Operational Gate Mode Toggle (Enforce vs Passive)
-      projectsList.querySelectorAll('.btn-toggle-mode').forEach((btn) => {
-        btn.addEventListener('click', async () => {
-          const pid = btn.getAttribute('data-pid');
-          const currentMode = btn.getAttribute('data-mode');
-          const nextMode = currentMode === 'passive' ? 'enforce' : 'passive';
-
-          btn.disabled = true;
-          const { token, nonce } = await harvestAttestation();
-          try {
-            const res = await fetch(`/api/v1/project/${pid}/settings`, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ mode: nextMode, token, nonce }),
-            });
-            const data = await res.json();
-            if (data.ok) {
-              await loadProjects();
-            } else {
-              alert('Failed to update mode: ' + (data.error || 'Unknown error'));
-              btn.disabled = false;
-            }
-          } catch (err) {
-            alert('Error updating mode: ' + err.message);
-            btn.disabled = false;
-          }
-        });
+      bindProjectMutation('.btn-toggle-mode', {
+        buildRequest: (btn, pid, { token, nonce }) => ({
+          url: `/api/v1/project/${pid}/settings`,
+          init: {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              mode: btn.getAttribute('data-mode') === 'passive' ? 'enforce' : 'passive',
+              token,
+              nonce,
+            }),
+          },
+        }),
+        failurePrefix: 'Failed to update mode',
+        errorPrefix: 'Error updating mode',
       });
 
       // Circuit Breaker Toggle & Reset Handlers
-      projectsList.querySelectorAll('.btn-toggle-cb').forEach((btn) => {
-        btn.addEventListener('click', async () => {
-          const pid = btn.getAttribute('data-pid');
-          const isCurrentlyEnabled = btn.getAttribute('data-enabled') === 'true';
-          const nextState = !isCurrentlyEnabled;
-
-          btn.disabled = true;
-          const { token, nonce } = await harvestAttestation();
-          try {
-            const res = await fetch(`/api/v1/project/${pid}/settings`, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ adaptiveCircuitBreaker: nextState, token, nonce }),
-            });
-            const data = await res.json();
-            if (data.ok) {
-              await loadProjects();
-            } else {
-              alert('Failed to update circuit breaker: ' + (data.error || 'Unknown error'));
-              btn.disabled = false;
-            }
-          } catch (err) {
-            alert('Error updating circuit breaker: ' + err.message);
-            btn.disabled = false;
-          }
-        });
+      bindProjectMutation('.btn-toggle-cb', {
+        buildRequest: (btn, pid, { token, nonce }) => ({
+          url: `/api/v1/project/${pid}/settings`,
+          init: {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              adaptiveCircuitBreaker: btn.getAttribute('data-enabled') !== 'true',
+              token,
+              nonce,
+            }),
+          },
+        }),
+        failurePrefix: 'Failed to update circuit breaker',
+        errorPrefix: 'Error updating circuit breaker',
       });
 
-      projectsList.querySelectorAll('.btn-toggle-openai').forEach((btn) => {
-        btn.addEventListener('click', async () => {
-          const pid = btn.getAttribute('data-pid');
-          const isCurrentlyEnabled = btn.getAttribute('data-enabled') === 'true';
-          const nextState = !isCurrentlyEnabled;
-
-          btn.disabled = true;
-          const { token, nonce } = await harvestAttestation();
-          try {
-            const res = await fetch(`/api/v1/project/${pid}/settings`, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ blockOpenAiScrapers: nextState, token, nonce }),
-            });
-            const data = await res.json();
-            if (data.ok) {
-              await loadProjects();
-            } else {
-              alert('Failed to update OpenAI scraper setting: ' + (data.error || 'Unknown error'));
-              btn.disabled = false;
-            }
-          } catch (err) {
-            alert('Error updating OpenAI scraper setting: ' + err.message);
-            btn.disabled = false;
-          }
-        });
+      bindProjectMutation('.btn-toggle-openai', {
+        buildRequest: (btn, pid, { token, nonce }) => ({
+          url: `/api/v1/project/${pid}/settings`,
+          init: {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              blockOpenAiScrapers: btn.getAttribute('data-enabled') !== 'true',
+              token,
+              nonce,
+            }),
+          },
+        }),
+        failurePrefix: 'Failed to update OpenAI scraper setting',
+        errorPrefix: 'Error updating OpenAI scraper setting',
       });
 
-      projectsList.querySelectorAll('.btn-reset-cb').forEach((btn) => {
-        btn.addEventListener('click', async () => {
-          const pid = btn.getAttribute('data-pid');
-          btn.disabled = true;
-          const { token, nonce } = await harvestAttestation();
-          try {
-            const res = await fetch(`/api/v1/project/${pid}/circuit-breaker/reset`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ token, nonce }),
-            });
-            const data = await res.json();
-            if (data.ok) {
-              await loadProjects();
-            } else {
-              alert('Reset failed: ' + (data.error || 'Unknown error'));
-              btn.disabled = false;
-            }
-          } catch (err) {
-            alert('Error resetting vectors: ' + err.message);
-            btn.disabled = false;
-          }
-        });
+      bindProjectMutation('.btn-reset-cb', {
+        buildRequest: (_btn, pid, { token, nonce }) => ({
+          url: `/api/v1/project/${pid}/circuit-breaker/reset`,
+          init: {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token, nonce }),
+          },
+        }),
+        failurePrefix: 'Reset failed',
+        errorPrefix: 'Error resetting vectors',
       });
 
       // Display managed cloud note for circuit breaker
@@ -621,9 +600,9 @@
             nonce,
           }),
         });
-        const data = await res.json();
+        const data = await readJsonSafe(res);
 
-        if (data.ok) {
+        if (res.ok && data && data.ok) {
           authStepEmail.style.display = 'none';
           authStepCode.style.display = 'flex';
           if (inpCode) {
@@ -637,7 +616,7 @@
             showMsg('Verification code sent to your email!', false);
           }
         } else {
-          showMsg(data.error || 'Failed to dispatch verification code.', true);
+          showMsg(extractResponseError(res, data, 'Failed to dispatch verification code.'), true);
         }
       } catch (err) {
         showMsg('Network error requesting code: ' + err.message, true);
@@ -680,15 +659,15 @@
             nonce,
           }),
         });
-        const data = await res.json();
+        const data = await readJsonSafe(res);
 
-        if (data.ok) {
+        if (res.ok && data && data.ok) {
           showMsg('Verified successfully! Accessing node dashboard...', false);
           setTimeout(() => {
             checkAuth();
           }, 300);
         } else {
-          showMsg(data.error || 'Invalid or expired code.', true);
+          showMsg(extractResponseError(res, data, 'Invalid or expired code.'), true);
         }
       } catch (err) {
         showMsg('Verification failed: ' + err.message, true);
@@ -729,9 +708,9 @@
       btnExportData.textContent = 'Exporting...';
       try {
         const res = await fetch('/api/v1/me/export');
-        const data = await res.json();
-        if (!data.ok) {
-          alert('Export failed: ' + (data.error || 'Unknown error'));
+        const data = await readJsonSafe(res);
+        if (!res.ok || !data || !data.ok) {
+          alert('Export failed: ' + extractResponseError(res, data));
           return;
         }
         const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -775,10 +754,10 @@
       btnConfirmDeleteAccount.textContent = 'Deleting...';
       try {
         const res = await fetch('/api/v1/me', { method: 'DELETE' });
-        const data = await res.json();
-        if (!data.ok) {
+        const data = await readJsonSafe(res);
+        if (!res.ok || !data || !data.ok) {
           if (deleteAccountError) {
-            deleteAccountError.textContent = 'Deletion failed: ' + (data.error || 'Unknown error');
+            deleteAccountError.textContent = 'Deletion failed: ' + extractResponseError(res, data);
             deleteAccountError.style.display = 'block';
           }
           return;
@@ -808,22 +787,14 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ recipient, token, nonce }),
       });
-      let data = null;
-      try {
-        data = await res.json();
-      } catch {
-        data = null;
-      }
+      const data = await readJsonSafe(res);
       if (res.ok && data && data.ok) {
         alert(data.throttled
           ? 'Alert recorded, but throttled by 5-minute circuit breaker to protect operator inbox!'
           : `Critical security advisory dispatched successfully to ${data.alert?.recipient || 'operator'}!`);
         fetchAlertsHistory();
       } else {
-        const errMsg =
-          (data && (data.error || (data.dispatch && data.dispatch.error) || data.reason || data.message)) ||
-          `HTTP ${res.status}`;
-        alert('Alert dispatch failed: ' + errMsg);
+        alert('Alert dispatch failed: ' + extractResponseError(res, data));
       }
     } catch (err) {
       alert('Alert test error: ' + err.message);
@@ -1000,8 +971,12 @@
         btnDiff.textContent = 'Loading diff...';
         try {
           const dRes = await fetch('/api/v1/system/diff');
-          const dData = await dRes.json();
-          operatorBannerState.diffContent = `=== UPSTREAM DIFF (HEAD..origin/main) ===\n${dData.upstreamDiff || 'None'}\n\n=== LOCAL WORKING TREE DIFF ===\n${dData.localDiff || 'None'}`;
+          const dData = await readJsonSafe(dRes);
+          if (dRes.ok && dData) {
+            operatorBannerState.diffContent = `=== UPSTREAM DIFF (HEAD..origin/main) ===\n${dData.upstreamDiff || 'None'}\n\n=== LOCAL WORKING TREE DIFF ===\n${dData.localDiff || 'None'}`;
+          } else {
+            operatorBannerState.diffContent = 'Failed to load diff: ' + extractResponseError(dRes, dData);
+          }
         } catch (e) {
           operatorBannerState.diffContent = 'Failed to load diff.';
         }
@@ -1026,12 +1001,12 @@
             headers: { 'Content-Type': 'application/json' },
             body: '{}',
           });
-          const aData = await aRes.json();
-          const succeeded = Boolean(aRes.ok && aData.ok);
+          const aData = await readJsonSafe(aRes);
+          const succeeded = Boolean(aRes.ok && aData && aData.ok);
           operatorBannerState.stickyAdaptNotice = !succeeded;
           operatorBannerState.adaptStatusText = succeeded
             ? `Adapted to ${aData.commit}!`
-            : (aData.message || aData.error || 'Conflict detected');
+            : extractResponseError(aRes, aData, 'Conflict detected');
           if (activeTelemetryPid && succeeded) {
             setTimeout(() => loadProjectTelemetry(activeTelemetryPid, false), 400);
           }
@@ -1062,14 +1037,14 @@
             headers: { 'Content-Type': 'application/json' },
             body: '{}',
           });
-          const lData = await lRes.json();
-          if (lRes.ok && lData.ok) {
+          const lData = await readJsonSafe(lRes);
+          if (lRes.ok && lData && lData.ok) {
             operatorBannerState.licenseStatusText = 'LICENSE Accepted';
             if (activeTelemetryPid) {
               setTimeout(() => loadProjectTelemetry(activeTelemetryPid, false), 400);
             }
           } else {
-            operatorBannerState.licenseStatusText = lData.error || 'Acceptance failed';
+            operatorBannerState.licenseStatusText = extractResponseError(lRes, lData, 'Acceptance failed');
           }
         } catch (e) {
           operatorBannerState.licenseStatusText = 'Acceptance failed';
@@ -1104,9 +1079,9 @@
 
     try {
       const res = await fetch(`/api/v1/project/${pid}/telemetry`, { headers });
-      const data = await res.json();
-      if (!data.ok) {
-        console.warn('Project telemetry query error:', data.error);
+      const data = await readJsonSafe(res);
+      if (!res.ok || !data || !data.ok) {
+        console.warn('Project telemetry query error:', extractResponseError(res, data));
         return;
       }
 
@@ -1488,8 +1463,8 @@
   async function fetchAlertsHistory() {
     try {
       const res = await fetch('/api/v1/alerts');
-      const data = await res.json();
-      if (!data.ok) return;
+      const data = await readJsonSafe(res);
+      if (!res.ok || !data || !data.ok) return;
 
       if (mailerStatusBadge && data.mailer) {
         if (data.mailer.configured) {
@@ -1551,28 +1526,27 @@
 
   if (document.getElementById('shield-state')) {
     const fmtCount = (n) => (n || 0).toLocaleString();
-    const pollBotProtection = () => {
-      fetch('/api/v1/bot-protection')
-        .then((r) => r.json())
-        .then((d) => {
-          if (!d || !d.ok) return;
-          const st = document.getElementById('shield-state');
-          if (!st) return;
-          st.textContent = !d.enabled ? 'DISABLED' : (d.engaged ? 'UNDER ATTACK — ENGAGED' : 'ARMED');
-          st.style.color = d.engaged ? '#e11d48' : '#16a34a';
-          document.getElementById('shield-req').textContent = fmtCount(d.counters.requests);
-          document.getElementById('shield-chal').textContent = fmtCount(d.counters.challenged);
-          document.getElementById('shield-solved').textContent = fmtCount(d.counters.solved);
-          document.getElementById('shield-blocked').textContent = fmtCount(d.counters.blocked);
-          document.getElementById('shield-quar').textContent = fmtCount(d.counters.quarantined);
-          document.getElementById('shield-mode').textContent = d.mode + ' · ' + d.thresholds.difficultyBits + '-bit proof-of-work';
-          const list = document.getElementById('shield-offenders');
-          const offs = (d.topOffenders || []).slice(0, 6);
-          list.textContent = offs.length
-            ? 'Top offenders: ' + offs.map((o) => o.ip + ' (' + o.hits + '×, ' + o.reason + ')').join(' · ')
-            : 'No offenders currently flagged.';
-        })
-        .catch(() => {});
+    const pollBotProtection = async () => {
+      try {
+        const r = await fetch('/api/v1/bot-protection');
+        const d = await readJsonSafe(r);
+        if (!r.ok || !d || !d.ok) return;
+        const st = document.getElementById('shield-state');
+        if (!st) return;
+        st.textContent = !d.enabled ? 'DISABLED' : (d.engaged ? 'UNDER ATTACK — ENGAGED' : 'ARMED');
+        st.style.color = d.engaged ? '#e11d48' : '#16a34a';
+        document.getElementById('shield-req').textContent = fmtCount(d.counters.requests);
+        document.getElementById('shield-chal').textContent = fmtCount(d.counters.challenged);
+        document.getElementById('shield-solved').textContent = fmtCount(d.counters.solved);
+        document.getElementById('shield-blocked').textContent = fmtCount(d.counters.blocked);
+        document.getElementById('shield-quar').textContent = fmtCount(d.counters.quarantined);
+        document.getElementById('shield-mode').textContent = d.mode + ' · ' + d.thresholds.difficultyBits + '-bit proof-of-work';
+        const list = document.getElementById('shield-offenders');
+        const offs = (d.topOffenders || []).slice(0, 6);
+        list.textContent = offs.length
+          ? 'Top offenders: ' + offs.map((o) => o.ip + ' (' + o.hits + '×, ' + o.reason + ')').join(' · ')
+          : 'No offenders currently flagged.';
+      } catch {}
     };
     pollBotProtection();
     setInterval(pollBotProtection, 10000);

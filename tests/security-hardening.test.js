@@ -1808,6 +1808,9 @@ test('core, telemetry, mailer, updater, kv, and botshield handle review regressi
     const maskedStats = JSON.parse(statsMaskedReq.out.body);
     assert.ok(maskedStats.quarantinedSubnets.some((s) => s.subnet === '198.51.*.*/24'));
     assert.ok(maskedStats.quarantinedSubnets.some((s) => s.subnet === '2001:db8:*:*/64'));
+    assert.ok(maskedStats.quarantinedIps.some((q) => q.ip === '2001:db8:*:*'));
+    assert.ok(maskedStats.topOffenders.some((o) => o.ip === '2001:db8:*:*'));
+    assert.ok(!JSON.stringify(maskedStats).includes('85a3'), 'Masked botshield stats must not expose IPv6 /48 or /64 prefix');
 
     const statsDetailedReq = makeFakeRes();
     botshield.evaluate(
@@ -1821,6 +1824,8 @@ test('core, telemetry, mailer, updater, kv, and botshield handle review regressi
     const detailedStats = JSON.parse(statsDetailedReq.out.body);
     assert.ok(detailedStats.quarantinedSubnets.some((s) => s.subnet === '198.51.100.0/24'));
     assert.ok(detailedStats.quarantinedSubnets.some((s) => s.subnet === '2001:db8:85a3:42::/64'));
+    assert.ok(detailedStats.quarantinedIps.some((q) => q.ip === '2001:db8:85a3:42:0:0:0:88'));
+    assert.ok(detailedStats.topOffenders.some((o) => o.ip === '2001:db8:85a3:42:0:0:0:88'));
 
     // Challenge solve cookie omits ; Secure when capacity.isHttps=false even with spoofed X-Forwarded-Proto
     const chalRes = makeFakeRes();
@@ -2211,4 +2216,254 @@ test('autofill touch tolerance, settingsOverride, OTP counter continuity, sessio
     else process.env.OPERATOR_EMAILS = prevOpEmails;
   }
 });
+
+test('non-object touch/pointer samples, canonical maskIp formatting, and dashboard HTTP error handling', async () => {
+  const vm = require('vm');
+  const telemetry = require('../lib/telemetry');
+
+  // 1. evaluateTouchDynamics and core.verify safely ignore malformed non-object touch/mouse entries
+  const badTouches = [null, undefined, 'bad', 123, [], {}, { f: NaN, r: 'bad' }];
+  const touchEval = telemetry.evaluateTouchDynamics(badTouches);
+  assert.equal(touchEval.valid, true);
+  assert.equal(touchEval.isSyntheticTouch, false);
+  assert.equal(touchEval.touchCount, 0);
+  const nullEval = telemetry.evaluateTouchDynamics(null);
+  assert.equal(nullEval.valid, true);
+  assert.equal(nullEval.count, 0);
+
+  const timingProj = await core.createProject({
+    name: 'Malformed Sample Hardening',
+    settings: { minDurationMs: 1200, reviewAt: 35, rejectAt: 65 },
+  });
+  const loadedTimingProj = await core.loadProject(timingProj.pid);
+  const badSess = await core.startSession(loadedTimingProj, { ip: '198.51.100.244', action: 'login' });
+  const badNonce = solvePow(badSess.challenge, badSess.difficulty);
+  const badSignals = {
+    sh: 'trc_v1_live',
+    gpuRenderer: 'Apple GPU',
+    mousePoints: [null, undefined, {}, { x: NaN, y: 10, t: 100 }, { x: 10, y: 20 }],
+    touchPoints: [null, null, null, 'bad', { f: NaN }],
+    keyIntervals: [null, 'bad', -5],
+    dwellTimeMs: 420,
+    elapsedMs: 490,
+    rum: { dns: 10, tcp: 14, ttfb: 38, domReady: 165 },
+    audio: 0.00023456,
+  };
+  const badTsig = crypto.hmac(
+    crypto.unb64u(badSess.rk),
+    `obsx.sig.v1\n${badSess.session}\n${badNonce}\n${crypto.canon(badSignals)}`
+  );
+  await core.recordSignals({
+    token: badSess.token,
+    nonce: badNonce,
+    signals: badSignals,
+    tsig: badTsig,
+  });
+  await new Promise((r) => setTimeout(r, 500));
+
+  const badHttpRes = await request('POST', '/api/v1/verify', {
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${timingProj.secretKey}` },
+    body: {
+      token: badSess.token,
+      nonce: badNonce,
+      ip: '198.51.100.244',
+      ua: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)',
+    },
+  });
+  assert.equal(badHttpRes.status, 200);
+  assert.equal(badHttpRes.json.verdict, 'reject');
+  const fastCode = badHttpRes.json.reasons.find((r) => r.code === 'too_fast');
+  assert.ok(fastCode, 'Malformed touchPoints must still hit hard too_fast check cleanly');
+  assert.ok(!String(fastCode.detail).includes('Autofill tolerance'), 'Malformed touchPoints must not receive autofill tolerance');
+  assert.ok(badHttpRes.json.reasons.some((r) => r.code === 'missing_signals'));
+
+  // 2. Canonical maskIp handles IPv4-mapped IPv6 and compressed IPv6 in live telemetry without leakage
+  const naturalMouse = [
+    { x: 10, y: 12, t: 100 },
+    { x: 24, y: 31, t: 122 },
+    { x: 47, y: 40, t: 149 },
+    { x: 66, y: 69, t: 173 },
+    { x: 92, y: 81, t: 206 },
+    { x: 120, y: 108, t: 241 },
+    { x: 145, y: 129, t: 277 },
+    { x: 171, y: 142, t: 311 },
+  ];
+  const verifyForIp = async (clientIp) => {
+    const s = await core.startSession(core.DEMO, { ip: clientIp, action: 'checkout' });
+    const n = solvePow(s.challenge, s.difficulty);
+    const sigPayload = {
+      sh: 'trc_v1_live',
+      gpuRenderer: 'Apple GPU',
+      mousePoints: naturalMouse,
+      touchPoints: [],
+      keyIntervals: [98, 121, 144, 111],
+      rum: { dns: 8, tcp: 11, ttfb: 32, domReady: 140 },
+      audio: 0.00023456,
+    };
+    await core.recordSignals({
+      token: s.token,
+      nonce: n,
+      signals: sigPayload,
+      tsig: crypto.hmac(crypto.unb64u(s.rk), `obsx.sig.v1\n${s.session}\n${n}\n${crypto.canon(sigPayload)}`),
+    });
+    return core.verify(core.DEMO, { token: s.token, nonce: n }, { ip: clientIp, ua: 'Mozilla/5.0 Chrome/130.0.0.0' });
+  };
+
+  await verifyForIp('::ffff:203.0.113.42');
+  await verifyForIp('2001:db8::42:1');
+  const liveTelemetryRes = await request('GET', '/api/v1/telemetry/live');
+  assert.equal(liveTelemetryRes.status, 200);
+  const recentIps = (liveTelemetryRes.json.recentEvents || []).map((e) => e.maskedIp);
+  assert.ok(recentIps.includes('203.0.***.***'), `Expected canonical IPv4 mask in ${JSON.stringify(recentIps)}`);
+  assert.ok(recentIps.includes('2001:db8:*:****'), `Expected /32-masked IPv6 in ${JSON.stringify(recentIps)}`);
+  assert.ok(!recentIps.some((m) => m.includes('ffff') || m.includes('203.0.113.42') || m.includes('42:1')));
+
+  // 3. Dashboard handlers handle non-JSON error responses cleanly without throwing or displaying Unknown error
+  const dashSrc = fs.readFileSync(path.join(__dirname, '../public/dashboard.js'), 'utf8');
+  assert.ok(!dashSrc.includes('Unknown error'), 'dashboard.js must not contain stale Unknown error fallback strings');
+  const jsonCalls = dashSrc.match(/\.json\(\)/g) || [];
+  assert.equal(jsonCalls.length, 1, 'dashboard.js must centralize .json() inside readJsonSafe');
+
+  const elements = new Map();
+  const makeStubEl = (attrs = {}) => {
+    const el = {
+      style: {},
+      textContent: '',
+      innerHTML: '',
+      value: '',
+      checked: true,
+      disabled: false,
+      className: '',
+      listeners: {},
+      childrenMap: {},
+      addEventListener(evt, fn) {
+        if (!this.listeners[evt]) this.listeners[evt] = [];
+        this.listeners[evt].push(fn);
+      },
+      getAttribute(k) {
+        return Object.prototype.hasOwnProperty.call(attrs, k) ? attrs[k] : null;
+      },
+      querySelectorAll(sel) {
+        if (!this.childrenMap[sel]) {
+          this.childrenMap[sel] = [
+            makeStubEl({
+              'data-pid': 'proj_dash_1',
+              'data-name': 'DashTest',
+              'data-mode': 'enforce',
+              'data-enabled': 'false',
+            }),
+          ];
+        }
+        return this.childrenMap[sel];
+      },
+      focus() {},
+      scrollIntoView() {},
+      showModal() {},
+      close() {},
+      appendChild() {},
+      remove() {},
+      click() {},
+    };
+    return el;
+  };
+  const dashIds = [
+    'view-logged-out', 'view-logged-in', 'auth-step-email', 'auth-step-code',
+    'user-email-display', 'nav-auth-status', 'projects-list', 'projects-count-badge',
+    'select-telemetry-project', 'btn-export-data', 'btn-confirm-delete-account',
+    'dialog-delete-account', 'delete-account-error',
+  ];
+  for (const id of dashIds) elements.set(id, makeStubEl());
+
+  const alerts = [];
+  let injectBadJson = false;
+  const mockHtml502 = {
+    ok: false,
+    status: 502,
+    json: async () => {
+      throw new SyntaxError('Unexpected token < in JSON at position 0');
+    },
+  };
+  const sandbox = {
+    document: {
+      getElementById: (id) => elements.get(id) || null,
+      createElement: () => makeStubEl(),
+      body: makeStubEl(),
+    },
+    window: { OBSX: { getAttestation: async () => ({ token: 'tok', nonce: '1' }) } },
+    fetch: async (url) => {
+      if (url === '/api/v1/me' && !injectBadJson) {
+        return { ok: true, status: 200, json: async () => ({ ok: true, user: { email: 'op@obsx.tech' } }) };
+      }
+      if (url === '/api/v1/projects' && !injectBadJson) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ok: true,
+            projects: [{
+              pid: 'proj_dash_1',
+              name: 'DashTest',
+              publicKey: 'pk_live_1',
+              origins: [],
+              settings: { mode: 'enforce', adaptiveCircuitBreaker: false, blockOpenAiScrapers: true },
+            }],
+          }),
+        };
+      }
+      return mockHtml502;
+    },
+    alert: (msg) => alerts.push(String(msg)),
+    confirm: () => true,
+    prompt: () => {},
+    Blob: class {},
+    URL: { createObjectURL: () => 'blob:mock', revokeObjectURL: () => {} },
+    navigator: { clipboard: { writeText: async () => {} } },
+    console: { log() {}, warn() {}, error() {} },
+    setTimeout: () => 0,
+    setInterval: () => 0,
+    clearInterval: () => {},
+    JSON,
+    Number,
+    Boolean,
+    String,
+    Array,
+    Map,
+    Set,
+    Math,
+    Date,
+    Promise,
+  };
+  vm.runInNewContext(dashSrc, sandbox);
+  await new Promise((r) => setTimeout(r, 20));
+
+  injectBadJson = true;
+  const projList = elements.get('projects-list');
+  const selectors = [
+    '.btn-rotate-sk, .btn-rotate-inline',
+    '.btn-delete-proj',
+    '.btn-toggle-mode',
+    '.btn-toggle-cb',
+    '.btn-toggle-openai',
+    '.btn-reset-cb',
+  ];
+  for (const sel of selectors) {
+    alerts.length = 0;
+    const handler = projList.childrenMap[sel]?.[0]?.listeners?.click?.[0];
+    assert.ok(handler, `Missing handler for ${sel}`);
+    await handler();
+    assert.equal(alerts.length, 1, `Expected 1 alert for ${sel}`);
+    assert.ok(alerts[0].includes('HTTP 502'), `Expected HTTP 502 alert for ${sel}, got ${alerts[0]}`);
+    assert.ok(!alerts[0].includes('SyntaxError') && !alerts[0].includes('Unknown error'));
+  }
+
+  alerts.length = 0;
+  await elements.get('btn-export-data').listeners.click[0]();
+  assert.equal(alerts.length, 1);
+  assert.ok(alerts[0].includes('HTTP 502'), `Expected HTTP 502 on export failure, got ${alerts[0]}`);
+
+  const delErrEl = elements.get('delete-account-error');
+  await elements.get('btn-confirm-delete-account').listeners.click[0]();
+  assert.ok(delErrEl.textContent.includes('HTTP 502'), `Expected HTTP 502 on account deletion failure, got ${delErrEl.textContent}`);
+});
+
 
