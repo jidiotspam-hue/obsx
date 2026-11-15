@@ -58,7 +58,8 @@
   async function getAttestationSafe() {
     if (!window.OBSX) return { token: null, nonce: null };
     try {
-      const att = await window.OBSX.getAttestation({ fresh: true });
+      // Reuse the page-load session (satisfies the minimum human-duration check).
+      const att = await window.OBSX.getAttestation();
       return { token: att.token || null, nonce: att.nonce || null };
     } catch {
       return { token: null, nonce: null };
@@ -90,7 +91,7 @@
       });
       const startData = await startRes.json();
       if (!startData.ok) {
-        alert('Login failed: ' + (startData.error || 'Unknown error'));
+        alert('Login failed: ' + (startData.error || 'Unknown error') + (Array.isArray(startData.reasons) && startData.reasons.length ? ' (' + startData.reasons.map((r) => r.code).join(', ') + ')' : ''));
         return;
       }
 
@@ -110,7 +111,7 @@
       });
       const verifyData = await verifyRes.json();
       if (!verifyData.ok) {
-        alert('Verification failed: ' + (verifyData.error || 'Invalid code'));
+        alert('Verification failed: ' + (verifyData.error || 'Invalid code') + (Array.isArray(verifyData.reasons) && verifyData.reasons.length ? ' (' + verifyData.reasons.map((r) => r.code).join(', ') + ')' : ''));
         return;
       }
 

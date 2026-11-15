@@ -770,9 +770,11 @@ test('the shield serves its own telemetry while under attack', () => {
   assert.strictEqual(out.handled, true, 'answered inside the shield, not by the application layer');
   const json = JSON.parse(out.body);
   assert.strictEqual(json.ok, true);
-  assert.ok(json.attack.distinctAddresses >= 0, 'attack signature present');
-  assert.ok(json.topOffenders.length > 0, 'the offenders are visible to the operator');
-  assert.ok(json.topOffenders[0].ip.includes('*'), 'anonymous view masks addresses (got ' + json.topOffenders[0].ip + ')');
+  assert.strictEqual(json.redacted, true, 'anonymous view is the redacted public view');
+  for (const k of ['attack', 'thresholds', 'health', 'stateSizes', 'topOffenders', 'quarantinedIps', 'quarantinedSubnets']) {
+    assert.ok(!(k in json), 'anonymous view must not expose ' + k);
+  }
+  assert.ok(!('byTier' in json.counters), 'anonymous view must not expose counters.byTier');
   assert.ok(out.headers['X-OBSX-BotShield'] === 'telemetry');
 });
 
@@ -871,6 +873,37 @@ test('a forged forwarded header is refused before any budget is spent', () => {
   assert.strictEqual(botshield.stats().counters.byTier.forged_forwarded_header, 1, 'the honest chain was not counted as forged');
 });
 
+test('a valid operator key still receives the full detailed telemetry', () => {
+  fresh({ engageRps: 400, ipBudget: 30, maxAttempts: 6, statusBudget: 40 });
+  const cap = { reqRate: 500, activeConnections: 20, inFlight: 2 };
+  for (let i = 0; i < 20; i++) hit('203.0.113.81', '/', BOT, cap);
+  const res = fakeRes();
+  const url = new URL('/api/v1/bot-protection', 'http://obsx.tech');
+  const saved = process.env.OBSX_SECRET;
+  process.env.OBSX_SECRET = 'valid_operator_secret_key_123456';
+  try {
+    botshield.evaluate({ headers: { 'user-agent': BOT, 'x-obsx-operator-key': process.env.OBSX_SECRET }, method: 'GET' },
+      res, '203.0.113.81', url.pathname, 500, url, cap);
+    const json = JSON.parse(res.out.body);
+    assert.ok(!json.redacted, 'operator view is not redacted');
+    assert.ok(json.thresholds && json.health && json.stateSizes, 'operator sees thresholds, health and state sizes');
+    assert.ok(json.topOffenders.length > 0, 'operator sees offenders');
+  } finally {
+    if (saved) process.env.OBSX_SECRET = saved; else delete process.env.OBSX_SECRET;
+    botshield.reset();
+    botshield.config.enabled = false;
+  }
+});
+
+test('an obsx_session cookie defers the telemetry decision to the application route', () => {
+  fresh({ engageRps: 400, statusBudget: 40 });
+  const res = fakeRes();
+  const url = new URL('/api/v1/bot-protection', 'http://obsx.tech');
+  const out = botshield.evaluate({ headers: { 'user-agent': BOT, cookie: 'a=b; obsx_session=abc' }, method: 'GET' },
+    res, '203.0.113.82', url.pathname, 5, url, { activeConnections: 1, inFlight: 1 });
+  assert.strictEqual(out.handled, false);
+});
+
 test('the public telemetry view never leaks full addresses when no operator key is set', () => {
   fresh({ engageRps: 400, ipBudget: 30, maxAttempts: 6, statusBudget: 40 });
   const cap = { reqRate: 500, activeConnections: 20, inFlight: 2 };
@@ -883,9 +916,9 @@ test('the public telemetry view never leaks full addresses when no operator key 
     botshield.evaluate({ headers: { 'user-agent': BOT }, method: 'GET' }, res, '203.0.113.80',
       url.pathname, 500, url, cap);
     const json = JSON.parse(res.out.body);
-    assert.ok(json.topOffenders.length > 0, 'offenders are visible');
-    assert.ok(json.topOffenders[0].ip.includes('*'),
-      'without a configured key the address is masked (got ' + json.topOffenders[0].ip + ')');
+    assert.strictEqual(json.redacted, true, 'without a configured key only the redacted view is served');
+    assert.ok(!('topOffenders' in json), 'no offender list without an operator key');
+    assert.ok(!JSON.stringify(json).includes('203.0.'), 'no address data at all in the public view');
   } finally {
     if (saved) process.env.OBSX_SECRET = saved;
     botshield.reset();
