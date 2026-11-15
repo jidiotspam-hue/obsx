@@ -371,7 +371,12 @@ function isStrictGateActive() {
 // Authenticated operator actions: soft kinematic risk is tolerated, hard bot
 // indicators (no token, invalid PoW, headless UA, proxy headers, missing telemetry,
 // circuit breaker) still block.
-const OPERATOR_GATE = { selfAuth: true, allowReview: true, settingsOverride: { reviewAt: 50, rejectAt: 90 } };
+const OPERATOR_GATE = {
+  selfAuth: true,
+  allowReview: true,
+  // minDurationMs 150: fast HTTP/3 + autofill sign-ins are legitimate; sub-150ms bursts stay hard 'too_fast'.
+  settingsOverride: { reviewAt: 50, rejectAt: 90, minDurationMs: 150 },
+};
 
 async function gateSelfRequest(req, body, actionName, opts = {}) {
   const token = (body && body.token) || req.headers['x-obsx-token'];
@@ -1451,8 +1456,11 @@ const server = http.createServer(async (req, res) => {
 
       if (pathname === '/api/v1/bot-protection') {
         if (method !== 'GET' && method !== 'HEAD') return sendMethodNotAllowed(res, ['GET', 'HEAD']);
-        // Full addresses only to whoever holds a configured non-empty operator key.
-        const body = JSON.stringify(botshield.stats(hasValidOperatorKey(req)));
+        // Anonymous callers get a minimal liveness view; the full posture (thresholds,
+        // health, state sizes, offenders) is for operators only (key or operator session).
+        const btUser = hasValidOperatorKey(req) ? null : await accounts.getSessionUser(req);
+        const btOperator = hasValidOperatorKey(req) || Boolean(btUser && isOperatorAuthorized(req, btUser));
+        const body = JSON.stringify(btOperator ? botshield.stats(true) : botshield.publicStats());
         res.writeHead(200, {
           'Content-Type': 'application/json; charset=utf-8',
           'Cache-Control': 'no-store',

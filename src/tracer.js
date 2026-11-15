@@ -424,26 +424,33 @@
 
   auditRuntime();
 
+  function pushMouseSample(e) {
+    if (!e || e.isTrusted === false) return;
+    if (!Number.isFinite(e.clientX) || !Number.isFinite(e.clientY)) return;
+    if (e.type === 'mousedown' && e.clientX === 0 && e.clientY === 0) return;
+    if (mouseBuffer.length >= 60) mouseBuffer.shift();
+    mouseBuffer.push({ x: e.clientX, y: e.clientY, t: _now.call(_Date) });
+  }
+
+  function pushTouchSample(e) {
+    if (!e || e.isTrusted === false || !e.touches || !e.touches[0]) return;
+    if (touchBuffer.length >= 40) touchBuffer.shift();
+    const tch = e.touches[0];
+    touchBuffer.push({
+      x: tch.clientX,
+      y: tch.clientY,
+      r: tch.radiusX || 0,
+      f: typeof tch.force === 'number' ? tch.force : 0,
+      t: _now.call(_Date),
+    });
+  }
+
   // 3. Passive Human Interaction Observers (Rolling Ring-Buffers)
   if (_addEventListener) {
-    _addEventListener.call(global, 'mousemove', (e) => {
-      if (mouseBuffer.length >= 60) mouseBuffer.shift();
-      mouseBuffer.push({ x: e.clientX, y: e.clientY, t: _now.call(_Date) });
-    }, { passive: true });
-
-    _addEventListener.call(global, 'touchmove', (e) => {
-      if (e.touches && e.touches[0]) {
-        if (touchBuffer.length >= 40) touchBuffer.shift();
-        const tch = e.touches[0];
-        touchBuffer.push({
-          x: tch.clientX,
-          y: tch.clientY,
-          r: tch.radiusX || 0,
-          f: typeof tch.force === 'number' ? tch.force : 0,
-          t: _now.call(_Date),
-        });
-      }
-    }, { passive: true });
+    _addEventListener.call(global, 'mousemove', pushMouseSample, { passive: true });
+    _addEventListener.call(global, 'mousedown', pushMouseSample, { passive: true });
+    _addEventListener.call(global, 'touchstart', pushTouchSample, { passive: true });
+    _addEventListener.call(global, 'touchmove', pushTouchSample, { passive: true });
 
     _addEventListener.call(global, 'keydown', () => {
       const t = _now.call(_Date);

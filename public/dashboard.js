@@ -91,7 +91,12 @@
   function extractResponseError(res, data, fallback = 'Request failed') {
     if (data && typeof data === 'object') {
       const msg = data.message || data.error || (data.dispatch && data.dispatch.error) || data.reason;
-      if (msg) return String(msg);
+      if (msg) {
+        const codes = Array.isArray(data.reasons)
+          ? data.reasons.map((r) => (r && r.code ? String(r.code) : '')).filter(Boolean)
+          : [];
+        return codes.length ? `${msg} (${codes.join(', ')})` : String(msg);
+      }
     }
     return res && Number.isFinite(res.status) && res.status > 0 ? `HTTP ${res.status}` : fallback;
   }
@@ -570,15 +575,39 @@
     }
   }
 
-  async function harvestAttestation() {
+  async function harvestAttestation(opts = {}) {
     if (!window.OBSX) return { token: null, nonce: null };
     try {
-      const att = await window.OBSX.getAttestation({ fresh: true });
+      // Reuse the session warmed at page load (its age satisfies the minimum
+      // human-duration check); only force a new handshake when retrying a stale one.
+      const att = await window.OBSX.getAttestation(opts.fresh ? { fresh: true } : {});
       return { token: att.token || null, nonce: att.nonce || null };
     } catch (e) {
       console.warn('[Auth Attestation]', e);
       return { token: null, nonce: null };
     }
+  }
+
+  // POST /api/v1/auth/email with the warmed attestation; if the gate says the
+  // session itself was stale (expired / replayed / missing), retry once with a new handshake.
+  async function authEmailRequest(body) {
+    let last = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const { token, nonce } = await harvestAttestation({ fresh: attempt > 0 });
+      const res = await fetch('/api/v1/auth/email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...body, token, nonce }),
+      });
+      const data = await readJsonSafe(res);
+      last = { res, data };
+      const ok = res.ok && data && data.ok;
+      const stale = !ok && data && Array.isArray(data.reasons) &&
+        data.reasons.some((r) => r && ['invalid_token', 'token_reused', 'expired', 'missing_token'].includes(r.code));
+      if (ok || !stale) return last;
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+    return last;
   }
 
   // 2. Request OTP Code
@@ -605,21 +634,12 @@
         btnSendCode.textContent = 'Attesting & sending code...';
       }
 
-      const { token, nonce } = await harvestAttestation();
-
       try {
-        const res = await fetch('/api/v1/auth/email', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            email,
-            action: 'start',
-            termsAccepted: Boolean(!chkAcceptLegal || chkAcceptLegal.checked),
-            token,
-            nonce,
-          }),
+        const { res, data } = await authEmailRequest({
+          email,
+          action: 'start',
+          termsAccepted: Boolean(!chkAcceptLegal || chkAcceptLegal.checked),
         });
-        const data = await readJsonSafe(res);
 
         if (res.ok && data && data.ok) {
           authStepEmail.style.display = 'none';
@@ -663,22 +683,13 @@
         btnVerifyCode.textContent = 'Attesting & verifying...';
       }
 
-      const { token, nonce } = await harvestAttestation();
-
       try {
-        const res = await fetch('/api/v1/auth/email', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'verify',
-            email: activeEmail,
-            code,
-            termsAccepted: Boolean(!chkAcceptLegal || chkAcceptLegal.checked),
-            token,
-            nonce,
-          }),
+        const { res, data } = await authEmailRequest({
+          action: 'verify',
+          email: activeEmail,
+          code,
+          termsAccepted: Boolean(!chkAcceptLegal || chkAcceptLegal.checked),
         });
-        const data = await readJsonSafe(res);
 
         if (res.ok && data && data.ok) {
           showMsg('Verified successfully! Accessing node dashboard...', false);
@@ -1862,10 +1873,12 @@
         document.getElementById('shield-solved').textContent = fmtCount(d.counters.solved);
         document.getElementById('shield-blocked').textContent = fmtCount(d.counters.blocked);
         document.getElementById('shield-quar').textContent = fmtCount(d.counters.quarantined);
-        document.getElementById('shield-mode').textContent = d.mode + ' · ' + d.thresholds.difficultyBits + '-bit proof-of-work';
+        document.getElementById('shield-mode').textContent = d.mode + ' · ' + d.difficultyBits + '-bit proof-of-work';
         const list = document.getElementById('shield-offenders');
         const offs = (d.topOffenders || []).slice(0, 6);
-        list.textContent = offs.length
+        list.textContent = d.redacted
+          ? 'Offender details are visible to signed-in operators only.'
+          : offs.length
           ? 'Top offenders: ' + offs.map((o) => o.ip + ' (' + o.hits + '×, ' + o.reason + ')').join(' · ')
           : 'No offenders currently flagged.';
       } catch {}

@@ -143,6 +143,18 @@ const NATURAL_CURVE = [
   { x: 195, y: 126, t: 198 },
 ];
 
+function assertRedactedBotProtection(body, label) {
+  assert.equal(body.ok, true, label);
+  assert.equal(body.redacted, true, label + ': redacted flag');
+  for (const key of ['thresholds', 'health', 'stateSizes', 'attack', 'verifiedClients', 'pendingChallenges',
+    'quarantinedIps', 'quarantinedSubnets', 'topOffenders', 'engagedForSeconds', 'engagements']) {
+    assert.ok(!(key in body), label + ': must not expose ' + key);
+  }
+  assert.ok(!('byTier' in (body.counters || {})), label + ': must not expose counters.byTier');
+  assert.ok(!('distinctIps' in (body.counters || {})), label + ': must not expose distinctIps');
+  assert.equal(typeof body.difficultyBits, 'number', label + ': difficultyBits stays public');
+}
+
 test('hardening: empty or short OBSX_SECRET is rejected on operator bot-protection routes', async () => {
   const prevSecret = process.env.OBSX_SECRET;
   botshield.reset();
@@ -184,8 +196,7 @@ test('hardening: empty or short OBSX_SECRET is rejected on operator bot-protecti
     );
     assert.equal(statsResEmpty.out.status, 200);
     const statsBodyEmpty = JSON.parse(statsResEmpty.out.body);
-    assert.ok(statsBodyEmpty.topOffenders.length > 0, 'Expected at least one recorded offender');
-    assert.equal(statsBodyEmpty.topOffenders[0].ip.includes('*'), true, 'Empty secret must keep offender IPs masked');
+    assertRedactedBotProtection(statsBodyEmpty, 'Empty secret must serve the redacted public view');
 
     process.env.OBSX_SECRET = 'short_key_123';
     const statsResShort = makeFakeRes();
@@ -199,8 +210,7 @@ test('hardening: empty or short OBSX_SECRET is rejected on operator bot-protecti
       { activeConnections: 1, inFlight: 1 }
     );
     const statsBodyShort = JSON.parse(statsResShort.out.body);
-    assert.ok(statsBodyShort.topOffenders.length > 0, 'Expected at least one recorded offender');
-    assert.equal(statsBodyShort.topOffenders[0].ip.includes('*'), true, 'Short (<16) secret must keep offender IPs masked');
+    assertRedactedBotProtection(statsBodyShort, 'Short (<16) secret must serve the redacted public view');
 
     // HTTP endpoint check when process.env.OBSX_SECRET is empty or too short
     for (const candidate of ['', 'short_secret']) {
@@ -216,8 +226,7 @@ test('hardening: empty or short OBSX_SECRET is rejected on operator bot-protecti
         headers: { 'x-obsx-key': candidate },
       });
       assert.equal(getRes.status, 200);
-      assert.ok(getRes.json.topOffenders.length > 0, 'Expected offender entries on stats response');
-      assert.equal(getRes.json.topOffenders[0].ip.includes('*'), true);
+      assertRedactedBotProtection(getRes.json, 'Unauthenticated HTTP stats must be redacted');
     }
 
     // Valid >= 16 char secret succeeds
@@ -1805,7 +1814,8 @@ test('core, telemetry, mailer, updater, kv, and botshield handle review regressi
       1,
       new URL('http://example.com/api/v1/bot-protection')
     );
-    const maskedStats = JSON.parse(statsMaskedReq.out.body);
+    assertRedactedBotProtection(JSON.parse(statsMaskedReq.out.body), 'A short operator key gets only the redacted view');
+    const maskedStats = botshield.stats(false);
     assert.ok(maskedStats.quarantinedSubnets.some((s) => s.subnet === '198.51.*.*/24'));
     assert.ok(maskedStats.quarantinedSubnets.some((s) => s.subnet === '2001:db8:*:*/64'));
     assert.ok(maskedStats.quarantinedIps.some((q) => q.ip === '2001:db8:*:*'));
@@ -2906,3 +2916,52 @@ test('404 fallback serves Opi (Sec) mascot page for browser routes, escapes XSS,
 });
 
 
+
+test('chrome auth: fast keyboard/autofill sign-in passes the operator gate; zero-signal and tampered sessions still reject', async () => {
+  const proj = await core.loadProject(core.DEMO.pid);
+  const chromeUa = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
+  const override = { reviewAt: 50, rejectAt: 90, minDurationMs: 150 };
+
+  async function attempt(ip, signals, { selfAuth, waitMs, badTsig = false }) {
+    const sess = await core.startSession(proj, { ip, ua: chromeUa, hasClientUa: true });
+    const nonce = solvePow(sess.challenge, sess.difficulty);
+    const tsigSignals = { sh: 'trc_v1_live', gpuRenderer: 'Apple GPU', rum: { dns: 10, tcp: 14, ttfb: 38, domReady: 165 }, audio: 0.00023456, ...signals };
+    await core.recordSignals({
+      token: sess.token,
+      nonce,
+      signals: tsigSignals,
+      tsig: badTsig
+        ? 'AAAA'
+        : crypto.hmac(crypto.unb64u(sess.rk), `obsx.sig.v1\n${sess.session}\n${nonce}\n${crypto.canon(tsigSignals)}`),
+    });
+    await new Promise((r) => setTimeout(r, waitMs));
+    return core.verify(proj, { token: sess.token, nonce }, {
+      ip, ua: chromeUa, requireBiometrics: true, selfAuth, settingsOverride: selfAuth ? override : null,
+    });
+  }
+
+  // Autofill + Enter: keystrokes and a single pointer sample, ~250ms after handshake.
+  const keysOnly = { mousePoints: [{ x: 300, y: 200, t: 20 }], keyIntervals: [118, 142, 99, 131] };
+  const ok = await attempt('198.51.100.201', keysOnly, { selfAuth: true, waitMs: 250 });
+  assert.ok(ok.allowed !== false && ok.verdict !== 'reject', 'fast keyboard sign-in must pass: ' + JSON.stringify(ok.reasons));
+  assert.ok(!ok.reasons.some((r) => r.code === 'missing_signals' || r.code === 'too_fast'));
+
+  // Non-self-auth customer projects keep the strict kinematics requirement.
+  const strictCustomer = await attempt('198.51.100.202', keysOnly, { selfAuth: false, waitMs: 250 });
+  assert.ok(strictCustomer.reasons.some((r) => r.code === 'missing_signals'), 'customer projects still need >= 4 pointer samples');
+
+  // Zero physical signals still reject even for self-auth.
+  const zero = await attempt('198.51.100.203', { mousePoints: [], keyIntervals: [] }, { selfAuth: true, waitMs: 250 });
+  assert.ok(zero.reasons.some((r) => r.code === 'missing_signals'));
+  assert.equal(zero.verdict === 'accept', false, 'zero-signal self-auth must not be accepted');
+
+  // Sub-150ms bursts are still a hard too_fast.
+  const burst = await attempt('198.51.100.204', keysOnly, { selfAuth: true, waitMs: 0 });
+  assert.ok(burst.reasons.some((r) => r.code === 'too_fast'));
+  assert.equal(burst.allowed, false);
+
+  // A forged telemetry seal is never relaxed.
+  const forged = await attempt('198.51.100.205', keysOnly, { selfAuth: true, waitMs: 250, badTsig: true });
+  assert.ok(forged.reasons.some((r) => r.code === 'bad_signature'));
+  assert.equal(forged.allowed, false);
+});
