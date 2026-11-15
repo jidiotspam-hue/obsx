@@ -2466,4 +2466,379 @@ test('non-object touch/pointer samples, canonical maskIp formatting, and dashboa
   assert.ok(delErrEl.textContent.includes('HTTP 502'), `Expected HTTP 502 on account deletion failure, got ${delErrEl.textContent}`);
 });
 
+test('hardening: Safe Mode gates signal & project mutations while allowing operator OTP recovery and 0-project banner recovery', async () => {
+  const vm = require('node:vm');
+  const tmpSafeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'obsx-safe-recover-'));
+  const prevStateFile = process.env.OBSX_LICENSE_STATE_FILE;
+  const prevEnforceLic = process.env.OBSX_ENFORCE_LICENSE_ACCEPTANCE;
+  const prevEnforceInt = process.env.OBSX_ENFORCE_INTEGRITY;
+  const prevAcceptLic = process.env.OBSX_ACCEPT_LICENSE;
+  const prevOps = process.env.OPERATOR_EMAILS;
+  const prevStrict = process.env.STRICT_GATE;
+
+  try {
+    delete process.env.OBSX_ACCEPT_LICENSE;
+    process.env.OBSX_LICENSE_STATE_FILE = path.join(tmpSafeDir, 'missing-state.json');
+    process.env.OBSX_ENFORCE_LICENSE_ACCEPTANCE = 'true';
+    process.env.OBSX_ENFORCE_INTEGRITY = 'true';
+    process.env.OPERATOR_EMAILS = 'safe-op@obsx.tech';
+    process.env.STRICT_GATE = 'true';
+
+    // 1. Public telemetry & project mutation endpoints return 503 license_safe_mode
+    for (const [m, p, b] of [
+      ['POST', '/api/v1/session', { site: 'pk_obsx_sandbox' }],
+      ['POST', '/api/v1/signal', { sessionId: 'sess_fake', signals: {} }],
+      ['POST', '/api/v1/project', { name: 'BlockedInSafeMode' }],
+      ['POST', '/api/v1/project/proj_any/rotate-key', {}],
+      ['PATCH', '/api/v1/project/proj_any/settings', { mode: 'monitor' }],
+      ['POST', '/api/v1/project/proj_any/circuit-breaker/reset', {}],
+      ['DELETE', '/api/v1/project/proj_any', {}],
+    ]) {
+      const blocked = await request(m, p, { body: b });
+      assert.equal(blocked.status, 503, `Expected 503 in Safe Mode for ${m} ${p}`);
+      assert.equal(blocked.json.error, 'license_safe_mode');
+    }
+
+    // 2. Non-allowlisted email cannot request OTP during Safe Mode
+    const nonOpAuth = await request('POST', '/api/v1/auth/email', {
+      body: { email: 'outsider@example.com', action: 'start' },
+    });
+    assert.equal(nonOpAuth.status, 503);
+    assert.equal(nonOpAuth.json.error, 'license_safe_mode');
+
+    // 3. Allowlisted operator with forged token is still rejected by gateSelfRequest
+    const badTokAuth = await request('POST', '/api/v1/auth/email', {
+      body: { email: 'safe-op@obsx.tech', action: 'start', token: 'forged_bad_token', nonce: '1' },
+    });
+    assert.equal(badTokAuth.status, 403);
+    assert.equal(badTokAuth.json.error, 'security_gate_rejected');
+
+    // 4. Allowlisted operator with missing token succeeds OTP start + verify even with STRICT_GATE=true
+    const opStart = await request('POST', '/api/v1/auth/email', {
+      body: { email: 'safe-op@obsx.tech', action: 'start', termsAccepted: true },
+    });
+    assert.equal(opStart.status, 200);
+    assert.equal(opStart.json.ok, true);
+    assert.ok(opStart.json.devCode, 'Expected devCode for test operator recovery');
+
+    const opVerify = await request('POST', '/api/v1/auth/email', {
+      body: { email: 'safe-op@obsx.tech', action: 'verify', code: opStart.json.devCode, termsAccepted: true },
+    });
+    assert.equal(opVerify.status, 200);
+    assert.equal(opVerify.json.ok, true);
+    const rawSetCookie = [].concat(opVerify.headers['set-cookie'] || []).join('; ');
+    const matchCookie = rawSetCookie.match(/obsx_session=([^;]+)/);
+    assert.ok(matchCookie && matchCookie[1], 'Expected obsx_session cookie on Safe Mode operator verify');
+    const opCookie = `obsx_session=${matchCookie[1]}`;
+
+    // 5. GET /api/v1/me exposes upstreamAdvisory only to allowlisted operator (even with 0 projects)
+    const anonMe = await request('GET', '/api/v1/me');
+    assert.equal(anonMe.status, 200);
+    assert.equal(anonMe.json.user, null);
+    assert.equal('isOperator' in anonMe.json, false);
+    assert.equal('upstreamAdvisory' in anonMe.json, false);
+
+    const opMe = await request('GET', '/api/v1/me', { headers: { Cookie: opCookie } });
+    assert.equal(opMe.status, 200);
+    assert.equal(opMe.json.isOperator, true);
+    assert.equal(opMe.json.upstreamAdvisory.showReminder, true);
+    assert.equal(opMe.json.upstreamAdvisory.licenseStatus.safeMode, true);
+
+    // 6. Operator accepts LICENSE, clearing Safe Mode & unblocking signal/project routes
+    const acceptRes = await request('POST', '/api/v1/system/license/accept', {
+      headers: { Cookie: opCookie },
+      body: {},
+    });
+    assert.equal(acceptRes.status, 200);
+    assert.equal(acceptRes.json.ok, true);
+    assert.equal(acceptRes.json.safeMode, false);
+
+    const sigAfter = await request('POST', '/api/v1/signal', {
+      body: { sessionId: 'sess_missing', signals: {} },
+    });
+    assert.notEqual(sigAfter.status, 503, 'Signal endpoint should leave Safe Mode after LICENSE acceptance');
+
+    // Once out of Safe Mode, STRICT_GATE=true again requires a valid attestation token on /api/v1/auth/email
+    const postRecoveryNoToken = await request('POST', '/api/v1/auth/email', {
+      body: { email: 'safe-op@obsx.tech', action: 'start' },
+    });
+    assert.equal(postRecoveryNoToken.status, 403);
+    assert.equal(postRecoveryNoToken.json.error, 'security_gate_rejected');
+    assert.ok(postRecoveryNoToken.json.reasons.some((r) => r.code === 'missing_token'));
+
+    // 7. Dashboard UI renders Safe Mode banner immediately on login even with 0 projects, and refreshes checkAuth after accept
+    const dashSrc = fs.readFileSync(path.join(__dirname, '../public/dashboard.js'), 'utf8');
+    const createdByTag = [];
+    const makeDomEl = () => ({
+      id: '',
+      style: {},
+      textContent: '',
+      innerHTML: '',
+      value: '',
+      checked: true,
+      disabled: false,
+      firstChild: null,
+      parentNode: null,
+      children: [],
+      listeners: {},
+      addEventListener(evt, fn) {
+        if (!this.listeners[evt]) this.listeners[evt] = [];
+        this.listeners[evt].push(fn);
+      },
+      setAttribute() {},
+      querySelectorAll: () => [],
+      insertBefore(node) {
+        node.parentNode = this;
+        this.children.unshift(node);
+        this.firstChild = this.children[0];
+      },
+      appendChild(node) {
+        node.parentNode = this;
+        this.children.push(node);
+      },
+      focus() {},
+      click() {},
+    });
+    const domMap = new Map();
+    for (const id of [
+      'view-logged-out', 'view-logged-in', 'auth-step-email', 'auth-step-code',
+      'user-email-display', 'nav-auth-status', 'projects-list', 'projects-count-badge',
+      'select-telemetry-project', 'btn-accept-license', 'operator-license-feedback',
+      'btn-dismiss-chickens-notice', 'btn-download-bug-template', 'btn-download-diag-json',
+      'operator-bounty-feedback',
+    ]) {
+      const el = makeDomEl();
+      el.id = id;
+      domMap.set(id, el);
+    }
+
+    let licenseAccepted = false;
+    let meCalls = 0;
+    let acceptCalls = 0;
+    const downloads = [];
+    const bodyEl = makeDomEl();
+    const vmSandbox = {
+      document: {
+        getElementById: (id) => {
+          if (domMap.has(id)) return domMap.get(id);
+          return createdByTag.find((el) => el.id === id) || null;
+        },
+        createElement: () => {
+          const el = makeDomEl();
+          createdByTag.push(el);
+          return el;
+        },
+        body: bodyEl,
+      },
+      window: { OBSX: { getAttestation: async () => ({ token: null, nonce: null }) } },
+      fetch: async (url) => {
+        if (url === '/api/v1/me') {
+          meCalls += 1;
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              ok: true,
+              user: { email: 'safe-op@obsx.tech' },
+              isOperator: true,
+              upstreamAdvisory: {
+                showReminder: !licenseAccepted,
+                edition: 'official',
+                version: '2.3.0',
+                localCommit: 'abc1234',
+                licenseStatus: {
+                  safeMode: !licenseAccepted,
+                  safeModeReason: licenseAccepted ? null : 'license_acceptance_required',
+                  missingCriticalFiles: [],
+                  accepted: licenseAccepted,
+                  licenseChanged: false,
+                  treeChanged: false,
+                  licenseSha256: 'deadbeef1234567890',
+                  treeFingerprint: 'cafebabe1234567890',
+                },
+              },
+            }),
+          };
+        }
+        if (url === '/api/v1/projects') {
+          return { ok: true, status: 200, json: async () => ({ ok: true, projects: [] }) };
+        }
+        if (url === '/api/v1/system/license/accept') {
+          acceptCalls += 1;
+          licenseAccepted = true;
+          return { ok: true, status: 200, json: async () => ({ ok: true, safeMode: false, accepted: true }) };
+        }
+        return { ok: false, status: 404, json: async () => ({ ok: false }) };
+      },
+      alert: () => {},
+      confirm: () => true,
+      prompt: () => {},
+      Blob: class MockBlob {
+        constructor(parts, opts) {
+          this.content = Array.isArray(parts) ? parts.join('') : '';
+          this.type = (opts && opts.type) || '';
+          downloads.push({ content: this.content, type: this.type });
+        }
+      },
+      URL: { createObjectURL: () => 'blob:mock', revokeObjectURL: () => {} },
+      navigator: { platform: 'TestOS', userAgent: 'OBSX-TestHarness/1.0', clipboard: { writeText: async () => {} } },
+      console: { log() {}, warn() {}, error() {} },
+      setTimeout: (fn) => setTimeout(() => { if (typeof fn === 'function') fn(); }, 5),
+      setInterval: () => 0,
+      clearInterval: () => {},
+      JSON, Number, Boolean, String, Array, Map, Set, Math, Date, Promise, encodeURIComponent,
+    };
+
+    vm.runInNewContext(dashSrc, vmSandbox);
+    await new Promise((r) => setTimeout(r, 20));
+
+    const bannerEl = createdByTag.find((el) => el.id === 'operator-drift-advisory-banner');
+    assert.ok(bannerEl, '0-project operator must see #operator-drift-advisory-banner on initial Safe Mode login');
+    assert.equal(bannerEl.parentNode, domMap.get('view-logged-in'));
+    assert.ok(bannerEl.innerHTML.includes('/opi-sec.png'), 'Banner must render Opi (Sec) mascot');
+    assert.ok(bannerEl.innerHTML.includes('Hello, dear user.'));
+    assert.ok(bannerEl.innerHTML.includes('Zone 1') && bannerEl.innerHTML.includes('Zone 2'));
+    assert.ok(bannerEl.innerHTML.includes('We sincerely apologize for any disruption'));
+    assert.ok(bannerEl.innerHTML.includes('Have a great day!'));
+    assert.ok(bannerEl.innerHTML.includes('btn-accept-license'));
+
+    const acceptBtn = domMap.get('btn-accept-license');
+    assert.equal(typeof acceptBtn.onclick, 'function');
+    await acceptBtn.onclick();
+    await new Promise((r) => setTimeout(r, 30));
+    assert.equal(acceptCalls, 1);
+    assert.ok(meCalls >= 2, 'Accepting LICENSE with 0 projects should re-poll /api/v1/me');
+    assert.equal(bannerEl.style.display, 'block', 'Post-acceptance Us Chickens card should appear before dismissal');
+    assert.ok(bannerEl.innerHTML.includes('Nothing here but us chickens!'));
+    assert.ok(bannerEl.innerHTML.includes('We noticed that you clicked our restore button.'));
+    assert.ok(bannerEl.innerHTML.includes('security@obsx.tech'));
+    assert.ok(bannerEl.innerHTML.includes('btn-download-bug-template'));
+    assert.ok(bannerEl.innerHTML.includes('btn-download-diag-json'));
+    assert.ok(bannerEl.innerHTML.includes('btn-dismiss-chickens-notice'));
+
+    domMap.get('btn-download-bug-template').onclick();
+    domMap.get('btn-download-diag-json').onclick();
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(downloads.length, 2);
+    assert.ok(downloads[0].content.includes('OBSX.TECH — PRE-FILLED BUG & EDGE-CASE REPORT'));
+    assert.ok(downloads[0].content.includes('v2.3.0') && downloads[0].content.includes('abc1234'));
+    const diagParsed = JSON.parse(downloads[1].content);
+    assert.equal(diagParsed.mascot, 'Opi (Sec) the Chicken');
+    assert.equal(diagParsed.version, '2.3.0');
+    assert.equal(diagParsed.commit, 'abc1234');
+
+    const dismissChickensBtn = domMap.get('btn-dismiss-chickens-notice');
+    assert.equal(typeof dismissChickensBtn.onclick, 'function');
+    dismissChickensBtn.onclick();
+    assert.equal(bannerEl.style.display, 'none', 'Dismissing Us Chickens notice should hide the banner cleanly');
+  } finally {
+    fs.rmSync(tmpSafeDir, { recursive: true, force: true });
+    if (prevStateFile === undefined) delete process.env.OBSX_LICENSE_STATE_FILE;
+    else process.env.OBSX_LICENSE_STATE_FILE = prevStateFile;
+    if (prevEnforceLic === undefined) delete process.env.OBSX_ENFORCE_LICENSE_ACCEPTANCE;
+    else process.env.OBSX_ENFORCE_LICENSE_ACCEPTANCE = prevEnforceLic;
+    if (prevEnforceInt === undefined) delete process.env.OBSX_ENFORCE_INTEGRITY;
+    else process.env.OBSX_ENFORCE_INTEGRITY = prevEnforceInt;
+    if (prevAcceptLic === undefined) delete process.env.OBSX_ACCEPT_LICENSE;
+    else process.env.OBSX_ACCEPT_LICENSE = prevAcceptLic;
+    if (prevOps === undefined) delete process.env.OPERATOR_EMAILS;
+    else process.env.OPERATOR_EMAILS = prevOps;
+    if (prevStrict === undefined) delete process.env.STRICT_GATE;
+    else process.env.STRICT_GATE = prevStrict;
+  }
+});
+
+test('hardening: dashboard Integrity Guardian renders State C ("Hello, user.") on missing or tampered files', async () => {
+  const vm = require('vm');
+  const dashSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'dashboard.js'), 'utf8');
+  const createdByTag = [];
+  const makeDomEl = () => ({
+    id: '',
+    innerHTML: '',
+    textContent: '',
+    style: { display: 'none', cssText: '' },
+    children: [],
+    parentNode: null,
+    firstChild: null,
+    disabled: false,
+    addEventListener() {},
+    insertBefore(node) { node.parentNode = this; this.children.unshift(node); this.firstChild = this.children[0]; },
+    appendChild(node) { node.parentNode = this; this.children.push(node); },
+    focus() {},
+    click() {},
+  });
+  const domMap = new Map();
+  for (const id of [
+    'view-logged-out', 'view-logged-in', 'user-email-display', 'nav-auth-status',
+    'projects-list', 'projects-count-badge', 'select-telemetry-project', 'operator-license-feedback',
+  ]) {
+    const el = makeDomEl();
+    el.id = id;
+    domMap.set(id, el);
+  }
+  const vmSandbox = {
+    document: {
+      getElementById: (id) => domMap.get(id) || createdByTag.find((el) => el.id === id) || null,
+      createElement: () => { const el = makeDomEl(); createdByTag.push(el); return el; },
+      body: makeDomEl(),
+    },
+    window: { OBSX: { getAttestation: async () => ({ token: null, nonce: null }) } },
+    fetch: async (url) => {
+      if (url === '/api/v1/me') {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ok: true,
+            user: { email: 'safe-op@obsx.tech' },
+            isOperator: true,
+            upstreamAdvisory: {
+              showReminder: true,
+              edition: 'modified-local',
+              version: '2.3.0',
+              localCommit: 'def5678',
+              licenseStatus: {
+                safeMode: true,
+                safeModeReason: 'missing_critical_files',
+                missingCriticalFiles: ['lib/botshield.js'],
+                accepted: false,
+                licenseChanged: false,
+                treeChanged: false,
+              },
+            },
+          }),
+        };
+      }
+      if (url === '/api/v1/projects') {
+        return { ok: true, status: 200, json: async () => ({ ok: true, projects: [] }) };
+      }
+      return { ok: false, status: 404, json: async () => ({ ok: false }) };
+    },
+    alert: () => {},
+    confirm: () => true,
+    prompt: () => {},
+    Blob: class {},
+    URL: { createObjectURL: () => 'blob:mock', revokeObjectURL: () => {} },
+    navigator: { clipboard: { writeText: async () => {} } },
+    console: { log() {}, warn() {}, error() {} },
+    setTimeout: (fn) => setTimeout(() => { if (typeof fn === 'function') fn(); }, 5),
+    setInterval: () => 0,
+    clearInterval: () => {},
+    JSON, Number, Boolean, String, Array, Map, Set, Math, Date, Promise, encodeURIComponent,
+  };
+  vm.runInNewContext(dashSrc, vmSandbox);
+  await new Promise((r) => setTimeout(r, 20));
+
+  const bannerEl = createdByTag.find((el) => el.id === 'operator-drift-advisory-banner');
+  assert.ok(bannerEl);
+  assert.ok(bannerEl.innerHTML.includes('/opi-sec.png'));
+  assert.ok(bannerEl.innerHTML.includes('Hello, user.'));
+  assert.ok(bannerEl.innerHTML.includes('We noticed an unexpected discrepancy within your local deployment of our code!'));
+  assert.ok(bannerEl.innerHTML.includes("we aren't accusing you of anything (yet)!"));
+  assert.ok(bannerEl.innerHTML.includes('If you did tamper with the license check or delete it altogether'));
+  assert.ok(bannerEl.innerHTML.includes('lib/botshield.js'));
+  assert.ok(bannerEl.innerHTML.includes('security@obsx.tech'));
+  assert.equal(bannerEl.innerHTML.includes('btn-accept-license'), false);
+});
+
 

@@ -18,6 +18,8 @@ function writeTreeFiles(baseDir, overrides = {}) {
     'lib/core.js': 'module.exports = {};\n',
     'lib/botshield.js': 'module.exports = {};\n',
     'lib/updater.js': 'module.exports = {};\n',
+    'lib/crypto.js': 'module.exports = {};\n',
+    'lib/accounts.js': 'module.exports = {};\n',
     ...overrides,
   };
   for (const [rel, content] of Object.entries(files)) {
@@ -514,4 +516,119 @@ test('hardening: normalizeCloudRingSubnetKey rejects unspecified :: and full fe8
   assert.equal(updater.normalizeCloudRingSubnetKey('subnet:v6:fe85:0000:0000/48'), null);
   assert.equal(updater.normalizeCloudRingSubnetKey('subnet:v6:febf:1234:5678/48'), null);
   assert.equal(updater.normalizeCloudRingSubnetKey('subnet:v6:2001:0db8:85a3/48'), 'subnet:v6:2001:0db8:85a3/48');
+});
+
+test('hardening: empty/whitespace LICENSE & critical files trigger Safe Mode and OBSX_ENFORCE_INTEGRITY pins tree fingerprint', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'obsx-lic-empty-'));
+  try {
+    writeTreeFiles(tmpDir);
+
+    // 1. Accepted baseline works under both OBSX_ENFORCE_LICENSE_ACCEPTANCE and OBSX_ENFORCE_INTEGRITY
+    const strictEnv = {
+      OBSX_ENFORCE_LICENSE_ACCEPTANCE: 'true',
+      OBSX_ENFORCE_INTEGRITY: 'true',
+    };
+    const beforeAccept = updater.getLicenseStatus({ rootDir: tmpDir, env: strictEnv });
+    assert.equal(beforeAccept.safeMode, true);
+    assert.equal(beforeAccept.safeModeReason, 'license_acceptance_required');
+    assert.equal(beforeAccept.enforceIntegrity, true);
+
+    const accepted = updater.acceptLicenseTerms({ acceptedBy: 'ops@obsx.tech' }, { rootDir: tmpDir, env: strictEnv });
+    assert.equal(accepted.ok, true);
+    assert.equal(accepted.safeMode, false);
+    assert.equal(accepted.treeChanged, false);
+    assert.match(accepted.treeFingerprint, /^[0-9a-f]{16}$/);
+
+    // 2. Modifying lib/core.js without touching LICENSE triggers critical_integrity_changed under OBSX_ENFORCE_INTEGRITY
+    fs.writeFileSync(path.join(tmpDir, 'lib/core.js'), 'module.exports = { tampered: true };\n', 'utf8');
+    const tampered = updater.getLicenseStatus({ rootDir: tmpDir, env: strictEnv });
+    assert.equal(tampered.safeMode, true);
+    assert.equal(tampered.safeModeReason, 'critical_integrity_changed');
+    assert.equal(tampered.treeChanged, true);
+    assert.equal(tampered.licenseChanged, false);
+
+    // Non-strict mode still notes treeChanged while keeping runtime operational unless files are missing/empty
+    const relaxedDrift = updater.getLicenseStatus({ rootDir: tmpDir, env: {} });
+    assert.equal(relaxedDrift.safeMode, false);
+    assert.equal(relaxedDrift.treeChanged, true);
+
+    // Operator re-acceptance re-pins acceptedTreeFingerprint and exits Safe Mode
+    const treeAdv = updater.getOperatorDriftAdvisory({ rootDir: tmpDir, env: {} });
+    assert.equal(treeAdv.showReminder, true);
+    assert.ok(typeof treeAdv.version === 'string' && treeAdv.version.length > 0);
+    assert.equal(typeof treeAdv.localCommit, 'string');
+    assert.equal(treeAdv.licenseStatus.treeChanged, true);
+
+    const reaccepted = updater.acceptLicenseTerms({ acceptedBy: 'ops@obsx.tech' }, { rootDir: tmpDir, env: strictEnv });
+    assert.equal(reaccepted.ok, true);
+    assert.equal(reaccepted.safeMode, false);
+    assert.equal(reaccepted.treeChanged, false);
+
+    // 3. Empty/whitespace lib/crypto.js and lib/accounts.js trigger missing_critical_files even with empty env
+    fs.writeFileSync(path.join(tmpDir, 'lib/crypto.js'), '   \n\t  ', 'utf8');
+    const emptyCrypto = updater.getLicenseStatus({ rootDir: tmpDir, env: {} });
+    assert.equal(emptyCrypto.safeMode, true);
+    assert.equal(emptyCrypto.safeModeReason, 'missing_critical_files');
+    assert.ok(emptyCrypto.missingCriticalFiles.includes('lib/crypto.js'));
+
+    writeTreeFiles(tmpDir);
+    fs.writeFileSync(path.join(tmpDir, 'lib/accounts.js'), '', 'utf8');
+    const emptyAccounts = updater.getLicenseStatus({ rootDir: tmpDir, env: {} });
+    assert.equal(emptyAccounts.safeMode, true);
+    assert.equal(emptyAccounts.safeModeReason, 'missing_critical_files');
+    assert.ok(emptyAccounts.missingCriticalFiles.includes('lib/accounts.js'));
+
+    // 4. Empty/whitespace LICENSE triggers missing_license_file (even with OBSX_ACCEPT_LICENSE=true) and blocks acceptLicenseTerms
+    writeTreeFiles(tmpDir);
+    fs.writeFileSync(path.join(tmpDir, 'LICENSE'), ' \n\r\t ', 'utf8');
+    const emptyLic = updater.getLicenseStatus({ rootDir: tmpDir, env: { OBSX_ACCEPT_LICENSE: 'true' } });
+    assert.equal(emptyLic.safeMode, true);
+    assert.equal(emptyLic.safeModeReason, 'missing_license_file');
+    assert.equal(emptyLic.licenseSha256, null);
+    assert.equal(emptyLic.accepted, false);
+    assert.ok(emptyLic.missingCriticalFiles.includes('LICENSE'));
+
+    const emptyLicAccept = updater.acceptLicenseTerms({ acceptedBy: 'ops@obsx.tech' }, { rootDir: tmpDir, env: {} });
+    assert.equal(emptyLicAccept.ok, false);
+    assert.equal(emptyLicAccept.error, 'missing_license_file');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('hardening: config.loadEnv ignores OBSX_ACCEPT_LICENSE, OBSX_ENFORCE_LICENSE_ACCEPTANCE, and OBSX_ENFORCE_INTEGRITY in .env', () => {
+  const config = require('../lib/config');
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'obsx-cfg-deny-'));
+  const prevAccept = process.env.OBSX_ACCEPT_LICENSE;
+  const prevEnforceLic = process.env.OBSX_ENFORCE_LICENSE_ACCEPTANCE;
+  const prevEnforceInt = process.env.OBSX_ENFORCE_INTEGRITY;
+  try {
+    delete process.env.OBSX_ACCEPT_LICENSE;
+    delete process.env.OBSX_ENFORCE_LICENSE_ACCEPTANCE;
+    delete process.env.OBSX_ENFORCE_INTEGRITY;
+
+    for (const k of ['OBSX_ACCEPT_LICENSE', 'OBSX_ENFORCE_LICENSE_ACCEPTANCE', 'OBSX_ENFORCE_INTEGRITY']) {
+      assert.ok(config.ENV_FILE_DENYLIST_KEYS.has(k), `Expected ${k} in ENV_FILE_DENYLIST_KEYS`);
+    }
+
+    const fakeEnv = path.join(tmpDir, '.env');
+    fs.writeFileSync(
+      fakeEnv,
+      'OBSX_ACCEPT_LICENSE=true\nOBSX_ENFORCE_LICENSE_ACCEPTANCE=true\nOBSX_ENFORCE_INTEGRITY=true\n',
+      'utf8'
+    );
+    config.loadEnv(fakeEnv);
+
+    assert.equal('OBSX_ACCEPT_LICENSE' in process.env, false);
+    assert.equal('OBSX_ENFORCE_LICENSE_ACCEPTANCE' in process.env, false);
+    assert.equal('OBSX_ENFORCE_INTEGRITY' in process.env, false);
+  } finally {
+    if (prevAccept === undefined) delete process.env.OBSX_ACCEPT_LICENSE;
+    else process.env.OBSX_ACCEPT_LICENSE = prevAccept;
+    if (prevEnforceLic === undefined) delete process.env.OBSX_ENFORCE_LICENSE_ACCEPTANCE;
+    else process.env.OBSX_ENFORCE_LICENSE_ACCEPTANCE = prevEnforceLic;
+    if (prevEnforceInt === undefined) delete process.env.OBSX_ENFORCE_INTEGRITY;
+    else process.env.OBSX_ENFORCE_INTEGRITY = prevEnforceInt;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 });

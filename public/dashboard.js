@@ -96,13 +96,27 @@
     return res && Number.isFinite(res.status) && res.status > 0 ? `HTTP ${res.status}` : fallback;
   }
 
+  const operatorBannerState = {
+    lastAdvJson: '',
+    lastAdvSnapshot: null,
+    adapting: false,
+    acceptingLicense: false,
+    stickyAdaptNotice: false,
+    stickyChickensNotice: false,
+    adaptStatusText: '',
+    licenseStatusText: '',
+    bountyStatusText: '',
+    diffOpen: false,
+    diffContent: '',
+  };
+
   // 1. Check Session State on Load
   async function checkAuth() {
     try {
       const res = await fetch('/api/v1/me');
       const data = await readJsonSafe(res);
       if (res.ok && data && data.ok && data.user) {
-        renderLoggedIn(data.user);
+        renderLoggedIn(data.user, data);
       } else {
         renderLoggedOut();
       }
@@ -112,7 +126,7 @@
     }
   }
 
-  function renderLoggedIn(user) {
+  function renderLoggedIn(user, meData) {
     if (viewLoggedOut) viewLoggedOut.style.display = 'none';
     if (viewLoggedIn) viewLoggedIn.style.display = 'block';
     if (userEmailDisplay) userEmailDisplay.textContent = user.email;
@@ -120,11 +134,16 @@
       navAuthStatus.innerHTML = `<span class="badge badge-good" style="margin-left: 8px;">Operator: ${escapeHtml(String(user.email || '').split('@')[0])}</span>`;
     }
 
+    renderOperatorDriftBanner(meData && meData.upstreamAdvisory ? meData.upstreamAdvisory : null);
     loadProjects();
     startTelemetryPolling();
   }
 
   function renderLoggedOut() {
+    operatorBannerState.stickyAdaptNotice = false;
+    operatorBannerState.stickyChickensNotice = false;
+    operatorBannerState.lastAdvSnapshot = null;
+    operatorBannerState.lastAdvJson = '';
     if (viewLoggedOut) viewLoggedOut.style.display = 'block';
     if (viewLoggedIn) viewLoggedIn.style.display = 'none';
     if (authStepEmail) authStepEmail.style.display = 'flex';
@@ -814,22 +833,136 @@
     });
   }
 
-  const operatorBannerState = {
-    lastAdvJson: '',
-    adapting: false,
-    acceptingLicense: false,
-    stickyAdaptNotice: false,
-    adaptStatusText: '',
-    licenseStatusText: '',
-    diffOpen: false,
-    diffContent: '',
-  };
+  function triggerFileDownload(filename, content, mimeType) {
+    try {
+      if (typeof Blob !== 'function' || typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') {
+        return false;
+      }
+      const blob = new Blob([content], { type: mimeType || 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      if (link.style) link.style.display = 'none';
+      if (document.body && typeof document.body.appendChild === 'function') {
+        document.body.appendChild(link);
+      }
+      if (typeof link.click === 'function') link.click();
+      setTimeout(() => {
+        if (typeof link.remove === 'function') link.remove();
+        else if (link.parentNode && typeof link.parentNode.removeChild === 'function') {
+          link.parentNode.removeChild(link);
+        }
+        if (typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(url);
+      }, 1000);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function buildDiagnosticPayload(advSnapshot) {
+    const snap = advSnapshot && typeof advSnapshot === 'object'
+      ? advSnapshot
+      : (operatorBannerState.lastAdvSnapshot || {});
+    const lic = snap.licenseStatus && typeof snap.licenseStatus === 'object' ? snap.licenseStatus : {};
+    return {
+      generatedAt: new Date().toISOString(),
+      product: 'OBSX Security Engine',
+      mascot: 'Opi (Sec) the Chicken',
+      version: String(snap.version || '2.2.0+'),
+      edition: String(snap.edition || 'official'),
+      commit: String(snap.localCommit || 'local'),
+      platform: (typeof navigator !== 'undefined' && navigator.platform) ? String(navigator.platform) : 'unknown',
+      userAgent: (typeof navigator !== 'undefined' && navigator.userAgent) ? String(navigator.userAgent) : 'unknown',
+      licenseStatus: {
+        accepted: Boolean(lic.accepted),
+        acceptedVia: lic.acceptedVia || null,
+        licenseChanged: Boolean(lic.licenseChanged),
+        treeChanged: Boolean(lic.treeChanged),
+        safeMode: Boolean(lic.safeMode),
+        safeModeReason: lic.safeModeReason || null,
+        licenseSha256: lic.licenseSha256 || null,
+        treeFingerprint: lic.treeFingerprint || null,
+        missingCriticalFiles: Array.isArray(lic.missingCriticalFiles) ? lic.missingCriticalFiles.slice(0, 20) : [],
+      },
+      locallyModifiedFiles: Array.isArray(snap.locallyModifiedFiles) ? snap.locallyModifiedFiles.slice(0, 50) : [],
+    };
+  }
+
+  function buildBugReportTemplate(diag) {
+    const ls = diag.licenseStatus || {};
+    const modList = diag.locallyModifiedFiles && diag.locallyModifiedFiles.length
+      ? diag.locallyModifiedFiles.join(', ')
+      : 'None';
+    return [
+      '====================================================================',
+      'OBSX.TECH — PRE-FILLED BUG & EDGE-CASE REPORT',
+      'Mascot: Opi (Sec) the Chicken  |  Contact: security@obsx.tech',
+      '====================================================================',
+      '',
+      'Thank you for helping the chickens at obsx.tech! If we verify your bug,',
+      'your name or preferred handle goes directly on the git commit & site,',
+      'plus permanent free access to Sentinel cloud node on your own machine',
+      '(please do not share it—the chicken here at obsx.tech worked hard on it!).',
+      '',
+      '--- AUTO-FILLED DIAGNOSTICS (DO NOT REMOVE) ---',
+      `Reported At:       ${diag.generatedAt}`,
+      `OBSX Release:      v${diag.version}`,
+      `Git Commit:        ${diag.commit}`,
+      `Node Edition:      ${diag.edition}`,
+      `Platform / UA:     ${diag.platform} | ${diag.userAgent}`,
+      `License SHA-256:   ${ls.licenseSha256 || 'unavailable'}`,
+      `Tree Fingerprint:  ${ls.treeFingerprint || 'unavailable'}`,
+      `License Accepted:  ${ls.accepted ? `yes (${ls.acceptedVia || 'operator'})` : 'no'}`,
+      `Safe Mode State:   ${ls.safeMode ? `active (${ls.safeModeReason || 'unknown'})` : 'inactive'}`,
+      `Modified Files:    ${modList}`,
+      '----------------------------------------------',
+      '',
+      'Name or Handle (for Git Commit & Site Attribution): [optional]',
+      'Sentinel Machine / Node Identifier (for Bounty):    [optional]',
+      '',
+      '1. SUMMARY OF WHAT YOU WERE TESTING OR EXPERIMENTING WITH:',
+      '   [Describe the edge case, custom modification, or bug here]',
+      '',
+      '2. STEPS TO REPRODUCE:',
+      '   1) ...',
+      '   2) ...',
+      '',
+      '3. EXPECTED VS. ACTUAL BEHAVIOR:',
+      '   Expected: ...',
+      '   Actual:   ...',
+      '',
+      '4. ATTACHED DIAGNOSTICS:',
+      '   Please also attach obsx-diagnostics.json if exported.',
+      '',
+    ].join('\n');
+  }
+
+  function buildSecurityMailtoHref(subject, diag) {
+    const ls = diag.licenseStatus || {};
+    const body = [
+      'Hello Opi (Sec) and the chickens at obsx.tech,',
+      '',
+      `Node Release: v${diag.version} (${diag.commit})`,
+      `Edition: ${diag.edition}`,
+      `Safe Mode: ${ls.safeMode ? (ls.safeModeReason || 'active') : 'inactive'}`,
+      `License SHA-256: ${ls.licenseSha256 || 'n/a'}`,
+      `Tree Fingerprint: ${ls.treeFingerprint || 'n/a'}`,
+      '',
+      'Details about what I was testing / encountered:',
+      '',
+    ].join('\n');
+    return `mailto:security@obsx.tech?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  }
 
   function syncBannerFeedbackAndDiff() {
     const adaptFeedback = document.getElementById('operator-adapt-feedback');
     if (adaptFeedback) adaptFeedback.textContent = operatorBannerState.adaptStatusText;
     const licFeedback = document.getElementById('operator-license-feedback');
     if (licFeedback) licFeedback.textContent = operatorBannerState.licenseStatusText;
+    const bountyFeedback = document.getElementById('operator-bounty-feedback');
+    if (bountyFeedback) bountyFeedback.textContent = operatorBannerState.bountyStatusText;
     const btnDiff = document.getElementById('btn-view-upstream-diff');
     const diffView = document.getElementById('operator-upstream-diff-view');
     if (btnDiff && diffView) {
@@ -840,13 +973,26 @@
   }
 
   function renderOperatorDriftBanner(adv) {
+    if (adv && typeof adv === 'object' && (adv.version || adv.edition || adv.licenseStatus || adv.localCommit)) {
+      const prevSnap = operatorBannerState.lastAdvSnapshot || {};
+      operatorBannerState.lastAdvSnapshot = {
+        ...prevSnap,
+        ...adv,
+        licenseStatus: {
+          ...(prevSnap.licenseStatus || {}),
+          ...(adv.licenseStatus || {}),
+        },
+      };
+    }
+
     let driftBanner = document.getElementById('operator-drift-advisory-banner');
     const hasReminder = Boolean(adv && adv.showReminder);
-    if (!hasReminder && !operatorBannerState.stickyAdaptNotice) {
+    if (!hasReminder && !operatorBannerState.stickyAdaptNotice && !operatorBannerState.stickyChickensNotice) {
       if (driftBanner) driftBanner.style.display = 'none';
       operatorBannerState.lastAdvJson = '';
       operatorBannerState.adaptStatusText = '';
       operatorBannerState.licenseStatusText = '';
+      operatorBannerState.bountyStatusText = '';
       operatorBannerState.diffOpen = false;
       operatorBannerState.diffContent = '';
       return;
@@ -856,9 +1002,11 @@
     if (operatorBannerState.adapting || operatorBannerState.acceptingLicense) return;
 
     const effectiveAdv = adv || {};
+    const diagSnap = buildDiagnosticPayload(operatorBannerState.lastAdvSnapshot || effectiveAdv);
     const advJson = JSON.stringify({
       adv: effectiveAdv,
       stickyAdaptNotice: operatorBannerState.stickyAdaptNotice,
+      stickyChickensNotice: operatorBannerState.stickyChickensNotice,
       adaptStatusText: operatorBannerState.adaptStatusText,
     });
     if (driftBanner && advJson === operatorBannerState.lastAdvJson) {
@@ -869,9 +1017,12 @@
     if (!driftBanner) {
       driftBanner = document.createElement('div');
       driftBanner.id = 'operator-drift-advisory-banner';
-      driftBanner.style.cssText = 'margin: 0 0 16px 0; padding: 14px 16px; border-radius: 8px; border: 1px solid rgba(245, 158, 11, 0.45); background: rgba(245, 158, 11, 0.08); font-size: 12.5px; line-height: 1.5;';
-      const parentTarget = (projectTelemetryContainer && projectTelemetryContainer.parentNode) || document.body;
-      parentTarget.insertBefore(driftBanner, projectTelemetryContainer || parentTarget.firstChild);
+      const parentTarget = viewLoggedIn || (projectTelemetryContainer && projectTelemetryContainer.parentNode) || document.body;
+      if (parentTarget && typeof parentTarget.insertBefore === 'function') {
+        parentTarget.insertBefore(driftBanner, parentTarget.firstChild || null);
+      } else if (parentTarget && typeof parentTarget.appendChild === 'function') {
+        parentTarget.appendChild(driftBanner);
+      }
     }
 
     operatorBannerState.lastAdvJson = advJson;
@@ -879,7 +1030,7 @@
       ? effectiveAdv.locallyModifiedFiles.map((f) => `<code>${escapeHtml(f)}</code>`).join(', ')
       : 'None';
     const upCommits = (effectiveAdv.upstreamCommits && effectiveAdv.upstreamCommits.length)
-      ? `<div style="margin-top:6px;"><strong>New Official Upstream Commits (${effectiveAdv.commitsBehind} behind):</strong><ul style="margin:4px 0 0 18px; padding:0;">${effectiveAdv.upstreamCommits.map((c) => `<li><code>${escapeHtml(c)}</code></li>`).join('')}</ul></div>`
+      ? `<div style="margin-top:6px;"><strong>New Official Upstream Commits (${escapeHtml(effectiveAdv.commitsBehind)} behind):</strong><ul style="margin:4px 0 0 18px; padding:0;">${effectiveAdv.upstreamCommits.map((c) => `<li><code>${escapeHtml(c)}</code></li>`).join('')}</ul></div>`
       : '';
     const upFiles = (effectiveAdv.upstreamChangedFiles && effectiveAdv.upstreamChangedFiles.length)
       ? `<div style="margin-top:4px;"><strong>Changed Upstream Files:</strong> ${effectiveAdv.upstreamChangedFiles.map((f) => `<code>${escapeHtml(f)}</code>`).join(', ')}</div>`
@@ -887,34 +1038,153 @@
     const overlapWarn = (effectiveAdv.overlappingFiles && effectiveAdv.overlappingFiles.length)
       ? `<div style="margin-top:4px; color:#f59e0b;"><strong>Adaptation Overlap Detected:</strong> Both your local node and official upstream modified ${effectiveAdv.overlappingFiles.map((f) => `<code>${escapeHtml(f)}</code>`).join(', ')}.</div>`
       : '';
-    const lic = effectiveAdv.licenseStatus;
+
+    const lic = effectiveAdv.licenseStatus || null;
+    const missingFiles = lic && Array.isArray(lic.missingCriticalFiles) ? lic.missingCriticalFiles : [];
     const hasGitDrift = Boolean(effectiveAdv.dirtyWorkingTree || (effectiveAdv.commitsBehind && effectiveAdv.commitsBehind > 0));
-    const needsLicenseAction = Boolean(
-      lic && (!lic.missingCriticalFiles || !lic.missingCriticalFiles.length) &&
-      (!lic.accepted || lic.licenseChanged || lic.safeModeReason === 'corrupt_license_state')
+    const snapModFiles = operatorBannerState.lastAdvSnapshot && Array.isArray(operatorBannerState.lastAdvSnapshot.locallyModifiedFiles)
+      ? operatorBannerState.lastAdvSnapshot.locallyModifiedFiles
+      : [];
+    const hasLocalForkEdits = Boolean(hasGitDrift || snapModFiles.length > 0);
+    const hasTamperDiscrepancy = Boolean(
+      lic && (
+        missingFiles.length > 0 ||
+        lic.treeChanged ||
+        lic.safeModeReason === 'critical_integrity_changed' ||
+        lic.safeModeReason === 'corrupt_license_state' ||
+        lic.safeModeReason === 'missing_license_file' ||
+        lic.safeModeReason === 'missing_critical_files'
+      )
     );
-    const licenseNotice = lic && (lic.safeMode || lic.licenseChanged)
-      ? `<div style="margin-top:6px; padding:8px 10px; border-radius:6px; border:1px solid rgba(245, 158, 11, 0.35); background:rgba(0,0,0,0.2);">
-          <strong>License Integrity Status:</strong> ${lic.safeMode ? `Safe Mode (${escapeHtml(lic.safeModeReason || 'integrity_check')})` : 'Updated LICENSE detected'}
-          ${lic.missingCriticalFiles && lic.missingCriticalFiles.length ? ` · Missing: ${lic.missingCriticalFiles.map((f) => `<code>${escapeHtml(f)}</code>`).join(', ')}` : ''}
-          ${needsLicenseAction ? ' · <button type="button" id="btn-accept-license" class="btn btn-secondary" style="font-size:11px; padding:2px 8px; margin-left:4px;">Accept Current LICENSE</button>' : ''}
-          <span id="operator-license-feedback" style="margin-left:8px; color:#f59e0b;"></span>
+    const needsLicenseAction = Boolean(
+      lic && !missingFiles.length &&
+      (!lic.accepted || lic.licenseChanged || lic.treeChanged || lic.safeModeReason === 'corrupt_license_state' || lic.safeModeReason === 'critical_integrity_changed')
+    );
+    const showLicenseNoticeCard = Boolean(lic && (lic.safeMode || lic.licenseChanged || lic.treeChanged) && !hasTamperDiscrepancy);
+    const showChickensCard = Boolean(operatorBannerState.stickyChickensNotice && !hasTamperDiscrepancy && !(lic && lic.safeMode));
+
+    const licHashShort = lic && lic.licenseSha256 ? `${String(lic.licenseSha256).slice(0, 12)}...` : 'unavailable';
+    const treeHashShort = lic && lic.treeFingerprint ? `${String(lic.treeFingerprint).slice(0, 12)}...` : 'unavailable';
+    const mailtoHref = buildSecurityMailtoHref(
+      hasTamperDiscrepancy
+        ? `OBSX Integrity Discrepancy / Safe Mode Report (${diagSnap.commit})`
+        : `OBSX Bug & Edge-Case Report (${diagSnap.commit})`,
+      diagSnap
+    );
+
+    const tamperStateLabel = missingFiles.length > 0
+      ? 'Missing / Deleted'
+      : (lic && lic.safeModeReason === 'corrupt_license_state')
+      ? 'Corrupt State'
+      : 'Modified / Tampered';
+    const tamperLocationHtml = missingFiles.length > 0
+      ? missingFiles.map((f) => `<code>${escapeHtml(f)}</code>`).join(', ')
+      : '<code>LICENSE</code>, <code>CORE_WATCH_FILES</code>, or <code>.obsx-license-state.json</code>';
+
+    const tamperNoticeBox = hasTamperDiscrepancy
+      ? `<div style="margin-top:8px; padding:12px 14px; border-radius:6px; border:1px solid rgba(248, 113, 113, 0.45); background:rgba(15, 23, 42, 0.6);">
+          <p style="margin:0 0 8px 0;"><strong>We noticed an unexpected discrepancy within your local deployment of our code!</strong></p>
+          <p style="margin:0 0 8px 0; color:var(--text-muted);">Don't worry&mdash;we aren't accusing you of anything (yet)! We know that merge conflicts, local experimentation, and accidental overwrites happen all the time to developers working normally.</p>
+          <div style="margin:8px 0; padding:8px 10px; border-radius:4px; background:rgba(0,0,0,0.35); border:1px solid rgba(248,113,113,0.25); font-size:12px;">
+            <div><strong>Discrepancy Details</strong></div>
+            <div style="margin-top:4px;"><strong>Location:</strong> ${tamperLocationHtml}</div>
+            <div style="margin-top:2px;"><strong>Current State:</strong> ${escapeHtml(tamperStateLabel)} &middot; <strong>Reason:</strong> <code>${escapeHtml((lic && lic.safeModeReason) || 'integrity_check')}</code></div>
+            <div style="margin-top:2px; color:var(--text-muted);">Release <code>v${escapeHtml(diagSnap.version)}</code> &middot; Commit <code>${escapeHtml(diagSnap.commit)}</code> &middot; License <code>${escapeHtml(licHashShort)}</code> &middot; Engine <code>${escapeHtml(treeHashShort)}</code></div>
+          </div>
+          <p style="margin:8px 0 6px 0;">If you did tamper with the license check or delete it altogether, we would greatly appreciate it if you put it back!</p>
+          <p style="margin:0 0 10px 0; color:var(--text-muted);">If this was an unintended error or a false alarm, feel free to reach out to us at <a href="${escapeHtml(mailtoHref)}" style="color:#38bdf8;">security@obsx.tech</a> with details about what you were testing.</p>
+          <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+            ${needsLicenseAction ? '<button type="button" id="btn-accept-license" class="btn btn-primary" style="min-height:30px; font-size:12px; padding:5px 12px;">Accept Current LICENSE</button>' : ''}
+            <a href="${escapeHtml(mailtoHref)}" class="btn btn-secondary" style="min-height:30px; font-size:12px; padding:5px 12px; text-decoration:none; display:inline-flex; align-items:center;">Email security@obsx.tech</a>
+            <span id="operator-license-feedback" role="status" aria-live="polite" style="font-size:12px; color:#f59e0b;"></span>
+          </div>
         </div>`
       : '';
+
+    const licenseNoticeBox = showLicenseNoticeCard
+      ? `<div style="margin-top:8px; padding:12px 14px; border-radius:6px; border:1px solid rgba(245, 158, 11, 0.35); background:rgba(15, 23, 42, 0.55);">
+          <p style="margin:0 0 8px 0;"><strong>Hello, dear user.</strong> Effective with OBSX <code>v2.2.0+</code>, updated releases operate under our Dual-License model: <strong>Zone 1</strong> (client telemetry snippet and public docs) remains open-source under the <strong>MIT License</strong>, <strong>Zone 2</strong> (self-hosted engine in <code>lib/</code>) uses the <strong>OBSX Source-Available License v1.0</strong>, and proprietary <strong>OBSX Sentinel&trade;</strong> remains closed-source.</p>
+          <p style="margin:0 0 8px 0; color:var(--text-muted);">All historical pre-v2.2.0 commits remain irrevocably under MIT terms forever, while running v2.2.0+ requires confirming the current <code>LICENSE</code>. We sincerely apologize for any disruption, but this strategic decision was made to ensure the long-term sustainability, security, and integrity of the protocol.</p>
+          <div style="margin:8px 0; display:flex; gap:12px; flex-wrap:wrap; font-size:12px;">
+            <a href="/terms.html" target="_blank" rel="noopener noreferrer" style="color:#38bdf8;">Review Zone 1 / Zone 2 Terms</a>
+            <a href="https://github.com/jidiotspam-hue/obsx/blob/main/LICENSE" target="_blank" rel="noopener noreferrer" style="color:#38bdf8;">Inspect Official LICENSE on GitHub</a>
+          </div>
+          <div style="margin:8px 0; padding:8px 10px; border-radius:4px; background:rgba(0,0,0,0.3); font-size:12px; color:var(--text-muted);">
+            <strong>Node Diagnostics:</strong> Release <code>v${escapeHtml(diagSnap.version)}</code> &middot; Commit <code>${escapeHtml(diagSnap.commit)}</code> &middot; Edition <code>${escapeHtml(diagSnap.edition)}</code> &middot; License <code>${escapeHtml(licHashShort)}</code> &middot; Engine <code>${escapeHtml(treeHashShort)}</code> &middot; Status <code>${escapeHtml((lic && lic.safeModeReason) || (lic && lic.licenseChanged ? 'license_changed' : 'integrity_check'))}</code>
+          </div>
+          <p style="margin:0 0 10px 0; color:var(--text-muted);">For automated or headless deployments, confirm <code>LICENSE</code> and set <code>OBSX_ACCEPT_LICENSE=true</code> in your process environment (never <code>.env</code>). Have a great day!</p>
+          <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+            ${needsLicenseAction ? '<button type="button" id="btn-accept-license" class="btn btn-primary" style="min-height:30px; font-size:12px; padding:5px 12px;">Accept Current LICENSE</button>' : ''}
+            <span id="operator-license-feedback" role="status" aria-live="polite" style="font-size:12px; color:#f59e0b;"></span>
+          </div>
+        </div>`
+      : '';
+
+    const dirtyForkPara = hasLocalForkEdits
+      ? '<p style="margin:0 0 8px 0; color:var(--text-muted);">Don\'t worry: if you are running a custom fork or local modifications, we strictly recorded verification for your license verification state&mdash;none of your other files, configs, or customizations were touched. Feel free to keep building, testing, and exploring the engine freely!</p>'
+      : '';
+
+    const chickensNoticeBox = showChickensCard
+      ? `<div style="margin-top:8px; padding:12px 14px; border-radius:6px; border:1px solid rgba(56, 189, 248, 0.4); background:rgba(15, 23, 42, 0.55);">
+          <p style="margin:0 0 8px 0;"><strong>Official Integrity Restored &bull; Custom Changes Preserved</strong></p>
+          <p style="margin:0 0 8px 0;">We noticed that you clicked our restore button. We genuinely appreciate you taking the time to experiment with our project, test its boundaries, or help us catch weird edge-case bugs. Breaking things is half the fun of software engineering, and it shows that you are actively engaging with what we built.</p>
+          ${dirtyForkPara}
+          <p style="margin:0 0 10px 0; font-weight:600; color:#7dd3fc;">So for now, until you decide to have fun experimenting with the codebase again, there is nothing here but us chickens!</p>
+          <div style="margin:8px 0 10px 0; padding:10px 12px; border-radius:4px; background:rgba(0,0,0,0.3); border:1px solid rgba(56,189,248,0.25); font-size:12px;">
+            <div style="margin-bottom:4px;"><strong>Verified Bug Bounty &amp; Opi (Sec) Notice</strong></div>
+            <p style="margin:0; color:var(--text-muted);">If you do happen to find an edge case in the future, or even just a silly little bug during your testing (again, thanks for experimenting!), we would truly appreciate it if you reported it to us at <a href="${escapeHtml(mailtoHref)}" style="color:#38bdf8;">security@obsx.tech</a>! Don't worry about the tedious administrative details&mdash;us chickens here at obsx.tech already took care of that by pre-filling your system environment, node version, and diagnostic metadata below. To thank you for helping the chickens at obsx.tech, we will keep your name (or preferred handle) directly on the git commit and on the site! If we can verify your bug, as a direct reward you will be given permanent free access to the Sentinel cloud node on your own machine! (Please do not share it&mdash;the chicken here at obsx.tech worked hard on it!).</p>
+          </div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+            <button type="button" id="btn-download-bug-template" class="btn btn-primary" style="min-height:30px; font-size:12px; padding:5px 12px;">Download Pre-Filled Bug Report</button>
+            <button type="button" id="btn-download-diag-json" class="btn btn-secondary" style="min-height:30px; font-size:12px; padding:5px 12px;">Export Diagnostics (JSON)</button>
+            <a href="${escapeHtml(mailtoHref)}" class="btn btn-secondary" style="min-height:30px; font-size:12px; padding:5px 12px; text-decoration:none; display:inline-flex; align-items:center;">Email security@obsx.tech</a>
+            <button type="button" id="btn-dismiss-chickens-notice" class="btn btn-secondary" style="min-height:30px; font-size:12px; padding:5px 12px;">Dismiss</button>
+            <span id="operator-bounty-feedback" role="status" aria-live="polite" style="font-size:12px; color:#38bdf8;"></span>
+          </div>
+        </div>`
+      : '';
+
+    const isChickensPrimary = Boolean(!hasGitDrift && !hasTamperDiscrepancy && !showLicenseNoticeCard && showChickensCard);
+    const headerAccent = hasTamperDiscrepancy
+      ? '#fca5a5'
+      : isChickensPrimary
+      ? '#7dd3fc'
+      : '#f59e0b';
+    const badgeClass = hasTamperDiscrepancy
+      ? 'badge-bad'
+      : isChickensPrimary
+      ? 'badge-good'
+      : 'badge-warn';
+
+    driftBanner.style.cssText = hasTamperDiscrepancy
+      ? 'margin: 0 0 16px 0; padding: 14px 16px; border-radius: 8px; border: 1px solid rgba(248, 113, 113, 0.5); background: rgba(239, 68, 68, 0.08); font-size: 12.5px; line-height: 1.5;'
+      : isChickensPrimary
+      ? 'margin: 0 0 16px 0; padding: 14px 16px; border-radius: 8px; border: 1px solid rgba(56, 189, 248, 0.45); background: rgba(56, 189, 248, 0.08); font-size: 12.5px; line-height: 1.5;'
+      : 'margin: 0 0 16px 0; padding: 14px 16px; border-radius: 8px; border: 1px solid rgba(245, 158, 11, 0.45); background: rgba(245, 158, 11, 0.08); font-size: 12.5px; line-height: 1.5;';
+
     const bannerTitle = hasGitDrift
       ? '[PRIVATE OPERATOR ADVISORY] Local Node Customization &amp; Upstream Sync Paused'
+      : hasTamperDiscrepancy
+      ? '[PRIVATE OPERATOR ADVISORY] Hello, user. &mdash; OBSX Integrity Guardian Safe Mode Active'
       : operatorBannerState.stickyAdaptNotice
       ? '[PRIVATE OPERATOR ADVISORY] Local Adaptation &amp; Stash Notice'
-      : '[PRIVATE OPERATOR ADVISORY] License Integrity &amp; Safe Mode Notice';
+      : isChickensPrimary
+      ? '[PRIVATE OPERATOR ADVISORY] Nothing here but us chickens!'
+      : '[PRIVATE OPERATOR ADVISORY] Hello, dear user. &mdash; License Integrity &amp; Dual-License Notice';
     const bannerSubtitle = hasGitDrift
       ? 'Auto-updater paused fast-forward sync to protect your local changes. Only you (authenticated operator) can see this notice.'
+      : hasTamperDiscrepancy
+      ? 'We noticed an unexpected discrepancy within your local deployment of our code! Only you (authenticated operator) can see this notice.'
       : operatorBannerState.stickyAdaptNotice
       ? 'Upstream sync completed, and overlapping local edits remain safely preserved in git stash until you restore or dismiss this notice.'
-      : 'Operator attention required for license integrity verification. Only you (authenticated operator) can see this notice.';
+      : isChickensPrimary
+      ? 'Official Integrity Restored &bull; Verified Operator Acceptance Recorded &bull; Custom Changes Preserved'
+      : 'Operator attention required for Dual-License &amp; integrity verification. Only you (authenticated operator) can see this notice.';
+
     const stickyNoticeBox = (!hasGitDrift && operatorBannerState.stickyAdaptNotice)
       ? `<div style="margin-top:8px; padding:8px 10px; border-radius:6px; border:1px solid rgba(245, 158, 11, 0.35); background:rgba(0,0,0,0.25); display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-          <span id="operator-adapt-feedback" style="font-size:11.5px; color:#f59e0b;"></span>
-          <button type="button" id="btn-dismiss-adapt-notice" class="btn btn-secondary" style="font-size:11px; padding:2px 8px;">Dismiss</button>
+          <span id="operator-adapt-feedback" role="status" aria-live="polite" style="font-size:11.5px; color:#f59e0b;"></span>
+          <button type="button" id="btn-dismiss-adapt-notice" class="btn btn-secondary" style="min-height:28px; font-size:11.5px; padding:4px 10px;">Dismiss</button>
         </div>`
       : '';
     const gitControls = hasGitDrift
@@ -928,23 +1198,28 @@
         <code style="display:block; margin-top:4px; padding:6px 8px; background:rgba(0,0,0,0.35); border-radius:4px; user-select:all;">${escapeHtml(effectiveAdv.adaptationCommand || 'git fetch origin main && git stash && git pull --rebase origin main && git stash pop')}</code>
       </div>
       <div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
-        <button type="button" id="btn-view-upstream-diff" class="btn btn-secondary" style="font-size:11.5px; padding:5px 10px;">View Upstream Diff</button>
-        <button type="button" id="btn-auto-adapt-node" class="btn btn-primary" style="font-size:11.5px; padding:5px 10px;">1-Click Auto-Adapt &amp; Rebase</button>
-        <span id="operator-adapt-feedback" style="font-size:11.5px; color:#f59e0b;"></span>
+        <button type="button" id="btn-view-upstream-diff" class="btn btn-secondary" style="min-height:30px; font-size:11.5px; padding:5px 10px;">View Upstream Diff</button>
+        <button type="button" id="btn-auto-adapt-node" class="btn btn-primary" style="min-height:30px; font-size:11.5px; padding:5px 10px;">1-Click Auto-Adapt &amp; Rebase</button>
+        <span id="operator-adapt-feedback" role="status" aria-live="polite" style="font-size:11.5px; color:#f59e0b;"></span>
       </div>
       <pre id="operator-upstream-diff-view" style="display:none; margin-top:8px; padding:8px; max-height:220px; overflow:auto; background:rgba(0,0,0,0.45); border-radius:4px; font-size:11px; white-space:pre-wrap;"></pre>
       `
       : stickyNoticeBox;
 
     driftBanner.innerHTML = `
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-        <strong style="color:#f59e0b;">${bannerTitle}</strong>
-        <span class="badge badge-warn">Edition: ${escapeHtml(effectiveAdv.edition || 'modified-local')}</span>
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap; margin-bottom:6px;">
+        <div style="display:flex; align-items:center; gap:12px; min-width:0; flex:1;">
+          <img src="/opi-sec.png" alt="Opi (Sec) the Chicken, OBSX Security guardian mascot" width="44" height="44" style="width:44px; height:44px; border-radius:8px; border:1px solid rgba(56,189,248,0.35); background:rgba(15,23,42,0.85); image-rendering:pixelated; flex-shrink:0;" />
+          <div style="min-width:0;">
+            <h2 style="margin:0; font-size:14.5px; font-weight:700; color:${escapeHtml(headerAccent)};">${bannerTitle}</h2>
+            <div style="margin-top:2px; color:var(--text-muted); font-size:12px;">${bannerSubtitle}</div>
+          </div>
+        </div>
+        <span class="badge ${escapeHtml(badgeClass)}">Edition: ${escapeHtml(effectiveAdv.edition || 'modified-local')}</span>
       </div>
-      <div style="color:var(--text-muted);">
-        ${bannerSubtitle}
-      </div>
-      ${licenseNotice}
+      ${tamperNoticeBox}
+      ${licenseNoticeBox}
+      ${chickensNoticeBox}
       ${gitControls}
     `;
     driftBanner.style.display = 'block';
@@ -957,6 +1232,48 @@
         operatorBannerState.adaptStatusText = '';
         operatorBannerState.lastAdvJson = '';
         renderOperatorDriftBanner(adv);
+      };
+    }
+
+    const btnDismissChickens = document.getElementById('btn-dismiss-chickens-notice');
+    if (btnDismissChickens) {
+      btnDismissChickens.onclick = () => {
+        operatorBannerState.stickyChickensNotice = false;
+        operatorBannerState.bountyStatusText = '';
+        operatorBannerState.lastAdvJson = '';
+        renderOperatorDriftBanner(adv);
+      };
+    }
+
+    const btnDownloadBugTemplate = document.getElementById('btn-download-bug-template');
+    if (btnDownloadBugTemplate) {
+      btnDownloadBugTemplate.onclick = () => {
+        const currentDiag = buildDiagnosticPayload(operatorBannerState.lastAdvSnapshot || effectiveAdv);
+        const downloaded = triggerFileDownload(
+          'obsx-prefilled-bug-report.txt',
+          buildBugReportTemplate(currentDiag),
+          'text/plain;charset=utf-8'
+        );
+        operatorBannerState.bountyStatusText = downloaded
+          ? 'Downloaded obsx-prefilled-bug-report.txt (attach to your email to security@obsx.tech!)'
+          : 'Pre-filled bug report generated.';
+        syncBannerFeedbackAndDiff();
+      };
+    }
+
+    const btnDownloadDiagJson = document.getElementById('btn-download-diag-json');
+    if (btnDownloadDiagJson) {
+      btnDownloadDiagJson.onclick = () => {
+        const currentDiag = buildDiagnosticPayload(operatorBannerState.lastAdvSnapshot || effectiveAdv);
+        const downloaded = triggerFileDownload(
+          'obsx-diagnostics.json',
+          JSON.stringify(currentDiag, null, 2),
+          'application/json;charset=utf-8'
+        );
+        operatorBannerState.bountyStatusText = downloaded
+          ? 'Exported obsx-diagnostics.json with live node metadata.'
+          : 'Diagnostics bundle prepared.';
+        syncBannerFeedbackAndDiff();
       };
     }
 
@@ -1040,8 +1357,13 @@
           const lData = await readJsonSafe(lRes);
           if (lRes.ok && lData && lData.ok) {
             operatorBannerState.licenseStatusText = 'LICENSE Accepted';
+            if (!lData.safeMode) {
+              operatorBannerState.stickyChickensNotice = true;
+            }
             if (activeTelemetryPid) {
               setTimeout(() => loadProjectTelemetry(activeTelemetryPid, false), 400);
+            } else {
+              setTimeout(() => checkAuth(), 400);
             }
           } else {
             operatorBannerState.licenseStatusText = extractResponseError(lRes, lData, 'Acceptance failed');
