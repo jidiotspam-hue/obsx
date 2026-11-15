@@ -10,12 +10,11 @@
       "default": "./lib/index.js"
     },
     "./package.json": "./package.json",
-    "./server": "./server.js",
     "./core": "./lib/core.js",
     "./crypto": "./lib/crypto.js",
     "./telemetry": "./lib/telemetry.js",
     "./kv": "./lib/kv.js",
-    "./lib/*": "./lib/*"
+    "./config": "./lib/config.js"
   },
   "scripts": {
     "start": "node server.js",
@@ -35,7 +34,21 @@
     "anti-bot"
   ],
   "author": "Alexis Grimmace <alexisgrimmace@users.noreply.github.com>",
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "MIT AND LicenseRef-OBSX-Zone-2-1.0",
+  "files": [
+    "lib/core.js",
+    "lib/crypto.js",
+    "lib/telemetry.js",
+    "lib/kv.js",
+    "lib/config.js",
+    "lib/index.js",
+    "index.d.ts",
+    "src/tracer.js",
+    "public/obsx.min.js",
+    "public/tracer.min.js",
+    "LICENSE",
+    "README.md"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/jidiotspam-hue/obsx.git"

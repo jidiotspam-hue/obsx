@@ -4,7 +4,7 @@
 /*
  * OBSX origin-shield soak test. (Zone 2)
  * Copyright (c) 2026 Alexis Grimmace.
- * Licensed under the Elastic License 2.0 + OBSX Zone 2 Terms — See LICENSE file.
+ * Licensed under the OBSX Source-Available License v1.0 (Zone 2) — See LICENSE file.
  *
  * Zero dependencies, pure Node. It opens N keep-alive connections and pushes
  * requests through them for a fixed time, then prints a status histogram and

@@ -37,7 +37,8 @@ export interface OBSXVerifyOptions {
   projectId?: string;
   clientIp?: string;
   clientUa?: string;
-  headers?: Record<string, string | string[] | undefined>;
+  req?: Request | OBSXRequestLike;
+  headers?: Record<string, string | string[] | undefined> | Headers;
   proxyHeaders?: string[];
   nonce?: string | number;
   timeoutMs?: number;
@@ -102,7 +103,6 @@ export interface OBSXClient {
 declare global {
   interface Window {
     OBSX?: OBSXClient;
-    Veritas?: OBSXClient;
     Tracer?: OBSXClient;
   }
 }
@@ -121,13 +121,21 @@ export function middleware(
 
 export const protect: typeof middleware;
 
+export interface OBSXActionSealOptions {
+  maxAgeMs?: number;
+  futureSkewMs?: number;
+  ignoreExpiry?: boolean;
+  allowReplay?: boolean;
+}
+
 export function verifyActionSeal(
   rk: string,
   session: string,
   ts: number,
   nonce: string | number,
   payload: Record<string, unknown>,
-  sig: string
+  sig: string,
+  options?: OBSXActionSealOptions
 ): boolean;
 
 export const core: Record<string, unknown>;

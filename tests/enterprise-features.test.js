@@ -356,13 +356,22 @@ test('enterprise: Global Sentinel Fleet Ring escalates and exposes hostile subne
   assert.ok(escalatedSession.difficulty >= 4, 'Global threat ring must pre-escalate PoW difficulty');
 });
 
-test('enterprise: OpenAI/ChatGPT scrapers are blocked with "get your own ram" and toggleable per project', async () => {
+test('enterprise: Automated AI crawler UAs are blocked with policy message while ChatGPT human referrals remain accessible', async () => {
   // 1. Site-wide HTTP block on GPTBot / ChatGPT-User
   const siteRes = await request('GET', '/', {
     headers: { 'User-Agent': 'Mozilla/5.0 (compatible; GPTBot/1.0; +https://openai.com/gptbot)' },
   });
   assert.equal(siteRes.status, 403);
-  assert.equal(siteRes.json.message, 'get your own ram');
+  assert.equal(siteRes.json.message, 'Automated AI crawler blocked by project policy.');
+
+  // 1b. Normal browser visitors arriving via ?utm_source=chatgpt.com or chatgpt.com Referer are NOT blocked
+  const referralRes = await request('GET', '/?utm_source=chatgpt.com', {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36',
+      Referer: 'https://chatgpt.com/',
+    },
+  });
+  assert.equal(referralRes.status, 200);
 
   // 2. Per-project toggle via official/self-hosted project settings
   const proj = await core.createProject({ name: 'OpenAI Gate Project' }, 'u_test_openai');
@@ -372,8 +381,8 @@ test('enterprise: OpenAI/ChatGPT scrapers are blocked with "get your own ram" an
     { ip: '127.0.0.1', ua: 'Mozilla/5.0 (compatible; ChatGPT-User/1.0; +https://openai.com/bot)' }
   );
   assert.equal(blockedVerdict.verdict, 'reject');
-  assert.equal(blockedVerdict.message, 'get your own ram');
-  assert.ok(blockedVerdict.reasons.some((r) => r.code === 'openai_scraper_blocked' && r.text === 'get your own ram'));
+  assert.equal(blockedVerdict.message, 'Automated AI crawler blocked by project policy.');
+  assert.ok(blockedVerdict.reasons.some((r) => r.code === 'openai_scraper_blocked' && r.text === 'Automated AI crawler blocked by project policy.'));
 
   // Toggle off for this project
   await core.updateProjectSettings(proj.pid, { blockOpenAiScrapers: false });

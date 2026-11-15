@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>OBSX Security — Client Integrity Attestation & Anti-Automation</title>
-  <meta name="description" content="OBSX Security: Open-source client integrity attestation, cryptographic micro-proof-of-work, and tamper-resistant request verification with zero external dependencies." />
+  <meta name="description" content="OBSX Security: Open-core client integrity attestation, cryptographic micro-proof-of-work, and tamper-resistant request verification with zero external dependencies." />
   <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
   <meta name="googlebot" content="index, follow, max-image-preview:large, max-snippet:-1" />
   <link rel="canonical" href="https://obsx.tech/" />
@@ -13,11 +13,11 @@
   <meta property="og:title" content="OBSX Security — Client Integrity Attestation & Anti-Automation" />
   <meta property="og:description" content="Cryptographic micro-proof-of-work, clean-room prototype auditing, and deterministic backend verification with zero external dependencies." />
   <meta property="og:url" content="https://obsx.tech/" />
-  <meta property="og:image" content="https://obsx.tech/dram-dark.jpg" />
+  <meta property="og:image" content="https://obsx.tech/architecture.svg" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="OBSX Security — Client Integrity Attestation & Anti-Automation" />
   <meta name="twitter:description" content="Cryptographic micro-proof-of-work, clean-room prototype auditing, and deterministic backend verification." />
-  <meta name="twitter:image" content="https://obsx.tech/dram-dark.jpg" />
+  <meta name="twitter:image" content="https://obsx.tech/architecture.svg" />
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
@@ -26,7 +26,7 @@
     "url": "https://obsx.tech/",
     "applicationCategory": "SecurityApplication",
     "operatingSystem": "Web, Node.js, Linux",
-    "description": "Open-source client integrity attestation, cryptographic micro-proof-of-work, and tamper-resistant request verification with zero external dependencies.",
+    "description": "Open-core client integrity attestation, cryptographic micro-proof-of-work, and tamper-resistant request verification with zero external dependencies.",
     "offers": {
       "@type": "Offer",
       "price": "0",
@@ -38,8 +38,8 @@
   <link rel="alternate icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
   <link rel="alternate icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/style.css?v=2.3.5" />
-  <script src="/obsx.min.js?v=2.3.5" data-obsx-site="pk_obsx_sandbox"></script>
+  <link rel="stylesheet" href="/style.css?v=2.3.0" />
+  <script src="/obsx.min.js?v=2.3.0" data-obsx-site="pk_obsx_sandbox" integrity="sha384-4ljIx7jIe5rnvv8MUammaWWDKAyROpIs+2FmYW4xYKcxIyNEvHt4nqCJ0sW8onYm" crossorigin="anonymous"></script>
 </head>
 <body>
   <!-- Header / Navigation -->
@@ -66,7 +66,7 @@
     <section class="hero">
       <div class="hero-pill">
         <span class="pill-dot"></span>
-        Self-Protected Node · Protected by OBSX Security · Zero External Dependencies · Dual-Licensed (MIT + Zone 2 ELv2)
+        Self-Protected Node · Protected by OBSX Security · Zero External Runtime Dependencies · Dual-Licensed (MIT + Zone 2)
       </div>
       <h1>True client integrity.<br /><em>Zero advisory blind spots.</em></h1>
       <p>
@@ -78,22 +78,21 @@
         <a href="https://github.com/jidiotspam-hue/obsx" target="_blank" rel="noopener" class="btn btn-secondary">View on GitHub</a>
       </div>
 
-      <!-- Sovereign Personal DRAM & OpenAI Scraper Block Callout -->
-      <div style="margin: 26px auto 0; max-width: 760px; padding: 14px 18px; background: rgba(17, 24, 39, 0.85); border: 1px solid rgba(239, 68, 68, 0.45); border-radius: 12px; display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; text-align: left; box-shadow: 0 10px 30px rgba(0,0,0,0.35);">
+      <!-- Automated AI Crawler Policy Callout -->
+      <div style="margin: 26px auto 0; max-width: 760px; padding: 14px 18px; background: var(--bg-card); border: 1px solid var(--border-strong); border-radius: 12px; display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; text-align: left; box-shadow: var(--shadow);">
         <div style="display: flex; align-items: center; gap: 14px; flex: 1; min-width: 260px;">
-          <img src="/dram-dark.jpg" alt="DRAM Module" style="width: 56px; height: 56px; object-fit: cover; image-rendering: pixelated; border-radius: 8px; border: 1px solid rgba(255,255,255,0.15);" />
           <div>
             <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-              <span class="badge badge-bad" style="font-size: 10.5px;">OPENAI / CHATGPT SCRAPERS BLOCKED</span>
-              <strong style="color: #ffffff; font-size: 14px;">Policy: <code>"get your own ram"</code></strong>
+              <span class="badge badge-warn" style="font-size: 10.5px;">CONFIGURABLE CRAWLER POLICY</span>
+              <strong style="color: var(--text); font-size: 14px;">Automated AI Scraper Gate</strong>
             </div>
             <p style="margin: 4px 0 0; font-size: 12px; color: var(--text-muted); line-height: 1.45;">
-              Hosted on proud "5% utilized" personal hardware DRAM. Toggleable per-project on official <code>obsx.tech</code> keys and self-hosted nodes.
+              Optionally deny automated training crawlers (<code>GPTBot</code>, <code>ChatGPT-User</code>, <code>OAI-SearchBot</code>) while keeping human referrals accessible. Toggleable per project in the dashboard.
             </p>
           </div>
         </div>
-        <a href="/?utm_source=chatgpt.com" class="btn btn-secondary" style="font-size: 12px; padding: 7px 12px; white-space: nowrap; border-color: rgba(239,68,68,0.5); color: #fca5a5;">
-          Preview DRAM Block Screen &rarr;
+        <a href="/dashboard.html" class="btn btn-secondary" style="font-size: 12px; padding: 7px 12px; white-space: nowrap;">
+          Configure in Dashboard &rarr;
         </a>
       </div>
     </section>
@@ -157,7 +156,7 @@
         <div class="feature-box">
           <div class="feature-num">01 / POW</div>
           <h3>Cryptographic Micro-PoW</h3>
-          <p>Every session is challenged with an ephemeral SHA-256 micro-puzzle. Solved in ~15ms via Web Crypto; prevents automated botnets from flooding requests for free.</p>
+          <p>Every session is challenged with an ephemeral SHA-256 micro-puzzle (typically ~15ms on modern browsers via Web Crypto), imposing compute cost on automated traffic.</p>
         </div>
         <div class="feature-box">
           <div class="feature-num">02 / ZERO TRUST</div>
@@ -198,14 +197,14 @@
           <tbody>
             <tr>
               <td><strong>Cryptographic Micro-PoW</strong></td>
-              <td><span class="badge badge-good">Enforced (~15ms Web Crypto)</span></td>
-              <td><span class="badge badge-bad">None (Free curl calls)</span></td>
-              <td><span class="badge badge-warn">Server heavy / slow</span></td>
+              <td><span class="badge badge-good">Enforced (~15ms typical Web Crypto)</span></td>
+              <td><span class="badge badge-bad">Typically omitted</span></td>
+              <td><span class="badge badge-warn">Interactive challenge latency</span></td>
             </tr>
             <tr>
-              <td><strong>Empty Signals ({}) Vulnerability</strong></td>
-              <td><span class="badge badge-good">Hard Reject (Risk 100)</span></td>
-              <td><span class="badge badge-bad">Passes at Risk 0 (Flaw)</span></td>
+              <td><strong>Empty Signals ({}) Handling</strong></td>
+              <td><span class="badge badge-good">Rejected (Risk 100)</span></td>
+              <td><span class="badge badge-bad">Often permissive when omitted</span></td>
               <td><span class="badge badge-good">Rejected</span></td>
             </tr>
             <tr>
@@ -234,9 +233,9 @@
             </tr>
             <tr>
               <td><strong>User Experience Friction</strong></td>
-              <td><span class="badge badge-good">Zero Puzzles / Frictionless</span></td>
-              <td><span class="badge badge-good">Frictionless</span></td>
-              <td><span class="badge badge-bad">High Friction (Click images)</span></td>
+              <td><span class="badge badge-good">Invisible Verification</span></td>
+              <td><span class="badge badge-good">No Prompt</span></td>
+              <td><span class="badge badge-bad">Interactive Puzzle Prompts</span></td>
             </tr>
           </tbody>
         </table>
@@ -393,7 +392,7 @@ async def handle_action(request: Request):
       <span class="section-tag">// 05 LIVE OBSERVABILITY</span>
       <h2 class="section-head">Our own telemetry, to prove you can trust us.</h2>
       <p class="section-sub">
-        We protect our own production platform with the exact same open-source protocol we ship. Below is the real-time, live-updating telemetry feed from this website (<code>obsx.tech</code>)—including blocked bots with reasons (IPs masked), verified human sessions, risk scores, and latency.
+        We protect our own production platform with the exact same Zone 1 attestation protocol we ship publicly. Below is a filtered live telemetry feed from the public sandbox (<code>obsx.tech</code>)—showing aggregated counts and sandbox events with IPs masked.
       </p>
 
       <!-- Live Self-Protection Metrics Grid -->
@@ -443,26 +442,26 @@ async def handle_action(request: Request):
     <!-- Section 06: Kerckhoffs's Principle & Trust -->
     <section class="editorial" id="trust">
       <span class="section-tag">// 06 Trust & Philosophy</span>
-      <h2 class="section-head">Built for public open-source scrutiny.</h2>
+      <h2 class="section-head">Built for transparent cryptographic verification.</h2>
       <p class="section-sub">
         Auguste Kerckhoffs stated in 1883 that a cryptosystem must remain secure even if everything about the system is public knowledge. OBSX does not rely on hidden obfuscated code—it relies on mathematics, physical inertia, and cryptographic invariants.
       </p>
 
       <div class="features-grid">
         <div class="feature-box">
-          <div class="feature-num">GUARANTEE 01</div>
-          <h3>100% Mathematical Proofs</h3>
-          <p>Even if an attacker studies our full solver code, the computational cost of the SHA-256 micro-puzzle must still be paid by the hardware.</p>
+          <div class="feature-num">PILLAR 01</div>
+          <h3>Cryptographic Work Proofs</h3>
+          <p>Knowing the solver code does not let a client skip the computational cost of solving the ephemeral SHA-256 micro-puzzle.</p>
         </div>
         <div class="feature-box">
-          <div class="feature-num">GUARANTEE 02</div>
+          <div class="feature-num">PILLAR 02</div>
           <h3>Zero External Dependencies</h3>
-          <p>Powered entirely by native Web Crypto in the browser and Node.js <code>crypto</code> on the server. Zero third-party analytics, zero external latency.</p>
+          <p>Powered by native Web Crypto in the browser and Node.js <code>crypto</code> on the server, with no third-party font or analytics requests.</p>
         </div>
         <div class="feature-box">
-          <div class="feature-num">GUARANTEE 03</div>
-          <h3>Privacy-First Architecture</h3>
-          <p>No tracking cookies, no cross-site user profiles, and no biometric data leaves the client. Only cryptographic risk proofs and session tokens are submitted.</p>
+          <div class="feature-num">PILLAR 03</div>
+          <h3>Privacy-First Processing</h3>
+          <p>No tracking cookies or cross-site profiles; ephemeral session interaction telemetry is deleted immediately upon <code>verify()</code> completion.</p>
         </div>
       </div>
     </section>
@@ -474,7 +473,7 @@ async def handle_action(request: Request):
       <div style="display: flex; align-items: center; gap: 8px;">
         <span class="brand-dot"></span>
         <strong style="color: var(--text);">OBSX Security</strong>
-        <span>· Dual-licensed: <a href="/terms.html">MIT (Core/SDK) &amp; ELv2 + OBSX Zone 2 Terms (Operator)</a>.</span>
+        <span>· Dual-licensed: <a href="/terms.html">MIT (Core/SDK) &amp; OBSX Source-Available License v1.0 (Zone 2)</a>.</span>
       </div>
       <div style="display: flex; gap: 20px; flex-wrap: wrap;">
         <a href="/notes.html">Notes App</a>
@@ -487,6 +486,6 @@ async def handle_action(request: Request):
     </div>
   </footer>
 
-  <script src="/app.js?v=2.3.5"></script>
+  <script src="/app.js?v=2.3.0"></script>
 </body>
 </html>

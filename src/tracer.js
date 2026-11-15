@@ -1,6 +1,6 @@
 /**
- * OBSX Security Client SDK v1.0.0
- * The Ultimate Truth in Client Integrity, Tamper Detection & Cryptographic Attestation
+ * OBSX Security Client SDK v2.3.0
+ * Client Integrity, Tamper Detection & Cryptographic Attestation
  * Copyright (c) 2026 Alexis Grimmace - MIT License
  */
 (function (global) {
@@ -36,23 +36,29 @@
   const tamperedFlags = [];
   let cachedGpu = null;
 
+  function pushTamperedFlag(flag) {
+    if (flag && !tamperedFlags.includes(flag)) {
+      tamperedFlags.push(flag);
+    }
+  }
+
   // Client diagnostic accessors and instrumentation integrity hooks
   let probeFlags = 0;
   try {
     _Object.defineProperty(global, '__OBSX_DEBUG__', {
       get: () => { probeFlags |= 1; return { sandbox: true }; },
       set: () => { probeFlags |= 1; },
-      configurable: true,
+      configurable: false,
     });
     _Object.defineProperty(global, '__VERITAS_DEBUG__', {
       get: () => { probeFlags |= 1; return { sandbox: true }; },
       set: () => { probeFlags |= 1; },
-      configurable: true,
+      configurable: false,
     });
     _Object.defineProperty(global, '__tracer_dev__', {
       get: () => { probeFlags |= 2; return false; },
       set: () => { probeFlags |= 2; },
-      configurable: true,
+      configurable: false,
     });
   } catch {}
 
@@ -119,7 +125,7 @@
           const cleanAcc = 'get' in cleanDesc || 'set' in cleanDesc;
           const currAcc = 'get' in currentDesc || 'set' in currentDesc;
           if (cleanAcc !== currAcc) {
-            tamperedFlags.push('tampered_descriptor:' + target.name);
+            pushTamperedFlag('tampered_descriptor:' + target.name);
             continue;
           }
         }
@@ -148,9 +154,7 @@
           const flag = (BENIGN_APM.has(target.prop) || BENIGN_APM.has(target.name))
             ? 'wrapped:' + target.name
             : 'tampered:' + target.name;
-          if (!tamperedFlags.includes(flag)) {
-            tamperedFlags.push(flag);
-          }
+          pushTamperedFlag(flag);
         }
       }
     } catch {} finally {
@@ -175,9 +179,7 @@
       if (obj && prop in obj) {
         if (!isNativeFunction(obj[prop])) {
           const flag = benign ? 'wrapped:' + prop : 'tampered:' + prop;
-          if (!tamperedFlags.includes(flag)) {
-            tamperedFlags.push(flag);
-          }
+          pushTamperedFlag(flag);
         }
       }
     }
@@ -185,10 +187,10 @@
     // Audit WebRTC & WebSocket for proxy wiretaps / SDP scrubbing
     const peerConn = global.RTCPeerConnection || global.webkitRTCPeerConnection;
     if (peerConn && !isNativeFunction(peerConn) && (global.__bare || global.__uv$bare || global.__sovereignHookActive)) {
-      tamperedFlags.push('proxy_virtualization:wrapped_RTCPeerConnection');
+      pushTamperedFlag('proxy_virtualization:wrapped_RTCPeerConnection');
     }
     if (global.WebSocket && !isNativeFunction(global.WebSocket) && (global.__bare || global.__uv$bare || global.__sovereignHookActive)) {
-      tamperedFlags.push('proxy_virtualization:wrapped_WebSocket');
+      pushTamperedFlag('proxy_virtualization:wrapped_WebSocket');
     }
 
     // Advanced Web Proxy & Anti-Filter Virtualization Detection
@@ -232,6 +234,16 @@
     }
   }
 
+  function hashGpuToken(raw) {
+    var h = 2166136261;
+    var s = String(raw || '');
+    for (var i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return (h >>> 0).toString(16).padStart(8, '0');
+  }
+
   function probeGpuRenderer() {
     if (cachedGpu) return cachedGpu;
     try {
@@ -243,9 +255,12 @@
           if (ext) {
             const renderer = gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) || '';
             const vendor = gl.getParameter(ext.UNMASKED_VENDOR_WEBGL) || '';
-            cachedGpu = `${vendor} ~ ${renderer}`;
-            if (/SwiftShader|llvmpipe|Mesa OffScreen|Software Rasterizer/i.test(cachedGpu)) {
-              tamperedFlags.push('gpu:software_rasterizer:' + cachedGpu.slice(0, 40));
+            const rawGpu = `${vendor} ~ ${renderer}`;
+            if (/SwiftShader|llvmpipe|Mesa OffScreen|Software Rasterizer|Microsoft Basic Render Driver|VirtualBox|VMware SVGA/i.test(rawGpu)) {
+              cachedGpu = 'sw_rasterizer';
+              pushTamperedFlag('gpu:software_rasterizer');
+            } else {
+              cachedGpu = 'gpu_hw_' + hashGpuToken(rawGpu);
             }
             return cachedGpu;
           }
@@ -262,26 +277,26 @@
       const cdcPattern = /^cdc_[a-zA-Z0-9]+/;
       for (const k of _Object.keys(global)) {
         if (cdcPattern.test(k) || k.startsWith('__webdriver_') || k.startsWith('__selenium_')) {
-          tamperedFlags.push('automation_cdp:' + k);
+          pushTamperedFlag('automation_cdp:' + k);
         }
       }
       if (global.document) {
         for (const k of _Object.keys(global.document)) {
           if (cdcPattern.test(k) || k.startsWith('$cdc_')) {
-            tamperedFlags.push('automation_cdp_doc:' + k);
+            pushTamperedFlag('automation_cdp_doc:' + k);
           }
         }
       }
       // 2. Playwright / Puppeteer execution markers
       if ('__playwright' in global || '__puppeteer_evaluation_script__' in global) {
-        tamperedFlags.push('automation_framework:playwright_puppeteer');
+        pushTamperedFlag('automation_framework:playwright_puppeteer');
       }
       // 3. Desktop browser empty plugin anomaly
       if (global.navigator && typeof global.navigator.plugins !== 'undefined') {
         const isDesktop = /Macintosh|Windows NT|Linux x86_64/i.test(global.navigator.userAgent);
         const isMobile = /Android|iPhone|iPad/i.test(global.navigator.userAgent);
         if (isDesktop && !isMobile && global.navigator.plugins.length === 0) {
-          tamperedFlags.push('env_anomaly:desktop_empty_plugins');
+          pushTamperedFlag('env_anomaly:desktop_empty_plugins');
         }
       }
     } catch {}
@@ -300,7 +315,7 @@
     ];
     for (const art of proxyArtifacts) {
       if (art in global) {
-        tamperedFlags.push('proxy_artifact:' + art);
+        pushTamperedFlag('proxy_artifact:' + art);
       }
     }
 
@@ -311,7 +326,7 @@
         // Legitimate modern browsers have native getter/setter on window.location ([native code]).
         // Web proxy unblockers (Ultraviolet/Scramjet) override it with synthetic JS closures!
         if ((locDesc.get && !isNativeFunction(locDesc.get)) || (locDesc.set && !isNativeFunction(locDesc.set))) {
-          tamperedFlags.push('proxy_virtualization:location_getter_trap');
+          pushTamperedFlag('proxy_virtualization:location_getter_trap');
         }
       }
     } catch {}
@@ -320,7 +335,7 @@
     try {
       if (global.document && global.location && global.document.domain && global.location.hostname) {
         if (!global.location.hostname.endsWith(global.document.domain)) {
-          tamperedFlags.push('proxy_virtualization:domain_mismatch');
+          pushTamperedFlag('proxy_virtualization:domain_mismatch');
         }
       }
     } catch {}
@@ -330,7 +345,7 @@
       if (global.navigator && global.navigator.serviceWorker && global.navigator.serviceWorker.controller) {
         const swUrl = global.navigator.serviceWorker.controller.scriptURL || '';
         if (/\/uv\/|\/scramjet\/|\/bare\/|\/wisp\/|sw\.js\?uv|sw-proxy\.js|sovereign-sw-/i.test(swUrl)) {
-          tamperedFlags.push('proxy_virtualization:sw_controller:' + swUrl.slice(0, 40));
+          pushTamperedFlag('proxy_virtualization:sw_controller');
         }
       }
     } catch {}
@@ -340,7 +355,7 @@
       if (global.document && typeof global.document.cookie === 'string') {
         const cookies = global.document.cookie;
         if (/__crammerhead=|uv-token=|bare-mux=|sovereign_proxy_origin=/i.test(cookies)) {
-          tamperedFlags.push('proxy_virtualization:cookie_signature');
+          pushTamperedFlag('proxy_virtualization:cookie_signature');
         }
       }
     } catch {}
@@ -349,10 +364,10 @@
     try {
       if (global.document && typeof global.document.querySelector === 'function') {
         if (global.document.querySelector('#proxy-hud-injected, #proxy-pill-injected, #proxy-panic-injected, #ss-proxy-hud')) {
-          tamperedFlags.push('proxy_virtualization:dom_hud_injected');
+          pushTamperedFlag('proxy_virtualization:dom_hud_injected');
         }
         if (global.document.querySelector('script[data-origin][data-base]')) {
-          tamperedFlags.push('proxy_virtualization:script_hook_injected');
+          pushTamperedFlag('proxy_virtualization:script_hook_injected');
         }
       }
     } catch {}
@@ -364,15 +379,15 @@
         const scr = global.screen;
         // Headless browsers often spawn with 0x0 display or impossible geometry
         if (scr.width === 0 || scr.height === 0) {
-          tamperedFlags.push('env_geometry:zero_screen_dimensions');
+          pushTamperedFlag('env_geometry:zero_screen_dimensions');
         }
         if (scr.availWidth > scr.width || scr.availHeight > scr.height) {
-          tamperedFlags.push('env_geometry:impossible_screen_bounds');
+          pushTamperedFlag('env_geometry:impossible_screen_bounds');
         }
       }
       if (typeof global.outerWidth !== 'undefined' && typeof global.outerHeight !== 'undefined') {
         if (global.outerWidth === 0 && global.outerHeight === 0 && typeof global.innerWidth !== 'undefined' && global.innerWidth > 0) {
-          tamperedFlags.push('env_geometry:zero_outer_dimensions');
+          pushTamperedFlag('env_geometry:zero_outer_dimensions');
         }
       }
     } catch {}
@@ -561,9 +576,7 @@
             v[k] !== undefined &&
             typeof v[k] !== 'function' &&
             typeof v[k] !== 'symbol' &&
-            k !== 'obsx' &&
-            k !== 'advisory' &&
-            k !== 'seal'
+            !(d === 0 && (k === 'obsx' || k === 'advisory' || k === 'seal'))
           );
         });
       return (
@@ -599,13 +612,7 @@
 
   function isClientOpenAiScraper() {
     const ua = typeof navigator !== 'undefined' && navigator.userAgent ? navigator.userAgent : '';
-    const ref = typeof document !== 'undefined' && document.referrer ? document.referrer : '';
-    const search = typeof location !== 'undefined' && location.search ? location.search : '';
-    return (
-      /GPTBot|ChatGPT-User|OAI-SearchBot|ChatGPT|OpenAI/i.test(ua) ||
-      /chatgpt\.com|openai\.com/i.test(ref) ||
-      /utm_source=chatgpt\.com/i.test(search)
-    );
+    return /GPTBot|ChatGPT-User|OAI-SearchBot|ChatGPT-Browser|OpenAI-Crawler|OpenAI\/|ChatGPT\/|operator\.chatgpt\.com/i.test(ua);
   }
 
   function findSdkScript() {
@@ -613,11 +620,9 @@
     if (typeof document === 'undefined') return null;
     return (
       document.querySelector('script[data-obsx-site]') ||
-      document.querySelector('script[data-site]') ||
-      document.querySelector('script[data-veritas-site]') ||
       document.querySelector('script[data-tracer-site]') ||
+      document.querySelector('script[data-site]') ||
       document.querySelector('script[src*="obsx.min.js"]') ||
-      document.querySelector('script[src*="veritas.min.js"]') ||
       document.querySelector('script[src*="tracer.min.js"]') ||
       document.querySelector('script[src*="tracer.js"]') ||
       document.querySelector('script[src*="/sdk/"]')
@@ -632,9 +637,8 @@
     return {
       site:
         el.getAttribute('data-obsx-site') ||
-        el.getAttribute('data-site') ||
-        el.getAttribute('data-veritas-site') ||
         el.getAttribute('data-tracer-site') ||
+        el.getAttribute('data-site') ||
         null,
       mode: el.getAttribute('data-obsx-mode') || el.getAttribute('data-mode') || null,
       endpoint: el.getAttribute('data-obsx-endpoint') || el.getAttribute('data-endpoint') || null,
@@ -717,49 +721,22 @@
 
   // 5. Public OBSX Client API
   const OBSX = {
-    version: '2.3.1',
+    version: '2.3.0',
 
     showDramBlockScreen(originBase) {
       if (typeof document === 'undefined' || !document.body) return false;
-      if (document.getElementById('obsx-dram-sovereignty-overlay')) return true;
+      if (document.getElementById('obsx-crawler-policy-overlay')) return true;
       const base = escapeAttr(originBase ? resolveAssetOrigin(originBase) : resolveAssetOrigin());
       const overlay = document.createElement('div');
-      overlay.id = 'obsx-dram-sovereignty-overlay';
+      overlay.id = 'obsx-crawler-policy-overlay';
       overlay.style.cssText =
-        'position:fixed;inset:0;z-index:2147483647;background:#090d16;color:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,monospace;display:flex;align-items:center;justify-content:center;padding:24px;box-sizing:border-box;overflow:hidden;';
+        'position:fixed;inset:0;z-index:2147483647;background:#090d16;color:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;display:flex;align-items:center;justify-content:center;padding:24px;box-sizing:border-box;';
       overlay.innerHTML = `
-        <style>
-          @keyframes obsxDramFloat {
-            0% { transform: translateY(0) rotate(-3deg); opacity: 0; }
-            10% { opacity: 0.92; }
-            50% { transform: translateY(-55vh) rotate(4deg); }
-            90% { opacity: 0.92; }
-            100% { transform: translateY(-120vh) rotate(-3deg); opacity: 0; }
-          }
-          .obsx-dram-balloon { position: absolute; bottom: -140px; display: flex; flex-direction: column; align-items: center; animation: obsxDramFloat linear infinite; pointer-events: none; }
-          .obsx-dram-balloon img { width: 108px; height: auto; image-rendering: pixelated; border-radius: 6px; }
-          .obsx-dram-string { width: 1.5px; height: 52px; background: linear-gradient(to bottom, rgba(250,204,21,0.85), rgba(255,255,255,0.05)); margin-top: -4px; }
-          .obsx-dram-tag { font-size: 10px; font-weight: 700; color: #facc15; background: rgba(17,24,39,0.9); border: 1px solid rgba(250,204,21,0.4); padding: 2px 6px; border-radius: 4px; margin-top: 2px; white-space: nowrap; }
-        </style>
-        <div style="position:fixed;inset:0;pointer-events:none;overflow:hidden;">
-          <div class="obsx-dram-balloon" style="left:7%;animation-duration:9s;animation-delay:0s;"><img src="${base}/dram-stick.svg" alt="DRAM"/><div class="obsx-dram-string"></div><span class="obsx-dram-tag">5% Utilized DRAM</span></div>
-          <div class="obsx-dram-balloon" style="left:22%;animation-duration:11s;animation-delay:1.5s;"><img src="${base}/dram-dark.jpg" alt="DRAM"/><div class="obsx-dram-string"></div><span class="obsx-dram-tag">get your own ram</span></div>
-          <div class="obsx-dram-balloon" style="left:38%;animation-duration:8.5s;animation-delay:3s;"><img src="${base}/dram-light.jpg" alt="DRAM"/><div class="obsx-dram-string"></div><span class="obsx-dram-tag">Personal Node DRAM</span></div>
-          <div class="obsx-dram-balloon" style="left:65%;animation-duration:10.5s;animation-delay:0.8s;"><img src="${base}/dram-stick.svg" alt="DRAM"/><div class="obsx-dram-string"></div><span class="obsx-dram-tag">Not for Cloud Scrapers</span></div>
-          <div class="obsx-dram-balloon" style="left:82%;animation-duration:9.5s;animation-delay:2.2s;"><img src="${base}/dram-dark.jpg" alt="DRAM"/><div class="obsx-dram-string"></div><span class="obsx-dram-tag">get your own ram</span></div>
-        </div>
-        <div style="position:relative;z-index:2;max-width:640px;width:100%;background:rgba(17,24,39,0.94);border:1px solid #ef4444;border-radius:14px;padding:30px;text-align:center;box-shadow:0 24px 60px rgba(0,0,0,0.75);">
-          <div style="display:flex;justify-content:center;align-items:center;gap:16px;margin-bottom:16px;">
-            <img src="${base}/dram-dark.jpg" alt="DRAM Dark" style="height:68px;width:auto;image-rendering:pixelated;border-radius:8px;border:1px solid rgba(255,255,255,0.12);background:#000;padding:4px;" />
-            <img src="${base}/dram-stick.svg" alt="DRAM Stick" style="height:60px;width:auto;image-rendering:pixelated;" />
-            <img src="${base}/dram-light.jpg" alt="DRAM Light" style="height:68px;width:auto;image-rendering:pixelated;border-radius:8px;background:#fff;padding:4px;" />
-          </div>
-          <span style="display:inline-block;padding:4px 10px;background:rgba(239,68,68,0.15);color:#f87171;border:1px solid rgba(239,68,68,0.4);border-radius:6px;font-size:12px;font-weight:700;text-transform:uppercase;">HTTP 403 · OPENAI / CHATGPT SCRAPER BLOCKED</span>
-          <h1 style="font-size:38px;margin:14px 0 10px;color:#fff;">get your own ram</h1>
-          <p style="color:#cbd5e1;line-height:1.6;margin:0 auto;max-width:520px;">This site is protected by OBSX Personal DRAM Sovereignty. OpenAI crawlers, ChatGPT agents, and ChatGPT referrals are denied access.</p>
-          <blockquote style="text-align:left;margin:18px 0;padding:12px 16px;border-left:3px solid #ef4444;background:rgba(255,255,255,0.03);color:#94a3b8;font-size:13px;line-height:1.6;border-radius:0 8px 8px 0;">
-            "From a global allocation perspective, actually, it's quite terrible to have everybody have a bunch of the world's limited supply of DRAM sitting in their own computer and being used five percent of the time."<br/>— <strong>Sam Altman</strong> (Cheeky Pint Podcast, Oct 29)
-          </blockquote>
+        <div style="max-width:600px;width:100%;background:#111827;border:1px solid #ef4444;border-radius:14px;padding:32px;text-align:center;box-shadow:0 24px 60px rgba(0,0,0,0.65);">
+          <span style="display:inline-block;padding:4px 10px;background:rgba(239,68,68,0.15);color:#f87171;border:1px solid rgba(239,68,68,0.4);border-radius:6px;font-size:12px;font-weight:700;text-transform:uppercase;">HTTP 403 &middot; AUTOMATED AI CRAWLER BLOCKED</span>
+          <h1 style="font-size:32px;margin:14px 0 10px;color:#fff;">Automated AI Crawlers Denied</h1>
+          <p style="color:#cbd5e1;line-height:1.6;margin:0 auto 18px;max-width:500px;">This origin restricts automated AI training and scraper user-agents under its configured access policy. Standard web browsers are unaffected.</p>
+          <a href="${base || '/'}" style="color:#38bdf8;font-size:13px;font-weight:600;text-decoration:none;">Return to Site &rarr;</a>
         </div>
       `;
       document.body.appendChild(overlay);
@@ -868,13 +845,13 @@
       auditRuntime();
 
       let rt_mask = 0;
-      if (tamperedFlags.some((t) => !t.startsWith('proxy_') && !t.startsWith('env_') && !t.startsWith('gpu_'))) rt_mask |= 1;
+      if (tamperedFlags.some((t) => !t.startsWith('proxy_') && !t.startsWith('env_') && !t.startsWith('gpu:') && !t.startsWith('gpu_'))) rt_mask |= 1;
       if (tamperedFlags.some((t) => t.startsWith('proxy_'))) rt_mask |= 2;
       if (typeof navigator !== 'undefined' && navigator.webdriver) rt_mask |= 4;
       if (probeFlags > 0) rt_mask |= 8;
       if (typeof navigator !== 'undefined' && /HeadlessChrome|PhantomJS/.test(navigator.userAgent)) rt_mask |= 16;
       if (tamperedFlags.some((t) => t.startsWith('env_'))) rt_mask |= 32;
-      if (tamperedFlags.some((t) => t.startsWith('gpu_'))) rt_mask |= 64;
+      if (tamperedFlags.some((t) => t.startsWith('gpu:') || t.startsWith('gpu_'))) rt_mask |= 64;
 
       const payload = {
         token: activeSession.token,
@@ -991,7 +968,7 @@
       const icon = el.querySelector('.obsx-widget-icon');
 
       const attestOpts = {};
-      const attrSite = options.site || (el.getAttribute && (el.getAttribute('data-obsx-site') || el.getAttribute('data-site')));
+      const attrSite = options.site || (el.getAttribute && (el.getAttribute('data-obsx-site') || el.getAttribute('data-tracer-site') || el.getAttribute('data-site')));
       const attrEndpoint = options.endpoint || (el.getAttribute && (el.getAttribute('data-obsx-endpoint') || el.getAttribute('data-endpoint')));
       const attrMode = options.mode || (el.getAttribute && (el.getAttribute('data-obsx-mode') || el.getAttribute('data-mode')));
       if (attrSite) attestOpts.site = attrSite;
@@ -1057,7 +1034,7 @@
       }
 
       const attestOpts = {};
-      const fSite = options.site || (form.getAttribute && (form.getAttribute('data-obsx-site') || form.getAttribute('data-site')));
+      const fSite = options.site || (form.getAttribute && (form.getAttribute('data-obsx-site') || form.getAttribute('data-tracer-site') || form.getAttribute('data-site')));
       const fEndpoint = options.endpoint || (form.getAttribute && (form.getAttribute('data-obsx-endpoint') || form.getAttribute('data-endpoint')));
       const fMode = options.mode || (form.getAttribute && (form.getAttribute('data-obsx-mode') || form.getAttribute('data-mode')));
       if (fSite) attestOpts.site = fSite;
@@ -1110,12 +1087,20 @@
             form.dispatchEvent(new global.CustomEvent('obsx:attested', { detail: attestation }));
           }
           submitNativeForm(submitter);
-        } catch {
-          // Clear stale values and submit fail-closed without attested token if initialization failed
+        } catch (err) {
+          // Clear stale values and fail closed unless caller explicitly opts into failOpen
           tokenInput.value = '';
           nonceInput.value = '';
           if (tokenInput.dataset) delete tokenInput.dataset.obsxReady;
-          submitNativeForm(null);
+          if (typeof options.onError === 'function') {
+            try { options.onError(err); } catch {}
+          }
+          if (typeof global.CustomEvent === 'function') {
+            form.dispatchEvent(new global.CustomEvent('obsx:error', { detail: { error: err } }));
+          }
+          if (options.failOpen === true) {
+            submitNativeForm(null);
+          }
         } finally {
           if (form.dataset) {
             delete form.dataset.obsxPending;
@@ -1415,7 +1400,6 @@
   }
 
   global.OBSX = OBSX;
-  global.Veritas = OBSX;
   global.Tracer = OBSX;
 
   function autoMountSdk() {

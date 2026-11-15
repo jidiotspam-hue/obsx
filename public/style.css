@@ -1,7 +1,5 @@
 /* OBSX Security — Luxury Tactile Editorial Design System */
-/* Inspired by Stripe Press, Beam, and ReadCV: Cream Paper, Terracotta Clay & Deep Ink */
-
-@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+/* Cream Paper, Terracotta Clay & Deep Ink — Zero External Fonts or Network Calls */
 
 :root {
   --bg: #FAF8F5;
@@ -25,9 +23,9 @@
   --bad: #DC2626;
   --bad-soft: rgba(220, 38, 38, 0.1);
 
-  --font-serif: "Instrument Serif", Georgia, Cambria, serif;
-  --font-sans: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  --font-serif: Georgia, Cambria, "Times New Roman", Times, serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 
   --radius-xs: 4px;
   --radius-sm: 8px;

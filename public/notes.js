@@ -76,6 +76,9 @@
 
     const email = prompt('Enter your email to sign in via 6-digit verification code:');
     if (!email) return;
+    if (!confirm('By signing in, you agree to the OBSX Terms of Service (/terms.html) and Privacy Policy (/privacy.html). Continue?')) {
+      return;
+    }
 
     try {
       const { token: startToken, nonce: startNonce } = await getAttestationSafe();
@@ -93,7 +96,7 @@
 
       const promptMsg = startData.devMode
         ? `[DEV MODE] Verification Code: ${startData.devCode}\nEnter code:`
-        : `A 6-digit verification code was dispatched from official@obsx.tech.\nEnter code:`;
+        : 'A 6-digit verification code was dispatched to your email.\nEnter code:';
 
       const code = prompt(promptMsg);
       if (!code) return;
@@ -103,7 +106,7 @@
       const verifyRes = await fetch('/api/v1/auth/email', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'verify', email, code, token: verifyToken, nonce: verifyNonce }),
+        body: JSON.stringify({ action: 'verify', email, code, termsAccepted: true, token: verifyToken, nonce: verifyNonce }),
       });
       const verifyData = await verifyRes.json();
       if (!verifyData.ok) {
@@ -160,16 +163,16 @@
           const dateStr = new Date(n.created).toLocaleString();
 
           return `
-            <div class="note-card" id="note-${n.id}">
+            <div class="note-card" id="note-${escapeHtml(n.id)}">
               <div class="note-header">
                 <div>
                   <span class="note-title">${escapeHtml(n.title)}</span>
                   ${pill}
                 </div>
-                <button type="button" class="btn btn-secondary" onclick="window.__deleteNote('${n.id}')" style="padding: 2px 8px; font-size: 11px;">Delete</button>
+                <button type="button" class="btn btn-secondary btn-delete-note" data-note-id="${escapeHtml(n.id)}" style="padding: 2px 8px; font-size: 11px;">Delete</button>
               </div>
               <div class="note-content">${escapeHtml(n.content)}</div>
-              <div style="font-size: 11px; color: var(--text-muted); margin-top: 8px;">Created ${dateStr}</div>
+              <div style="font-size: 11px; color: var(--text-muted); margin-top: 8px;">Created ${escapeHtml(dateStr)}</div>
             </div>
           `;
         })
@@ -252,11 +255,18 @@
   });
 
   // 7. Delete Note Helper
+  notesContainer?.addEventListener('click', (e) => {
+    const btn = e.target && e.target.closest ? e.target.closest('.btn-delete-note') : null;
+    if (!btn) return;
+    const id = btn.getAttribute('data-note-id');
+    if (id) window.__deleteNote(id);
+  });
+
   window.__deleteNote = async function (id) {
     if (!confirm('Are you sure you want to delete this note?')) return;
     try {
       const { token, nonce } = await getAttestationSafe();
-      const res = await fetch(`/api/v1/notes/${id}`, {
+      const res = await fetch(`/api/v1/notes/${encodeURIComponent(String(id || ''))}`, {
         method: 'DELETE',
         headers: {
           'Content-Type': 'application/json',

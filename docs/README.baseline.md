@@ -5,9 +5,9 @@
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Dual%20(MIT%20%2B%20ELv2%2FZone%202)-blue.svg" alt="License: Dual (MIT + ELv2/Zone 2)"></a>
-  <a href="package.json"><img src="https://img.shields.io/badge/dependencies-0-success.svg" alt="Zero Dependencies"></a>
-  <a href="tests/"><img src="https://img.shields.io/badge/tests-168%20passing-brightgreen.svg" alt="Tests: 168 Passing"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Dual%20(MIT%20%2B%20OBSX%20Zone%202)-blue.svg" alt="License: Dual (MIT + OBSX Zone 2)"></a>
+  <a href="package.json"><img src="https://img.shields.io/badge/dependencies-0-success.svg" alt="Zero Runtime Dependencies"></a>
+  <a href="tests/"><img src="https://img.shields.io/badge/tests-automated%20suite-brightgreen.svg" alt="Automated Test Suite"></a>
   <a href="lib/crypto.js"><img src="https://img.shields.io/badge/crypto-SHA--256%20micro--PoW-orange.svg" alt="Crypto: PoW"></a>
   <a href="https://obsx.tech"><img src="https://img.shields.io/badge/live%20node-obsx.tech-E2886A.svg" alt="Live Node"></a>
 </p>
@@ -31,7 +31,7 @@ Under real adversarial conditions, this design breaks down immediately:
 
 ### How OBSX Enforces Protocol Invariants
 
-* **Cryptographic Micro-Proof-of-Work (PoW)**: Every session requires solving an ephemeral SHA-256 micro-puzzle. Modern browsers solve it in ~15ms via Web Crypto, while automated botnets face an unsustainable hardware compute tax.
+* **Cryptographic Micro-Proof-of-Work (PoW)**: Every session requires solving an ephemeral SHA-256 micro-puzzle. Modern browsers solve it typically in ~15ms via Web Crypto (depending on device CPU and configured difficulty), while automated botnets face an unsustainable hardware compute tax.
 * **Mandatory Attestation**: Empty payloads (`{}`) or unattested tokens are automatically hard-rejected with Risk 100 (`missing_telemetry`).
 * **Web IDL Descriptor Auditing**: Probes function property descriptors to detect `.bind()` poisoning, `Proxy` wrappers, and web unblocker shims while respecting genuine native browser accessors.
 * **Kinematic Jerk Entropy ($d^3x/dt^3$)**: Evaluates natural human neuromuscular tremor; artificial linear paths and synthetic Bezier splines are flagged.
@@ -41,15 +41,15 @@ Under real adversarial conditions, this design breaks down immediately:
 
 ## Security & Architecture Comparison
 
-| Capability | OBSX Security | Traditional Advisory Scripts | Legacy CAPTCHAs (Turnstile / hCaptcha) |
+| Capability | OBSX Security | Traditional Advisory Scripts | Traditional Challenge Providers |
 | :--- | :--- | :--- | :--- |
-| **Proof-of-Work Challenge** | **Enforced** (~15ms SHA-256 micro-puzzle) | None (Free curl floods allowed) | Server-heavy / high latency |
+| **Proof-of-Work Challenge** | **Enforced** (typical ~15ms SHA-256 micro-puzzle) | None (Free curl floods allowed) | Interactive / third-party widget roundtrip |
 | **Empty Signals (`{}`)** | **Hard Reject** (Risk 100) | Bypassed (Risk 0) | Rejected |
-| **Proxy Unblockers (UV / Bare-Mux)** | **Native Web IDL Heuristics** | Blind (Unmonitored) | Easily proxied |
+| **Proxy Unblockers (UV / Bare-Mux)** | **Native Web IDL Heuristics** | Blind (Unmonitored) | Widget-only inspection |
 | **Prototype Tamper Resilience** | **Descriptor & Bound Name Probes** | Bypassed via `.bind()` | Varies |
 | **Rate Limit Scoping** | **Subnet-Scoped** (No identity lockout) | Global Identity Lockout (DoS) | IP based |
-| **Dependencies** | **0 (Zero)** | Multiple npm packages | Heavy proprietary blobs |
-| **Memory Ceiling** | **Priority-Tiered (100k Key Cap)** | Uncapped in-memory maps | Vendor cloud |
+| **Dependencies** | **0 Runtime Packages** | Multiple npm packages | Hosted remote scripts |
+| **Memory Ceiling** | **Priority-Tiered (Configurable Key Cap)** | Uncapped in-memory maps | Vendor cloud |
 
 ---
 
@@ -114,7 +114,7 @@ Add one `<script>` tag and `data-obsx-protect` to any `<form>`. OBSX automatical
 ```
 
 ```javascript
-// Collects behavioral entropy and solves the ephemeral SHA-256 micro-PoW (~15ms)
+// Collects behavioral entropy and solves the ephemeral SHA-256 micro-PoW (typical ~15ms)
 async function submitProtected(score) {
   const { token, nonce } = await OBSX.getAttestation();
 
@@ -163,6 +163,8 @@ app.post('/api/submit', async (req, res) => {
   res.json({ ok: true, message: 'Verified' });
 });
 ```
+
+> **Project Enforcement Mode (`mode: 'enforce'` vs `mode: 'passive'`):** Projects default to `mode: 'enforce'` (active blocking: `allowed: false`, `verdict: 'reject'`). Switch a project to `mode: 'passive'` in Dashboard settings for non-blocking audit mode (`allowed: true`, `verdict: 'observe'`, `shadowVerdict`, and `passive_*` reason codes).
 
 #### Next.js (App Router Route Handler)
 ```typescript
@@ -216,19 +218,19 @@ async def submit(request: Request):
 
 ---
 
-## Kerckhoffs's Principle: 100% Open-Source Security
+## Kerckhoffs's Principle: Public Zone 1 Protocol Transparency
 
 > *"A cryptosystem should be secure even if everything about the system, except the key, is public knowledge."*  
 > — **Auguste Kerckhoffs (1883)**
 
 Most anti-bot products rely on security through obscurity: obfuscating JavaScript variables, hiding regex heuristics, and checking static build fingerprints. The moment an attacker inspects the code, the security evaporates.
 
-**OBSX Security was engineered specifically for public open-source transparency:**
+**OBSX Security was engineered specifically for public protocol transparency:**
 
 * **Mathematical Guarantees Over Secret Code**: Knowing our SHA-256 micro-puzzle solver does not allow an attacker to bypass it. The computational hardware cost must still be paid.
 * **Physics Over Heuristics**: Knowing our 3rd-derivative kinematic jerk evaluation ($d^3x/dt^3$) does not allow a headless bot to fabricate human neuromuscular tremor.
 * **Zero Client-Side Secrets**: Private HMAC keys (`sk_live_...`) never touch client browsers.
-* **Zero External Dependencies**: Pure native Node.js `crypto` on the server and native Web Crypto in the browser. Zero third-party telemetry leakage.
+* **Minimal Runtime Footprint**: Zero external runtime npm dependencies; relies on native Node.js `crypto` and browser Web Crypto for core protocol execution.
 
 ---
 
@@ -256,11 +258,11 @@ Explore the live interactive sandbox, test simulated bot attacks in the **[OBSX 
 
 ## License
 
-Dual-licensed under the **MIT License** (Zone 1: Core Protocol Engine, Client SDK, Tests & Public Docs) and **Elastic License 2.0 + Additional OBSX Zone 2 Terms** (Zone 2: Operator Server, Dashboard, Origin Shield, Auto-Updater & Accounts/Mailer):
+Dual-licensed under the **MIT License** (Zone 1: Core Protocol Engine, Client SDK, Tests & Public Docs) and **OBSX Source-Available License v1.0 (Zone 2)** (Operator Server, Dashboard, Origin Shield, Auto-Updater & Accounts/Mailer):
 
 - **Prospective Applicability & Prior Releases**: The updated Dual License governs **v2.2.0 onward**. Earlier commits distributed solely under MIT retain MIT terms for those historical versions, while v2.2.0+ releases and upgrades incorporating Zone 2 modules follow [LICENSE](LICENSE).
-- **Zone 1 (Core Protocol, SDK & Docs)**: Permissive MIT — free for anyone to embed, verify, and build upon.
-- **Zone 2 (Operator Dashboard, Shield, Updater & Scaffolding)**: Source-available under ELv2 + OBSX Zone 2 terms (`server.js`, `lib/botshield.js`, `lib/updater.js`, `lib/accounts.js`, `lib/mailer.js`, `tools/flood.js`, `public/dashboard.*`). Free to run and modify internally for self-hosted infrastructure; hosted SaaS redistribution and extraction into competing products are prohibited.
-- **Proprietary & Closed-Source (Sentinel™)**: The **OBSX Sentinel™ Adaptive Vector Circuit Breaker Engine** is **strictly closed source and proprietary**, maintained separately in `obsx-sentinel` for [obsx.tech](https://obsx.tech), and is not licensed under MIT or ELv2.
+- **Zone 1 (Core Protocol, SDK & Docs)**: Permissive MIT (`SPDX: MIT`) — free for anyone to embed, verify, and build upon.
+- **Zone 2 (Operator Dashboard, Shield, Updater & Scaffolding)**: Source-available under `LicenseRef-OBSX-Zone-2-1.0` (`server.js`, `lib/botshield.js`, `lib/updater.js`, `lib/accounts.js`, `lib/mailer.js`, `tools/flood.js`, `public/dashboard.*`). Free to run and modify internally for self-hosted infrastructure; commercial hosted multi-tenant SaaS redistribution and extraction into competing products are prohibited without a commercial license.
+- **Proprietary & Closed-Source (Sentinel™)**: The **OBSX Sentinel™ Adaptive Vector Circuit Breaker Engine** is **strictly closed source and proprietary**, maintained separately for [obsx.tech](https://obsx.tech), and is not licensed under MIT or OBSX Zone 2 terms.
 
 See the full [LICENSE](LICENSE) file for complete legal terms and zone mappings.

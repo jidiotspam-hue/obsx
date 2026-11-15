@@ -1,8 +1,8 @@
 # OBSX Security Architecture Manifesto
 
-**Author**: Alexis Grimmace (`Aidiotic`) & Anti-chan  
-**Target Standard**: High-Assurance Client Integrity Attestation & Anti-Automation  
-**Release**: v2.2.1 Production Readiness  
+**Author**: Alexis Grimmace (`obsx.tech`)  
+**Target Standard**: Client Integrity Attestation & Anti-Automation  
+**Release**: v2.3.0  
 
 ---
 
@@ -53,7 +53,7 @@ OBSX eliminates this entire attack surface by transforming client integrity into
 
 ### Invariant 1: Computational Proof of Work (Micro-PoW)
 * **Mechanics**: Upon session initiation (`POST /api/v1/session`), the server issues an ephemeral challenge: `${sessionId}:${timestamp}:${salt}` with target difficulty $D$.
-* **Client Behavior**: The client SDK solves `sha256(challenge + ":" + nonce)` using hardware-accelerated `crypto.subtle` in ~15ms.
+* **Client Behavior**: The client SDK solves `sha256(challenge + ":" + nonce)` using hardware-accelerated `crypto.subtle` (typically ~15ms on modern desktop/mobile browsers, varying with device CPU and configured difficulty).
 * **Server Verification**: The server independently computes the hash and verifies the leading zeroes.
 * **Security Value**: Headless bots cannot hammer verification endpoints for free. Every automated call incurs a mandatory CPU cost.
 
@@ -70,21 +70,22 @@ OBSX eliminates this entire attack surface by transforming client integrity into
 
 ---
 
-## 3. Vulnerability Elimination Matrix
+## 3. Protocol Threat Mitigation Summary
 
-| Traditional Advisory Vulnerabilities | OBSX Security Mitigation |
+> **Default Enforcement Mode (`mode: 'enforce'`)**: By default, protected verification gates operate in `enforce` mode and fail closed when required PoW proofs or attestation signals fail validation. Operators may configure `mode: 'passive'` during initial rollout to log verdicts without blocking requests.
+
+| Threat Vector | OBSX Protocol Mitigation |
 | :--- | :--- |
-| **Empty Signals Bypass** (`signals: {}` passes at risk 0) | **Eliminated**: Mandatory attestation & PoW challenge verification. |
-| **Identity-Wide Email Lockout** (5 requests lock email 60m) | **Eliminated**: Rate-limiting keyed strictly on caller IP subnet; zero victim lockouts. |
-| **Unauthenticated Project Spam** (Bypassing `guardSite`) | **Eliminated**: Project creation requires authenticated user session. |
-| **`idle_input` Weight Deficit** (Weight 15 vs 40 review threshold) | **Eliminated**: Long idle sessions require biometric entropy verification. |
-| **CORS / Origin Spoofing** (`ctx.origin` trusted blindly) | **Eliminated**: Non-browser callers must supply signed PoW proof bound to session seed. |
+| **Empty Telemetry Signals** (`signals: {}` submitted at risk 0) | **Mitigated**: Unattested sessions trigger `missing_telemetry` and require valid PoW proofs. |
+| **Identity-Wide Email Lockout** (5 requests lock email 60m) | **Mitigated**: Pre-auth rate limiting is keyed per caller IP subnet, isolating email addresses from global lockout. |
+| **Unauthenticated Project Creation** (Missing `guardSite` session) | **Mitigated**: Project creation requires an authenticated session or operator authorization. |
+| **`idle_input` Weight Deficit** | **Mitigated**: Extended sessions enforce behavioral/interaction risk thresholds unless configured otherwise by project policy. |
+| **CORS / Origin Spoofing** (`ctx.origin` trusted blindly) | **Mitigated**: Server verification binds tokens to signed PoW challenges and configured project origins. |
 
 ---
 
-## 4. Production Readiness & Quality Assurance
+## 4. Verification & Licensing
 
-* **Codebase Coverage**: 100% test pass rate across unit and integration suites (168/168 tests, 0 failures).
-* **Dependencies**: 0 external runtime dependencies.
-* **Standards Compliance**: Zero zizmor pedantic CI findings.
-* **Licensing**: Dual-licensed under Zone 1 MIT (Core Protocol & SDK) and Zone 2 ELv2 + Additional OBSX Zone 2 Terms (Operator Scaffolding); see [LICENSE](../LICENSE).
+* **Automated Test Suite**: Executed offline via `OBSX_TEST_MODE=1 npm test` (no synthetic pass claims; see live CI output for current counts).
+* **Dependencies**: Zero external runtime npm dependencies.
+* **Licensing**: Dual-licensed under Zone 1 MIT (Core Protocol & SDK) and Zone 2 OBSX Source-Available License v1.0 (Operator Software); see [LICENSE](../LICENSE).

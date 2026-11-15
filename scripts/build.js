@@ -33,17 +33,15 @@ try {
 }
 
 const obsxPath = path.join(outDir, 'obsx.min.js');
-const veritasPath = path.join(outDir, 'veritas.min.js');
 const tracerPath = path.join(outDir, 'tracer.min.js');
 
 fs.writeFileSync(obsxPath, minified, 'utf8');
-fs.writeFileSync(veritasPath, minified, 'utf8');
 fs.writeFileSync(tracerPath, minified, 'utf8');
 
 const hash = crypto.createHash('sha256').update(minified).digest('hex');
 const sri256 = 'sha256-' + crypto.createHash('sha256').update(minified).digest('base64');
 const sri384 = 'sha384-' + crypto.createHash('sha384').update(minified).digest('base64');
-console.log(`[OBSX Build] Built obsx.min.js, veritas.min.js, tracer.min.js (${minified.length} bytes)`);
+console.log(`[OBSX Build] Built obsx.min.js, tracer.min.js (${minified.length} bytes)`);
 console.log(`[OBSX Build] SHA-256: ${hash}`);
 console.log(`[OBSX Build] SRI (sha256): ${sri256}`);
 console.log(`[OBSX Build] SRI (sha384): ${sri384}`);

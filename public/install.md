@@ -9,11 +9,11 @@ Deploy OBSX client-side anti-bot attestation and cryptographic action sealing to
 Add the OBSX SDK script to the `<head>` of your HTML document before any application forms or sensitive actions:
 
 ```html
-<!-- OBSX Security SDK v2.3.1 (Cryptographically Pinned with SRI) -->
+<!-- OBSX Security SDK v2.3.0 (Cryptographically Pinned with SRI) -->
 <script
-  src="https://obsx.tech/sdk/v2.3.1/obsx.min.js"
+  src="https://obsx.tech/sdk/v2.3.0/obsx.min.js"
   data-obsx-site="pk_YOUR_SITE_KEY"
-  integrity="sha384-zjDlyXRfz2+UkWMPjUhvyBA8wEWqxEj/OBYXdqwhAYdleL/vk5dqd6KQEPY3e+3i"
+  integrity="sha384-4ljIx7jIe5rnvv8MUammaWWDKAyROpIs+2FmYW4xYKcxIyNEvHt4nqCJ0sW8onYm"
   crossorigin="anonymous"
   defer>
 </script>
@@ -138,7 +138,6 @@ Add `data-obsx-compat="recaptcha"` to keep existing `grecaptcha.ready()`, `greca
 
 | Asset | Version | Algorithm | Hash |
 | :--- | :--- | :--- | :--- |
-| `obsx.min.js` | `v2.3.1` | **SHA-384** | `sha384-zjDlyXRfz2+UkWMPjUhvyBA8wEWqxEj/OBYXdqwhAYdleL/vk5dqd6KQEPY3e+3i` |
-| `obsx.min.js` | `v2.3.1` | **SHA-256** | `sha256-4RTLhRChl8GMOVS/iFOEz5lhdQu04KeQKNxwSwDIjKM=` |
-| `tracer.min.js` | `v2.3.1` | **SHA-384** | `sha384-zjDlyXRfz2+UkWMPjUhvyBA8wEWqxEj/OBYXdqwhAYdleL/vk5dqd6KQEPY3e+3i` |
-| `veritas.min.js` | `v2.3.1` | **SHA-384** | `sha384-zjDlyXRfz2+UkWMPjUhvyBA8wEWqxEj/OBYXdqwhAYdleL/vk5dqd6KQEPY3e+3i` |
+| `obsx.min.js` | `v2.3.0` | **SHA-384** | `sha384-4ljIx7jIe5rnvv8MUammaWWDKAyROpIs+2FmYW4xYKcxIyNEvHt4nqCJ0sW8onYm` |
+| `obsx.min.js` | `v2.3.0` | **SHA-256** | `sha256-Gdq0GIk65rqXzwaiQ2MIXy1dOPnfMtwWQHU6xJjciYw=` |
+| `tracer.min.js` | `v2.3.0` | **SHA-384** | `sha384-4ljIx7jIe5rnvv8MUammaWWDKAyROpIs+2FmYW4xYKcxIyNEvHt4nqCJ0sW8onYm` |

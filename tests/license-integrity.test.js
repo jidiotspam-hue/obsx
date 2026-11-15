@@ -5,6 +5,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const nodeCrypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 
 const updater = require('../lib/updater');
@@ -34,27 +35,29 @@ test('license: repository LICENSE, package.json, README, and HTML pages stay ali
   const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
   const licenseText = fs.readFileSync(path.join(ROOT, 'LICENSE'), 'utf8');
   const readmeText = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
-  const baselineText = fs.readFileSync(path.join(ROOT, 'README.baseline.md'), 'utf8');
+  const baselineText = fs.readFileSync(path.join(ROOT, 'docs', 'README.baseline.md'), 'utf8');
   const archText = fs.readFileSync(path.join(ROOT, 'docs/ARCHITECTURE.md'), 'utf8');
   const releaseNotes = fs.readFileSync(path.join(ROOT, 'docs/RELEASE_NOTES.md'), 'utf8');
   const termsHtml = fs.readFileSync(path.join(ROOT, 'public/terms.html'), 'utf8');
   const sdkMin = fs.readFileSync(path.join(ROOT, 'public/obsx.min.js'), 'utf8');
 
-  assert.equal(pkg.license, 'SEE LICENSE IN LICENSE');
+  assert.equal(pkg.license, 'MIT AND LicenseRef-OBSX-Zone-2-1.0');
   assert.ok(!licenseText.includes('UNIVERSAL & RETROACTIVE APPLICABILITY'));
-  assert.ok(licenseText.includes('PROSPECTIVE APPLICABILITY & PRIOR RELEASES'));
+  assert.ok(licenseText.includes('Prospective Applicability'));
+  assert.ok(!licenseText.includes('Elastic License 2.0'));
   assert.ok(!readmeText.includes('Universal & Retroactive Applicability'));
   assert.ok(!baselineText.includes('Universal & Retroactive Applicability'));
   assert.ok(!archText.includes('Open source under the MIT License'));
   assert.ok(releaseNotes.includes(pkg.version));
   assert.ok(sdkMin.includes('MIT License'), 'Built client SDK must retain MIT attribution banner');
 
-  const zone1Start = licenseText.indexOf('1. **ZONE 1:');
-  const zone2Start = licenseText.indexOf('2. **ZONE 2:');
-  const propStart = licenseText.indexOf('## PROPRIETARY & CLOSED-SOURCE NOTICE');
+  const zone1Start = licenseText.indexOf('- **Zone 1 (`MIT`)**');
+  const zone2Start = licenseText.indexOf('- **Zone 2 (`LicenseRef-OBSX-Zone-2-1.0`');
+  const propStart = licenseText.indexOf('- **Closed-Source / Proprietary Modules');
   assert.ok(zone1Start >= 0 && zone2Start > zone1Start && propStart > zone2Start);
-  const zone1Section = licenseText.slice(zone1Start, zone2Start);
-  const zone2Section = licenseText.slice(zone2Start, propStart);
+  const zone1Section = licenseText.slice(zone1Start, propStart);
+  const zone2PartStart = licenseText.indexOf('## PART 2: OBSX SOURCE-AVAILABLE LICENSE v1.0');
+  const zone2Section = licenseText.slice(zone2PartStart);
 
   for (const z1 of [
     'lib/core.js',
@@ -64,10 +67,9 @@ test('license: repository LICENSE, package.json, README, and HTML pages stay ali
     'index.d.ts',
     'scripts/',
     'docs/',
-    '.github/',
     'package.json',
     '.gitignore',
-    'README.baseline.md',
+    'docs/README.baseline.md',
   ]) {
     assert.ok(zone1Section.includes(z1), `LICENSE Zone 1 must include ${z1}`);
   }
@@ -80,6 +82,7 @@ test('license: repository LICENSE, package.json, README, and HTML pages stay ali
     'lib/updater.js',
     'tools/flood.js',
     'public/dashboard.html',
+    '.github/',
   ]) {
     assert.ok(zone2Section.includes(z2), `LICENSE Zone 2 must include ${z2}`);
   }
@@ -96,10 +99,21 @@ test('license: repository LICENSE, package.json, README, and HTML pages stay ali
     assert.ok(!html.includes('Open source under the MIT License.'), `${htmlFile} must reflect dual licensing`);
     assert.ok(!html.includes('MIT Open-Source License · Acceptable Use Policy'), `${htmlFile} hero pill must reflect dual licensing`);
     assert.ok(!html.includes('Zero External Dependencies · MIT\n'), `${htmlFile} hero pill must not claim MIT-only node runtime`);
-    assert.ok(html.includes('ELv2 + OBSX Zone 2 Terms (Operator)'), `${htmlFile} footer must reference ELv2 + OBSX Zone 2 Terms`);
+    assert.ok(!html.includes('ELv2 + OBSX Zone 2 Terms'), `${htmlFile} must not claim ELv2`);
+    assert.ok(html.includes('OBSX Source-Available License v1.0 (Zone 2)'), `${htmlFile} footer must reference OBSX Source-Available License v1.0 (Zone 2)`);
   }
 
-  assert.ok(termsHtml.includes('Elastic License 2.0 + Additional OBSX Zone 2 Terms'));
+  assert.ok(termsHtml.includes('OBSX Source-Available License v1.0'));
+
+  // Verify npm pack Zone 1 allowlist excludes all Zone 2 and closed-source modules
+  const packOut = execFileSync('npm', ['pack', '--json', '--dry-run'], { cwd: ROOT, encoding: 'utf8' });
+  const packInfo = JSON.parse(packOut);
+  const packedPaths = (packInfo[0] && packInfo[0].files || []).map((f) => f.path);
+  assert.ok(packedPaths.includes('lib/core.js'), 'npm pack must include Zone 1 lib/core.js');
+  assert.ok(packedPaths.includes('lib/index.js'), 'npm pack must include Zone 1 lib/index.js');
+  for (const forbidden of ['server.js', 'lib/botshield.js', 'lib/sentinel.js', 'lib/updater.js', 'lib/accounts.js', 'lib/mailer.js', 'tools/flood.js', 'public/veritas.min.js', 'README.baseline.md', 'docs/README.baseline.md']) {
+    assert.ok(!packedPaths.includes(forbidden), `npm pack must exclude Zone 2 / proprietary file: ${forbidden}`);
+  }
 });
 
 test('updater: tree fingerprint includes LICENSE/shield/updater and normalizes CRLF', () => {
@@ -294,12 +308,58 @@ test('updater: drift advisory covers non-git Safe Mode and Strategy B / restart 
     assert.equal(invalidShaRes.updated, false);
     assert.equal(invalidShaRes.status, 'up_to_date');
 
-    // 3. With OBSX_HTTP_SYNC=true: CRLF match skips write, empty buffer skips write, valid change writes & rebuilds
+    // 3a. Unsigned Strategy B fails closed unless Ed25519 manifest or OBSX_ALLOW_UNVERIFIED_UPDATES=true is set
+    const unsignedBlocked = await updater.checkAndApplyUpstreamUpdate({
+      force: true,
+      rootDir: tmpDir,
+      env: { OBSX_HTTP_SYNC: 'true' },
+      assetFiles: ['LICENSE', 'lib/updater.js'],
+      fetchBuffer: async (url) => {
+        if (url.includes('/commits/')) return commitPayload;
+        return Buffer.from('unsigned-payload');
+      },
+    });
+    assert.equal(unsignedBlocked.updated, false);
+    assert.equal(unsignedBlocked.status, 'signature_verification_required');
+
+    // 3b. Valid Ed25519 signed manifest updates files atomically
+    const { publicKey, privateKey } = nodeCrypto.generateKeyPairSync('ed25519');
+    const pubPem = publicKey.export({ type: 'spki', format: 'pem' }).toString();
+    const updatedCorePayload = Buffer.from('module.exports = { signed: true };\n');
+    const manifestObj = {
+      commit: validSha,
+      files: {
+        'lib/core.js': nodeCrypto.createHash('sha256').update(updatedCorePayload).digest('hex'),
+      },
+    };
+    const manifestBuf = Buffer.from(JSON.stringify(manifestObj));
+    const sigBuf = nodeCrypto.sign(null, manifestBuf, privateKey);
+    const signedSyncRes = await updater.checkAndApplyUpstreamUpdate({
+      force: true,
+      rootDir: tmpDir,
+      env: { OBSX_HTTP_SYNC: 'true', OBSX_UPDATE_PUBLIC_KEY: pubPem },
+      assetFiles: ['lib/core.js'],
+      triggerRestart: () => {},
+      fetchBuffer: async (url) => {
+        if (url.includes('/commits/')) return commitPayload;
+        if (url.endsWith('/obsx-release-manifest.json')) return manifestBuf;
+        if (url.endsWith('/obsx-release-manifest.sig')) return sigBuf;
+        if (url.endsWith('/lib/core.js')) return updatedCorePayload;
+        return Buffer.alloc(0);
+      },
+    });
+    assert.equal(signedSyncRes.updated, true);
+    assert.equal(fs.readFileSync(path.join(tmpDir, 'lib/core.js'), 'utf8'), 'module.exports = { signed: true };\n');
+
+    // Reset lib/core.js before break-glass CRLF/empty-buffer test
+    fs.writeFileSync(path.join(tmpDir, 'lib/core.js'), 'module.exports = { v: 1 };\n');
+
+    // 3c. With OBSX_HTTP_SYNC=true + break-glass opt-in: CRLF match skips write, empty buffer skips write, valid change writes & rebuilds
     let restarted = false;
     const syncRes = await updater.checkAndApplyUpstreamUpdate({
       force: true,
       rootDir: tmpDir,
-      env: { OBSX_HTTP_SYNC: 'true' },
+      env: { OBSX_HTTP_SYNC: 'true', OBSX_ALLOW_UNVERIFIED_UPDATES: 'true' },
       assetFiles: ['LICENSE', 'lib/core.js', 'lib/updater.js'],
       triggerRestart: () => { restarted = true; },
       fetchBuffer: async (url) => {
@@ -316,6 +376,15 @@ test('updater: drift advisory covers non-git Safe Mode and Strategy B / restart 
     assert.equal(fs.readFileSync(path.join(tmpDir, 'LICENSE'), 'utf8'), 'line1\nline2\n');
     assert.equal(fs.readFileSync(path.join(tmpDir, 'lib/core.js'), 'utf8'), 'module.exports = { v: 1 };\n');
     assert.equal(fs.readFileSync(path.join(tmpDir, 'lib/updater.js'), 'utf8'), 'module.exports = { updated: true };\n');
+
+    // 3d. Rejects branch flag injection & validates hybrid ring entries strictly
+    const badBranchRes = await updater.checkAndApplyUpstreamUpdate({
+      force: true,
+      rootDir: tmpDir,
+      env: { OBSX_UPSTREAM_BRANCH: '--upload-pack=touch /tmp/pwn' },
+    });
+    assert.equal(badBranchRes.updated, false);
+    assert.equal(badBranchRes.status, 'invalid_upstream_config');
 
     // 4. triggerHotRestartIfConfigured stays opt-in unless OBSX_AUTO_RESTART === 'true'
     let spawnCount = 0;
@@ -437,4 +506,12 @@ test('updater: autoAdaptDirtyNode preserves conflicting edits in stash and keeps
   } finally {
     fs.rmSync(baseDir, { recursive: true, force: true });
   }
+});
+
+test('hardening: normalizeCloudRingSubnetKey rejects unspecified :: and full fe80::/10 link-local ranges', () => {
+  assert.equal(updater.normalizeCloudRingSubnetKey('subnet:v6:0000:0000:0000/48'), null);
+  assert.equal(updater.normalizeCloudRingSubnetKey('::/48'), null);
+  assert.equal(updater.normalizeCloudRingSubnetKey('subnet:v6:fe85:0000:0000/48'), null);
+  assert.equal(updater.normalizeCloudRingSubnetKey('subnet:v6:febf:1234:5678/48'), null);
+  assert.equal(updater.normalizeCloudRingSubnetKey('subnet:v6:2001:0db8:85a3/48'), 'subnet:v6:2001:0db8:85a3/48');
 });

@@ -8,11 +8,11 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 echo "[OBSX Revert] Restoring baseline README..."
-if [ -f "README.baseline.md" ]; then
-  cp README.baseline.md README.md
-  echo "[OBSX Revert] README.md restored from README.baseline.md."
+if [ -f "docs/README.baseline.md" ]; then
+  cp docs/README.baseline.md README.md
+  echo "[OBSX Revert] README.md restored from docs/README.baseline.md."
 else
-  echo "[OBSX Revert] Error: README.baseline.md not found!" >&2
+  echo "[OBSX Revert] Error: docs/README.baseline.md not found!" >&2
   exit 1
 fi
 

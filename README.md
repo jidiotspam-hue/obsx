@@ -8,37 +8,37 @@
 ╭───────────────────────────────────────────────────────────────────╮
 │  * * *  OBSX PROTOCOL v2.3.0 • WORLD PREMIERE LAUNCH  * * *       │
 │                                                                   │
-│  STAGE 1: DEFEAT ADVISORY BOTS        [ CLEARED • 100% BLOCKED ]  │
+│  STAGE 1: DEFEAT ADVISORY BOTS        [ EMPTY PAYLOADS BLOCKED ]  │
 │  DIFFICULTY: CRYPTOGRAPHIC HARD       [ SHA-256 MICRO-POW ]       │
-│  PARTY MEMBERS: ZERO RUNTIME DEPS     [ 100% PURE NATIVE NODE ]   │
-│  STATUS: 168 / 168 TESTS PASSING      [ ALL SYSTEMS GREEN ]       │
+│  PARTY MEMBERS: ZERO RUNTIME DEPS     [ NATIVE NODE CORE ]        │
+│  TESTS: AUTOMATED SUITE               [ OBSX_TEST_MODE=1 ]        │
 │  LIVE NODE: OBSX.TECH                 [ PRODUCTION OPERATIONAL ]  │
 ╰───────────────────────────────────────────────────────────────────╯
 ```
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/RELEASE-v2.3.0%20PUBLIC-ff79c6?style=flat-square" alt="Release: v2.3.0 Public"></a>
-  <a href="tests/"><img src="https://img.shields.io/badge/TESTS-168%2F168%20PASSING-50fa7b?style=flat-square" alt="Tests: 168/168 Passing"></a>
-  <a href="package.json"><img src="https://img.shields.io/badge/DEPENDENCIES-ZERO-bd93f9?style=flat-square" alt="Zero Dependencies"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/LICENSE-Dual%20(MIT%20%2B%20ELv2%2FZone%202)-8be9fd?style=flat-square" alt="License: Dual (MIT + ELv2/Zone 2)"></a>
+  <a href="tests/"><img src="https://img.shields.io/badge/TESTS-AUTOMATED%20SUITE-50fa7b?style=flat-square" alt="Automated Test Suite"></a>
+  <a href="package.json"><img src="https://img.shields.io/badge/DEPENDENCIES-ZERO-bd93f9?style=flat-square" alt="Zero Runtime Dependencies"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/LICENSE-Dual%20(MIT%20%2B%20OBSX%20Zone%202)-8be9fd?style=flat-square" alt="License: Dual (MIT + OBSX Zone 2)"></a>
   <a href="https://obsx.tech"><img src="https://img.shields.io/badge/LIVE%20NODE-OBSX.TECH-ffb86c?style=flat-square" alt="Live Node"></a>
 </p>
 
 ### [Launch Week Milestone]
 
-OBSX is now public as an **open-core** platform (MIT Core Engine & SDK + ELv2/Zone 2 Operator Scaffolding)! We built this protocol to prove that high-assurance client attestation doesn't require intrusive third-party CAPTCHAs, bloated vendor SDKs, or fragile advisory client JSON.
+OBSX is now public as an **open-core** platform (MIT Core Engine & SDK + OBSX Zone 2 Source-Available Operator Scaffolding)! We built this protocol to prove that high-assurance client attestation doesn't require intrusive third-party CAPTCHAs, bloated vendor SDKs, or fragile advisory client JSON.
 
 - **0 Runtime Dependencies**: Pure Node.js standard library (`crypto`, `http`, `fs`).
-- **Client SDK Footprint**: 41.9 KB uncompressed (11.9 KB gzip) with Web Crypto & zero-JS auto-mount.
-- **Sub-Millisecond Verification**: Local token decryption and verification in <1ms.
-- **Full Attack Resistance**: Validated under saturation blitzes with zero leaked memory.
+- **Client SDK Footprint**: 42.4 KiB uncompressed (11.9 KiB gzip-9) with Web Crypto & zero-JS auto-mount.
+- **Sub-Millisecond Core Checks**: Local token decryption and HMAC verification typically execute in sub-millisecond CPU time (depending on host hardware and load).
+- **Bounded Resource Usage**: Priority-tiered KV eviction and configurable limits help maintain stability under sustained request pressure.
 - **Origin Shield**: tiered L7 flood control that engages under attack and stands down when quiet (`lib/botshield.js`).
 
 <p align="center">
   <img src="docs/architecture.svg" alt="OBSX Security Architecture Flow" width="850">
 </p>
 
-OBSX Security is the open-source protocol for client integrity attestation, anti-automation, and tamper-resistant request verification.
+OBSX Security is an open-core protocol for client integrity attestation, anti-automation, and tamper-resistant request verification.
 
 It replaces fragile advisory JSON telemetry and intrusive third-party CAPTCHAs with cryptographic micro-proof-of-work, prototype-tamper auditing, biological kinematic jerk entropy, and zero-dependency backend verification.
 
@@ -57,7 +57,7 @@ Under real adversarial conditions, this design breaks down immediately:
 
 ### How OBSX Enforces Protocol Invariants
 
-* **Cryptographic Micro-Proof-of-Work (PoW)**: Every session requires solving an ephemeral SHA-256 micro-puzzle. Modern browsers solve it in ~15ms via Web Crypto, while automated botnets face an unsustainable hardware compute tax.
+* **Cryptographic Micro-Proof-of-Work (PoW)**: Every session requires solving an ephemeral SHA-256 micro-puzzle. Modern browsers solve it typically in ~15ms via Web Crypto (depending on device CPU and configured difficulty), while automated botnets face an unsustainable hardware compute tax.
 * **Mandatory Attestation**: Empty payloads (`{}`) or unattested tokens are automatically hard-rejected with Risk 100 (`missing_telemetry`).
 * **Web IDL Descriptor Auditing**: Probes function property descriptors to detect `.bind()` poisoning, `Proxy` wrappers, and web unblocker shims while respecting genuine native browser accessors.
 * **Kinematic Jerk Entropy ($d^3x/dt^3$)**: Evaluates natural human neuromuscular tremor; artificial linear paths and synthetic Bezier splines are flagged.
@@ -67,15 +67,15 @@ Under real adversarial conditions, this design breaks down immediately:
 
 ## Security & Architecture Comparison
 
-| Capability | OBSX Security | Traditional Advisory Scripts | Legacy CAPTCHAs (Turnstile / hCaptcha) |
+| Capability | OBSX Security | Traditional Advisory Scripts | Traditional Challenge Providers |
 | :--- | :--- | :--- | :--- |
-| **Proof-of-Work Challenge** | **Enforced** (~15ms SHA-256 micro-puzzle) | None (Free curl floods allowed) | Server-heavy / high latency |
+| **Proof-of-Work Challenge** | **Enforced** (typical ~15ms SHA-256 micro-puzzle) | None (Free curl floods allowed) | Interactive / third-party widget roundtrip |
 | **Empty Signals (`{}`)** | **Hard Reject** (Risk 100) | Bypassed (Risk 0) | Rejected |
-| **Proxy Unblockers (UV / Bare-Mux)** | **Native Web IDL Heuristics** | Blind (Unmonitored) | Easily proxied |
+| **Proxy Unblockers (UV / Bare-Mux)** | **Native Web IDL Heuristics** | Blind (Unmonitored) | Widget-only inspection |
 | **Prototype Tamper Resilience** | **Descriptor & Bound Name Probes** | Bypassed via `.bind()` | Varies |
 | **Rate Limit Scoping** | **Subnet-Scoped** (No identity lockout) | Global Identity Lockout (DoS) | IP based |
-| **Dependencies** | **0 (Zero)** | Multiple npm packages | Heavy proprietary blobs |
-| **Memory Ceiling** | **Priority-Tiered (100k Key Cap)** | Uncapped in-memory maps | Vendor cloud |
+| **Dependencies** | **0 Runtime Packages** | Multiple npm packages | Hosted remote scripts |
+| **Memory Ceiling** | **Priority-Tiered (Configurable Key Cap)** | Uncapped in-memory maps | Vendor cloud |
 
 ---
 
@@ -140,7 +140,7 @@ Add one `<script>` tag and `data-obsx-protect` to any `<form>`. OBSX automatical
 ```
 
 ```javascript
-// Collects behavioral entropy and solves the ephemeral SHA-256 micro-PoW (~15ms)
+// Collects behavioral entropy and solves the ephemeral SHA-256 micro-PoW (typical ~15ms)
 async function submitProtected(score) {
   const { token, nonce } = await OBSX.getAttestation();
 
@@ -189,6 +189,8 @@ app.post('/api/submit', async (req, res) => {
   res.json({ ok: true, message: 'Verified' });
 });
 ```
+
+> **Project Enforcement Mode (`mode: 'enforce'` vs `mode: 'passive'`):** New projects default to `mode: 'enforce'`, where automated or invalid requests return `verdict: 'reject'` and `allowed: false`. Switch a project to `mode: 'passive'` in your Dashboard settings for non-blocking shadow audits: requests return `allowed: true`, `verdict: 'observe'`, a `shadowVerdict` (`'accept' | 'review' | 'reject'`), and `passive_*` diagnostic reason codes while tuning thresholds.
 
 #### Next.js (App Router Route Handler)
 ```typescript
@@ -242,19 +244,19 @@ async def submit(request: Request):
 
 ---
 
-## Kerckhoffs's Principle: 100% Open-Source Security
+## Kerckhoffs's Principle: Public Zone 1 Protocol Transparency
 
 > *"A cryptosystem should be secure even if everything about the system, except the key, is public knowledge."*  
 > — **Auguste Kerckhoffs (1883)**
 
 Most anti-bot products rely on security through obscurity: obfuscating JavaScript variables, hiding regex heuristics, and checking static build fingerprints. The moment an attacker inspects the code, the security evaporates.
 
-**OBSX Security was engineered specifically for public open-source transparency:**
+**OBSX Security was engineered specifically for public protocol transparency:**
 
 * **Mathematical Guarantees Over Secret Code**: Knowing our SHA-256 micro-puzzle solver does not allow an attacker to bypass it. The computational hardware cost must still be paid.
 * **Physics Over Heuristics**: Knowing our 3rd-derivative kinematic jerk evaluation ($d^3x/dt^3$) does not allow a headless bot to fabricate human neuromuscular tremor.
 * **Zero Client-Side Secrets**: Private HMAC keys (`sk_live_...`) never touch client browsers.
-* **Zero External Dependencies**: Pure native Node.js `crypto` on the server and native Web Crypto in the browser. Zero third-party telemetry leakage.
+* **Minimal Runtime Footprint**: Zero external runtime npm dependencies; core protocol verification relies on native Node.js `crypto` and browser Web Crypto.
 
 ---
 
@@ -313,11 +315,11 @@ That opens 300 keep-alive connections of scripted bot traffic and prints the sta
 
 ## License
 
-Dual-licensed under the **MIT License** (Zone 1: Core Protocol Engine, Client SDK, Tests & Public Docs) and **Elastic License 2.0 + Additional OBSX Zone 2 Terms** (Zone 2: Operator Server, Dashboard, Origin Shield, Auto-Updater & Accounts/Mailer):
+Dual-licensed under the **MIT License** (Zone 1: Core Protocol Engine, Client SDK, Tests & Public Docs) and **OBSX Source-Available License v1.0 (Zone 2)** (Operator Server, Dashboard, Origin Shield, Auto-Updater & Accounts/Mailer):
 
 - **Prospective Applicability & Prior Releases**: The updated Dual License governs **v2.2.0 onward**. Earlier commits distributed solely under MIT retain MIT terms for those historical versions, while v2.2.0+ releases and upgrades incorporating Zone 2 modules follow [LICENSE](LICENSE).
-- **Zone 1 (Core Protocol, SDK & Docs)**: Permissive MIT — free for anyone to embed, verify, and build upon.
-- **Zone 2 (Operator Dashboard, Shield, Updater & Scaffolding)**: Source-available under ELv2 + OBSX Zone 2 terms (`server.js`, `lib/botshield.js`, `lib/updater.js`, `lib/accounts.js`, `lib/mailer.js`, `tools/flood.js`, `public/dashboard.*`). Free to run and modify internally for self-hosted infrastructure; hosted SaaS redistribution and extraction into competing products are prohibited.
-- **Proprietary & Closed-Source (Sentinel™)**: The **OBSX Sentinel™ Adaptive Vector Circuit Breaker Engine** is **strictly closed source and proprietary**, maintained separately in `obsx-sentinel` for [obsx.tech](https://obsx.tech), and is not licensed under MIT or ELv2.
+- **Zone 1 (Core Protocol, SDK & Docs)**: Permissive MIT (`SPDX: MIT`) — free for anyone to embed, verify, and build upon. Published to npm with a Zone 1-only `files` allowlist.
+- **Zone 2 (Operator Dashboard, Shield, Updater & Scaffolding)**: Source-available under `LicenseRef-OBSX-Zone-2-1.0` (`server.js`, `lib/botshield.js`, `lib/updater.js`, `lib/accounts.js`, `lib/mailer.js`, `tools/flood.js`, `public/dashboard.*`). Free to run and modify internally for self-hosted infrastructure; commercial hosted multi-tenant SaaS redistribution and extraction into competing products are prohibited without a commercial license.
+- **Proprietary & Closed-Source (Sentinel™)**: The **OBSX Sentinel™ Adaptive Vector Circuit Breaker Engine** is **strictly closed source and proprietary**, maintained separately for [obsx.tech](https://obsx.tech), and is not licensed under MIT or OBSX Zone 2 terms.
 
-See the full [LICENSE](LICENSE) file for complete zone mappings, the November 15, 2026 transition policy, and Safe Mode integrity details.
+See [LICENSE](LICENSE) for complete zone mappings and patent grant/termination terms, and [Release Notes](docs/RELEASE_NOTES.md) for Safe Mode and integrity verification details.

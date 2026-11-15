@@ -25,3 +25,6 @@ marketing-results/
 git-polish-reports/
 generalist-reports/
 github-reports/
+
+# Private Operational Modules (Never commit to public repository)
+lib/sentinel.js

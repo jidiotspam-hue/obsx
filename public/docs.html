@@ -9,7 +9,7 @@
   <link rel="alternate icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
   <link rel="alternate icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/style.css?v=2.3.5" />
+  <link rel="stylesheet" href="/style.css?v=2.3.0" />
 </head>
 <body>
   <!-- Header / Navigation -->
@@ -56,7 +56,7 @@
 
       <h4 style="margin: 24px 0 8px; font-size: 15px;">Zero-JS Form Protection (Fastest)</h4>
       <p style="color: var(--text-muted); font-size: 13.5px; margin-bottom: 12px;">
-        Add <code>data-obsx-protect</code> to any HTML form to inject hidden <code>obsx-token</code> and <code>obsx-nonce</code> inputs automatically on submit:
+        Add <code>data-obsx-protect</code> to any HTML form to inject hidden <code>obsx-token</code> and <code>obsx-nonce</code> inputs automatically on submit (defaults to <code>data-obsx-mode="enforce"</code>, which blocks unverified requests unless explicitly set to <code>passive</code>):
       </p>
       <div class="code-block" style="margin-bottom: 20px;">
         <pre class="code-content"><code>&lt;script src="https://obsx.tech/obsx.min.js" data-obsx-site="pk_YOUR_SITE_KEY" defer&gt;&lt;/script&gt;
@@ -143,7 +143,7 @@ app.post('/api/checkout', obsx.middleware({ secretKey: process.env.OBSX_SECRET_K
       <div style="display: flex; flex-direction: column; gap: 16px;">
         <div>
           <strong style="color: var(--text); font-size: 14.5px;">Cryptographic Micro-Proof-of-Work:</strong>
-          <p style="color: var(--text-muted); font-size: 13.5px; margin-top: 4px;">Defeats automated scraping by challenging the client with an ephemeral SHA-256 puzzle. Solved in ~15ms via Web Crypto in genuine browsers, but raises botnet hardware costs to unsustainable levels.</p>
+          <p style="color: var(--text-muted); font-size: 13.5px; margin-top: 4px;">Raises the cost of automated scraping by challenging the client with an ephemeral SHA-256 puzzle (typically ~15ms on modern desktop/mobile browsers via Web Crypto).</p>
         </div>
         <div>
           <strong style="color: var(--text); font-size: 14.5px;">Atomic Single-Use Token Burn:</strong>
@@ -171,7 +171,7 @@ app.post('/api/checkout', obsx.middleware({ secretKey: process.env.OBSX_SECRET_K
         <span class="badge" style="background: rgba(226, 136, 106, 0.15); color: var(--accent); border: 1px solid var(--accent); font-size: 11px;">obsx.tech Managed Cloud Exclusive</span>
       </div>
       <p class="card-sub">
-        Protects infrastructure during sustained attacks by dynamically isolating malicious ingress vectors across edge nodes while keeping legitimate traffic 100% online.
+        Protects infrastructure during sustained floods by dynamically shedding anomalous ingress vectors while keeping standard browser routes available.
       </p>
 
       <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 18px 0;">
@@ -241,7 +241,7 @@ export async function POST(request: Request) {
       <div style="display: flex; align-items: center; gap: 8px;">
         <span class="brand-dot"></span>
         <strong style="color: var(--text);">OBSX Security</strong>
-        <span>· Dual-licensed: <a href="/terms.html">MIT (Core/SDK) &amp; ELv2 + OBSX Zone 2 Terms (Operator)</a>.</span>
+        <span>· Dual-licensed: <a href="/terms.html">MIT (Core/SDK) &amp; OBSX Source-Available License v1.0 (Zone 2)</a>.</span>
       </div>
       <div style="display: flex; gap: 20px; flex-wrap: wrap;">
         <a href="/">Sandbox</a>

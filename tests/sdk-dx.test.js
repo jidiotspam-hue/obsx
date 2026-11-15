@@ -154,8 +154,9 @@ test('package: require("obsx-security") exposes SDK API cleanly without auto-lis
     types: './index.d.ts',
     default: './lib/index.js',
   });
-  assert.equal(pkg.exports['./server'], './server.js');
-  assert.equal(pkg.exports['./lib/*'], './lib/*');
+  assert.equal(pkg.exports['./server'], undefined);
+  assert.equal(pkg.exports['./lib/*'], undefined);
+  assert.equal(pkg.exports['./config'], './lib/config.js');
 
   assert.equal(typeof obsx.verifyToken, 'function');
   assert.equal(typeof obsx.verify, 'function');
@@ -410,7 +411,7 @@ test('dx: compiled obsx.min.js auto-resolves cross-origin script endpoints and p
   vm.runInContext(bundleCode, sandbox);
   const sdk = sandbox.OBSX;
   assert.ok(sdk, 'OBSX global must initialize');
-  assert.equal(sdk.version, '2.3.1');
+  assert.equal(sdk.version, '2.3.0');
 
   try {
     // Assert cross-origin init automatically pointed at ${baseUrl}/api/v1 without explicit endpoint!
@@ -452,6 +453,34 @@ test('dx: compiled obsx.min.js auto-resolves cross-origin script endpoints and p
     );
     assert.equal(formVerify.allowed, true, `Form verification failed: ${JSON.stringify(formVerify.reasons)}`);
     assert.equal(formVerify.verdict, 'accept');
+
+    // Failed attestation must keep protectForm fail-closed (no native submit) unless failOpen: true
+    let failSubmitCount = 0;
+    let failPrevented = false;
+    let capturedError = null;
+    const dispatchedEvents = [];
+    const failListeners = {};
+    const failForm = {
+      dataset: {},
+      querySelector() { return null; },
+      appendChild() {},
+      addEventListener(ev, fn) { failListeners[ev] = fn; },
+      dispatchEvent(ev) { dispatchedEvents.push(ev); return true; },
+      requestSubmit() { failSubmitCount++; },
+      submit() { failSubmitCount++; },
+    };
+    sdk.protectForm(failForm, {
+      site: 'pk_nonexistent_site_key',
+      onError(err) { capturedError = err; },
+    });
+    await failListeners.submit({
+      defaultPrevented: false,
+      preventDefault() { failPrevented = true; },
+    });
+    assert.equal(failPrevented, true);
+    assert.equal(failSubmitCount, 0, 'protectForm must fail closed when attestation fails');
+    assert.ok(capturedError, 'protectForm must invoke onError when attestation fails');
+    assert.ok(dispatchedEvents.some((ev) => ev && ev.type === 'obsx:error'), 'protectForm must dispatch obsx:error event');
   } finally {
     sdk.reset();
   }
@@ -658,7 +687,7 @@ test('dx: browser SDK DOM XSS safety, concurrent init/getAttestation queuing, an
   // 1. Validate XSS-hardened resolveEndpoint & showDramBlockScreen + concurrent getAttestation queuing
   const overlayNodes = [];
   const xssScript = {
-    src: `${baseUrl}/sdk/v2.3.1/obsx.min.js`,
+    src: `${baseUrl}/sdk/v2.3.0/obsx.min.js`,
     getAttribute(name) {
       if (name === 'data-obsx-site') return testProject.publicKey;
       if (name === 'data-obsx-endpoint') return 'https://obsx.example/" onload="alert(1)/api/v1';
@@ -706,7 +735,7 @@ test('dx: browser SDK DOM XSS safety, concurrent init/getAttestation queuing, an
 
   // 2. Concurrent init() deduplicates and concurrent getAttestation() calls receive distinct tokens
   const scriptOk = {
-    src: `${baseUrl}/sdk/v2.3.1/obsx.min.js`,
+    src: `${baseUrl}/sdk/v2.3.0/obsx.min.js`,
     getAttribute(name) {
       if (name === 'data-obsx-site') return testProject.publicKey;
       if (name === 'data-obsx-auto') return 'false';
@@ -865,7 +894,7 @@ test('dx: install.md SRI hashes match built obsx.min.js and LICENSE covers lib/i
   const sha256 = 'sha256-' + nodeCrypto.createHash('sha256').update(bundle).digest('base64');
 
   const installMd = fs.readFileSync(path.join(ROOT, 'public/install.md'), 'utf8');
-  assert.ok(installMd.includes('v2.3.1'), 'public/install.md must reference v2.3.1 SDK URL');
+  assert.ok(installMd.includes('v2.3.0'), 'public/install.md must reference v2.3.0 SDK URL');
   assert.ok(installMd.includes(sha384), `public/install.md must stay synced with ${sha384}`);
   assert.ok(installMd.includes(sha256), `public/install.md must stay synced with ${sha256}`);
   assert.ok(!installMd.includes('@obsx/core'), 'public/install.md must reference obsx-security, not phantom @obsx/core');
@@ -875,4 +904,155 @@ test('dx: install.md SRI hashes match built obsx.min.js and LICENSE covers lib/i
 
   const leftoverSnapshots = fs.readdirSync(ROOT).filter((f) => f.startsWith('.test-snapshot-'));
   assert.deepEqual(leftoverSnapshots, [], 'Repo root must stay free of temporary test snapshot files');
+});
+
+test('dx: verifyToken(Web Request) preserves req tracking when User-Agent is omitted', async () => {
+  let seenClientUaHeader;
+  const captureSrv = http.createServer((req, res) => {
+    seenClientUaHeader = req.headers['x-obsx-client-ua'];
+    req.resume();
+    req.on('end', () => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, allowed: false, verdict: 'reject', risk: 40, reasons: [{ code: 'automation_headless' }] }));
+    });
+  });
+  await new Promise((resolve) => captureSrv.listen(0, '127.0.0.1', resolve));
+  try {
+    const port = captureSrv.address().port;
+    const reqNoUa = new Request('https://app.example.com/api/checkout', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: 'tok_ua_check', nonce: '7' }),
+    });
+    const res = await obsx.verifyToken(reqNoUa, {
+      secretKey: 'sk_test_capture',
+      endpoint: `http://127.0.0.1:${port}/api/v1`,
+    });
+    assert.equal(res.allowed, false);
+    assert.equal(seenClientUaHeader, '', 'Web Request without User-Agent must still forward empty X-OBSX-Client-UA');
+  } finally {
+    captureSrv.closeAllConnections?.();
+    await new Promise((resolve) => captureSrv.close(resolve));
+  }
+});
+
+test('dx: tracer.min.js exposes Tracer global, honors data-tracer-site, and supports protectForm failOpen', async () => {
+  const tracerBundle = fs.readFileSync(path.join(ROOT, 'public/tracer.min.js'), 'utf8');
+  const scriptEl = {
+    src: `${baseUrl}/tracer.min.js?v=2.3.0`,
+    getAttribute(name) {
+      if (name === 'data-tracer-site') return testProject.publicKey;
+      if (name === 'data-obsx-auto') return 'false';
+      return null;
+    },
+  };
+
+  let failOpenSubmits = 0;
+  const openListeners = {};
+  const openForm = {
+    dataset: { tracerSite: testProject.publicKey },
+    getAttribute(name) { return name === 'data-tracer-site' ? testProject.publicKey : null; },
+    querySelector() { return null; },
+    appendChild() {},
+    addEventListener(ev, fn) { openListeners[ev] = fn; },
+    dispatchEvent() { return true; },
+    submit() { failOpenSubmits++; },
+  };
+
+  let failAttest = false;
+  const sandbox = {
+    window: null,
+    document: {
+      currentScript: scriptEl,
+      readyState: 'complete',
+      referrer: '',
+      body: { appendChild() {} },
+      getElementById() { return null; },
+      querySelector(sel) {
+        if (sel.includes('data-tracer-site') || sel.includes('data-obsx-site') || sel.includes('tracer.min.js')) {
+          return scriptEl;
+        }
+        return null;
+      },
+      querySelectorAll() { return []; },
+      createElement() { return { type: '', name: '', value: '', dataset: {}, style: {} }; },
+      addEventListener() {},
+    },
+    navigator: { userAgent: 'Mozilla/5.0 Chrome/130.0.0.0' },
+    location: { origin: 'https://tracer-compat.example.com', href: 'https://tracer-compat.example.com/', search: '' },
+    screen: { width: 1440, height: 900 },
+    TextEncoder,
+    Uint8Array,
+    URL,
+    atob: (s) => Buffer.from(s, 'base64').toString('binary'),
+    btoa: (s) => Buffer.from(s, 'binary').toString('base64'),
+    CustomEvent: function CustomEvent(name, init) { return { type: name, detail: init && init.detail }; },
+    crypto: nodeCrypto.webcrypto,
+    fetch: async (url, init = {}) => {
+      if (failAttest && String(url).endsWith('/session')) {
+        return { ok: false, status: 500, json: async () => ({ ok: false, error: 'upstream_down' }) };
+      }
+      const body = init.body ? JSON.parse(init.body) : undefined;
+      const res = await httpJson(init.method || 'GET', url, body, {
+        'User-Agent': 'Mozilla/5.0 Chrome/130.0.0.0',
+        ...(init.headers || {}),
+      });
+      return { ok: res.status >= 200 && res.status < 300, status: res.status, json: async () => res.json };
+    },
+    setTimeout,
+    clearTimeout,
+    addEventListener() {},
+  };
+  sandbox.window = sandbox;
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  sandbox.performance = { now: vm.runInContext('Date.now', sandbox) };
+  vm.runInContext(tracerBundle, sandbox);
+
+  assert.ok(sandbox.OBSX, 'tracer.min.js must expose window.OBSX');
+  assert.strictEqual(sandbox.Tracer, sandbox.OBSX, 'tracer.min.js must expose window.Tracer alias');
+
+  try {
+    const active = await sandbox.Tracer.init();
+    assert.equal(active.siteKey, testProject.publicKey);
+    assert.equal(active.endpoint, `${baseUrl}/api/v1`);
+
+    sandbox.Tracer.reset();
+    failAttest = true;
+    sandbox.Tracer.protectForm(openForm, { failOpen: true });
+    let prevented = false;
+    await openListeners.submit({
+      defaultPrevented: false,
+      preventDefault() { prevented = true; },
+    });
+    assert.equal(prevented, true);
+    assert.equal(failOpenSubmits, 1, 'protectForm with failOpen: true must submit when attestation fails');
+
+    // Verify OBSX.render honors data-tracer-site attribute on widget containers
+    failAttest = false;
+    sandbox.OBSX.reset();
+    let hiddenTokenInput = null;
+    const widgetContainer = {
+      innerHTML: '',
+      getAttribute(name) { return name === 'data-tracer-site' ? testProject.publicKey : null; },
+      querySelector(sel) {
+        if (sel === 'input[name="obsx-token"]') {
+          if (!hiddenTokenInput) hiddenTokenInput = { value: '', dataset: {} };
+          return hiddenTokenInput;
+        }
+        return null;
+      },
+    };
+    let renderedToken = '';
+    sandbox.OBSX.render(widgetContainer, {
+      callback(tok) { renderedToken = tok; },
+    });
+    for (let i = 0; i < 40 && !renderedToken; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.ok(hiddenTokenInput && hiddenTokenInput.value.length > 0, 'OBSX.render must populate token from data-tracer-site');
+    assert.equal(renderedToken, hiddenTokenInput.value);
+  } finally {
+    sandbox.OBSX.reset();
+  }
 });
