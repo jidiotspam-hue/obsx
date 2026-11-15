@@ -453,6 +453,286 @@ function staticEntry(targetPath) {
   pageCache.set(targetPath, entry);
   return entry;
 }
+
+const NON_HTML_404_EXTS = new Set([
+  '.js', '.mjs', '.cjs', '.css', '.map', '.png', '.jpg', '.jpeg', '.gif',
+  '.webp', '.svg', '.ico', '.json', '.xml', '.txt', '.woff', '.woff2',
+  '.ttf', '.otf', '.wasm', '.webmanifest', '.php', '.asp', '.aspx', '.cgi',
+  '.env', '.ini', '.bak', '.sql', '.log',
+]);
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function renderOpiNotFoundHtml(requestedPath) {
+  const normalizedPath = String(requestedPath || '/').slice(0, 120);
+  const safePath = escapeHtml(normalizedPath);
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="light dark" />
+  <title>404 — Opi (Sec) Caught Your Traffic · OBSX</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+  <style>
+    :root {
+      color-scheme: light dark;
+      --nf-bg: #FAF8F5;
+      --nf-card: #FFFFFF;
+      --nf-topbar: rgba(250, 248, 245, 0.92);
+      --nf-ink: #181715;
+      --nf-muted: #524F4A;
+      --nf-border: #E2DDD5;
+      --nf-accent: #B84F2D;
+      --nf-accent-hover: #9E4022;
+      --nf-focus: #D97757;
+      --nf-pill-bg: #F6EBE6;
+      --nf-pill-ink: #8C371D;
+      --nf-code-bg: #F2EEE7;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --nf-bg: #11100F;
+        --nf-card: #1A1917;
+        --nf-topbar: rgba(17, 16, 15, 0.92);
+        --nf-ink: #F5F2EC;
+        --nf-muted: #C2BCB2;
+        --nf-border: #33302B;
+        --nf-accent: #B84F2D;
+        --nf-accent-hover: #CF5B36;
+        --nf-focus: #F29C7D;
+        --nf-pill-bg: #321E17;
+        --nf-pill-ink: #F8B49B;
+        --nf-code-bg: #252320;
+      }
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    body.notfound-body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      background: var(--nf-bg);
+      color: var(--nf-ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      line-height: 1.55;
+    }
+    .notfound-topbar {
+      width: 100%;
+      border-bottom: 1px solid var(--nf-border);
+      background: var(--nf-topbar);
+    }
+    .notfound-topbar-inner {
+      max-width: 1040px;
+      margin: 0 auto;
+      padding: 0.7rem 1.25rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+    .notfound-brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.55rem;
+      min-height: 44px;
+      min-width: 44px;
+      font-weight: 800;
+      font-size: 1.05rem;
+      letter-spacing: 0.02em;
+      color: var(--nf-ink);
+      text-decoration: none;
+    }
+    .notfound-nav {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      flex-wrap: wrap;
+    }
+    .notfound-nav a {
+      display: inline-flex;
+      align-items: center;
+      min-height: 44px;
+      min-width: 44px;
+      padding: 0.35rem 0.75rem;
+      border-radius: 8px;
+      color: var(--nf-muted);
+      text-decoration: none;
+      font-size: 0.92rem;
+      font-weight: 500;
+    }
+    .notfound-nav a:hover {
+      color: var(--nf-ink);
+      background: var(--nf-code-bg);
+    }
+    .notfound-main {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2.5rem 1.25rem;
+    }
+    .notfound-card {
+      width: 100%;
+      max-width: 640px;
+      background: var(--nf-card);
+      border: 1px solid var(--nf-border);
+      border-radius: 16px;
+      padding: 2rem;
+      box-shadow: 0 12px 32px rgba(24, 23, 21, 0.08);
+    }
+    .notfound-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.25rem 0.7rem;
+      border-radius: 999px;
+      background: var(--nf-pill-bg);
+      color: var(--nf-pill-ink);
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      margin-bottom: 1rem;
+    }
+    .notfound-hero {
+      display: flex;
+      align-items: flex-start;
+      gap: 1.25rem;
+      flex-wrap: wrap;
+    }
+    .notfound-mascot {
+      width: 80px;
+      height: 80px;
+      flex: 0 0 auto;
+      border-radius: 14px;
+      border: 1px solid var(--nf-border);
+      background: var(--nf-pill-bg);
+      object-fit: contain;
+      image-rendering: pixelated;
+    }
+    .notfound-copy {
+      flex: 1 1 280px;
+    }
+    .notfound-copy h1 {
+      margin: 0 0 0.55rem;
+      font-size: clamp(1.45rem, 3vw, 1.95rem);
+      line-height: 1.2;
+      color: var(--nf-ink);
+    }
+    .notfound-copy p {
+      margin: 0 0 0.85rem;
+      font-size: 1rem;
+      color: var(--nf-ink);
+    }
+    .notfound-meta {
+      margin: 1rem 0 1.4rem;
+      padding: 0.75rem 0.9rem;
+      border-radius: 10px;
+      background: var(--nf-code-bg);
+      border: 1px solid var(--nf-border);
+      font-size: 0.88rem;
+      color: var(--nf-muted);
+      word-break: break-word;
+    }
+    .notfound-meta code {
+      color: var(--nf-ink);
+      font-weight: 600;
+    }
+    .notfound-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      align-items: center;
+    }
+    .notfound-cta,
+    .notfound-sec-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 44px;
+      min-width: 44px;
+      padding: 0.65rem 1.2rem;
+      border-radius: 10px;
+      font-weight: 600;
+      font-size: 0.95rem;
+      text-decoration: none;
+      transition: background-color 0.15s ease, border-color 0.15s ease;
+    }
+    .notfound-cta {
+      background: var(--nf-accent);
+      color: #FFFFFF;
+      border: 1px solid var(--nf-accent);
+    }
+    .notfound-cta:hover {
+      background: var(--nf-accent-hover);
+      border-color: var(--nf-accent-hover);
+    }
+    .notfound-sec-btn {
+      background: transparent;
+      color: var(--nf-ink);
+      border: 1px solid var(--nf-border);
+    }
+    .notfound-sec-btn:hover {
+      border-color: var(--nf-accent);
+    }
+    .notfound-cta:focus-visible,
+    .notfound-sec-btn:focus-visible,
+    .notfound-topbar a:focus-visible {
+      outline: 3px solid var(--nf-focus);
+      outline-offset: 3px;
+    }
+  </style>
+</head>
+<body class="notfound-body">
+  <header class="notfound-topbar">
+    <div class="notfound-topbar-inner">
+      <a href="/" class="notfound-brand">OBSX</a>
+      <nav class="notfound-nav" aria-label="Primary navigation">
+        <a href="/">Home</a>
+        <a href="/notes.html">Release Notes</a>
+        <a href="/dashboard.html">Dashboard</a>
+        <a href="/docs.html">Docs</a>
+      </nav>
+    </div>
+  </header>
+  <main class="notfound-main">
+    <section class="notfound-card" aria-labelledby="notfound-title">
+      <div class="notfound-badge">HTTP 404 &middot; Route Not Found</div>
+      <div class="notfound-hero">
+        <img src="/opi-sec.png" alt="Opi (Sec) the Chicken, OBSX Security mascot" width="80" height="80" class="notfound-mascot" />
+        <div class="notfound-copy">
+          <h1 id="notfound-title">Oops! Wrong turn.</h1>
+          <p>
+            Hello, <strong>Opi (Sec)</strong> our helpful mascot here caught your traffic and noticed you did not click the correct button.
+          </p>
+          <p>
+            Please click this button below to head back to obsx.tech (main page). Thanks and have a good day!
+          </p>
+        </div>
+      </div>
+      <div class="notfound-meta">
+        Requested path: <code>${safePath}</code>
+      </div>
+      <div class="notfound-actions">
+        <a href="/" class="notfound-cta">Take Me to obsx.tech (Main Page) &rarr;</a>
+        <a href="/dashboard.html" class="notfound-sec-btn">Open Dashboard</a>
+        <a href="/docs.html" class="notfound-sec-btn">Read Docs</a>
+      </div>
+    </section>
+  </main>
+</body>
+</html>`;
+}
 let activeConnections = 0;
 let inFlight = 0;
 let shedCount = 0;
@@ -1716,8 +1996,29 @@ const server = http.createServer(async (req, res) => {
     }
 
     // 404 Fallback
+    const reqExt = path.extname(decodedPath).toLowerCase();
+    const isDotProbe = path.posix.basename(decodedPath).startsWith('.');
+    const acceptHeader = String(req.headers.accept || '').toLowerCase();
+    const wantsJson = acceptHeader.includes('application/json') && !acceptHeader.includes('text/html') && !acceptHeader.includes('*/*');
+    const isNonHtmlAsset = NON_HTML_404_EXTS.has(reqExt) || isDotProbe;
+    if ((method === 'GET' || method === 'HEAD') && !isNonHtmlAsset && !wantsJson) {
+      const html404 = renderOpiNotFoundHtml(decodedPath);
+      res.writeHead(404, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store',
+        'Content-Length': Buffer.byteLength(html404),
+      });
+      return res.end(method === 'HEAD' ? undefined : html404);
+    }
+    if (wantsJson) {
+      res.writeHead(404, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'no-store',
+      });
+      return res.end(method === 'HEAD' ? undefined : JSON.stringify({ ok: false, error: 'not_found' }));
+    }
     res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
-    res.end('404 Not Found');
+    return res.end(method === 'HEAD' ? undefined : '404 Not Found');
   } catch (err) {
     if (err.message === 'Unsupported Content-Type') {
       return sendJson(res, 415, { ok: false, error: 'unsupported_media_type' });

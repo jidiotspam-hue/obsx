@@ -2841,4 +2841,68 @@ test('hardening: dashboard Integrity Guardian renders State C ("Hello, user.") o
   assert.equal(bannerEl.innerHTML.includes('btn-accept-license'), false);
 });
 
+test('404 fallback serves Opi (Sec) mascot page for browser routes, escapes XSS, and preserves asset/JSON 404s', async () => {
+  restoreBotShield();
+
+  const htmlRes = await request('GET', '/dshboard', {
+    headers: {
+      Accept: 'text/html,application/xhtml+xml',
+      'User-Agent': 'Mozilla/5.0',
+    },
+  });
+  assert.equal(htmlRes.status, 404);
+  assert.equal(htmlRes.headers['content-type'], 'text/html; charset=utf-8');
+  assert.equal(htmlRes.headers['cache-control'], 'no-store');
+  assert.ok(htmlRes.body.includes('/opi-sec.png'));
+  assert.ok(htmlRes.body.includes('Opi (Sec)'));
+  assert.ok(htmlRes.body.includes('caught your traffic and noticed you did not click the correct button'));
+  assert.ok(htmlRes.body.includes('href="/"'));
+  assert.ok(htmlRes.body.includes('Take Me to obsx.tech (Main Page)'));
+  assert.ok(htmlRes.body.includes('/dshboard'));
+  assert.ok(htmlRes.body.includes('<header') && htmlRes.body.includes('<main') && htmlRes.body.includes('<h1'));
+  assert.equal(/<script/i.test(htmlRes.body), false, '404 HTML must not contain inline scripts under CSP script-src self');
+
+  const xssRes = await request('GET', '/dshboard%3Cscript%3Ealert(1)%3C%2Fscript%3E', {
+    headers: {
+      Accept: 'text/html',
+      'User-Agent': 'Mozilla/5.0',
+    },
+  });
+  assert.equal(xssRes.status, 404);
+  assert.equal(xssRes.body.includes('<script>alert(1)</script>'), false);
+  assert.ok(xssRes.body.includes('&lt;script&gt;alert(1)&lt;/script&gt;'));
+
+  const headRes = await request('HEAD', '/dshboard', {
+    headers: {
+      Accept: 'text/html',
+      'User-Agent': 'Mozilla/5.0',
+    },
+  });
+  assert.equal(headRes.status, 404);
+  assert.equal(headRes.headers['content-type'], 'text/html; charset=utf-8');
+  assert.equal(headRes.body, '');
+
+  for (const plainPath of ['/missing-bundle.js', '/missing-style.css', '/.env']) {
+    const assetRes = await request('GET', plainPath, {
+      headers: {
+        Accept: '*/*',
+        'User-Agent': 'Mozilla/5.0',
+      },
+    });
+    assert.equal(assetRes.status, 404);
+    assert.equal(assetRes.headers['content-type'], 'text/plain; charset=utf-8');
+    assert.equal(assetRes.body, '404 Not Found');
+  }
+
+  const jsonRes = await request('GET', '/dshboard', {
+    headers: {
+      Accept: 'application/json',
+      'User-Agent': 'Mozilla/5.0',
+    },
+  });
+  assert.equal(jsonRes.status, 404);
+  assert.equal(jsonRes.headers['content-type'], 'application/json; charset=utf-8');
+  assert.deepEqual(jsonRes.json, { ok: false, error: 'not_found' });
+});
+
 
