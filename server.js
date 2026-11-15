@@ -381,7 +381,7 @@ async function gateSelfRequest(req, body, actionName, opts = {}) {
   const allowReview = opts.allowReview === true;
 
   if (!token) {
-    if (isStrict) {
+    if (isStrict && !opts.allowMissingToken) {
       return {
         allowed: false,
         statusCode: 403,
@@ -736,20 +736,30 @@ const server = http.createServer(async (req, res) => {
 
     // --- 2. API Routes ---
     if (pathname.startsWith('/api/v1/')) {
+      const isSafeModeBlocking = (lic = updater.getLicenseStatus()) => Boolean(
+        lic &&
+        lic.safeMode &&
+        (lic.enforceAcceptance || lic.enforceIntegrity || (lic.missingCriticalFiles && lic.missingCriticalFiles.length > 0))
+      );
+
+      const sendSafeModeBlocked = (lic) => {
+        sendJson(
+          res,
+          503,
+          {
+            ok: false,
+            error: 'license_safe_mode',
+            reason: lic && lic.safeModeReason ? lic.safeModeReason : 'integrity_check',
+            message: 'Node is in Safe Mode pending LICENSE acceptance or integrity restoration.',
+          },
+          CORS_HEADERS
+        );
+      };
+
       const checkSafeModeBlock = () => {
         const lic = updater.getLicenseStatus();
-        if (lic.safeMode && (lic.enforceAcceptance || (lic.missingCriticalFiles && lic.missingCriticalFiles.length > 0))) {
-          sendJson(
-            res,
-            503,
-            {
-              ok: false,
-              error: 'license_safe_mode',
-              reason: lic.safeModeReason,
-              message: 'Node is in Safe Mode pending LICENSE acceptance or integrity restoration.',
-            },
-            CORS_HEADERS
-          );
+        if (isSafeModeBlocking(lic)) {
+          sendSafeModeBlocked(lic);
           return true;
         }
         return false;
@@ -780,6 +790,7 @@ const server = http.createServer(async (req, res) => {
       // 2. Signal Recording (Public SDK Entry)
       if (pathname === '/api/v1/signal') {
         if (method !== 'POST') return sendMethodNotAllowed(res, ['POST', 'OPTIONS']);
+        if (checkSafeModeBlock()) return;
         const body = await readBody(req);
         const result = await core.recordSignals(body, {
           ip: clientIp,
@@ -863,15 +874,26 @@ const server = http.createServer(async (req, res) => {
         if (!isTrustedSameOriginMutation(req, isHttps)) {
           return sendJson(res, 403, { ok: false, error: 'cross_origin_forbidden' });
         }
-        if (checkSafeModeBlock()) return;
+        const lic = updater.getLicenseStatus();
+        const inSafeMode = isSafeModeBlocking(lic);
         const body = await readBody(req);
+        const normalizedEmail = accounts.cleanEmail(body && body.email);
+        const isAllowlistedOperator = Boolean(normalizedEmail && getOperatorAllowlist().has(normalizedEmail));
+        if (inSafeMode) {
+          if (!withinSessionBudget(clientIp)) {
+            return sendJson(res, 429, { ok: false, error: 'session_rate_limited', retry_after: 10 });
+          }
+          if (!isAllowlistedOperator) {
+            sendSafeModeBlocked(lic);
+            return;
+          }
+        }
 
         // Guard authentication with OBSX Attestation Gate
         const action = body.action === 'verify' ? 'Operator Sign-In Verification' : 'Operator OTP Request';
         const gate = await gateSelfRequest(req, body, action, {
-          selfAuth: true,
-          allowReview: true,
-          settingsOverride: { reviewAt: 50, rejectAt: 90 },
+          ...OPERATOR_GATE,
+          allowMissingToken: inSafeMode && isAllowlistedOperator,
         });
         if (!gate.allowed) {
           return sendJson(res, gate.statusCode || 403, {
@@ -928,7 +950,12 @@ const server = http.createServer(async (req, res) => {
       if (pathname === '/api/v1/me') {
         if (method === 'GET') {
           const user = await accounts.getSessionUser(req);
-          return sendJson(res, 200, { ok: true, user });
+          const isOperator = Boolean(user && isOperatorAuthorized(req, user));
+          return sendJson(res, 200, {
+            ok: true,
+            user,
+            ...(isOperator ? { isOperator: true, upstreamAdvisory: updater.getOperatorDriftAdvisory() } : {}),
+          });
         }
         if (method === 'DELETE') {
           if (!isTrustedSameOriginMutation(req, isHttps)) {
@@ -1238,6 +1265,7 @@ const server = http.createServer(async (req, res) => {
         // Rotate key: POST /api/v1/project/:pid/rotate-key
         if (actionSuffix === '/rotate-key') {
           if (method !== 'POST') return sendMethodNotAllowed(res, ['POST']);
+          if (checkSafeModeBlock()) return;
           const user = await accounts.getSessionUser(req);
           if (!user) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
           if (!isTrustedSameOriginMutation(req, isHttps)) return sendJson(res, 403, { ok: false, error: 'cross_origin_forbidden' });
@@ -1262,6 +1290,7 @@ const server = http.createServer(async (req, res) => {
         // Update settings: PATCH /api/v1/project/:pid/settings
         if (actionSuffix === '/settings') {
           if (method !== 'PATCH' && method !== 'POST') return sendMethodNotAllowed(res, ['PATCH', 'POST']);
+          if (checkSafeModeBlock()) return;
           const user = await accounts.getSessionUser(req);
           if (!user) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
           if (!isTrustedSameOriginMutation(req, isHttps)) return sendJson(res, 403, { ok: false, error: 'cross_origin_forbidden' });
@@ -1300,6 +1329,7 @@ const server = http.createServer(async (req, res) => {
         // Circuit Breaker Reset: POST /api/v1/project/:pid/circuit-breaker/reset
         if (actionSuffix === '/circuit-breaker/reset') {
           if (method !== 'POST') return sendMethodNotAllowed(res, ['POST']);
+          if (checkSafeModeBlock()) return;
           const user = await accounts.getSessionUser(req);
           if (!user) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
           if (!isTrustedSameOriginMutation(req, isHttps)) return sendJson(res, 403, { ok: false, error: 'cross_origin_forbidden' });
@@ -1366,6 +1396,7 @@ const server = http.createServer(async (req, res) => {
 
         // Delete project: DELETE /api/v1/project/:pid
         if (method === 'DELETE') {
+          if (checkSafeModeBlock()) return;
           const user = await accounts.getSessionUser(req);
           if (!user) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
           if (!isTrustedSameOriginMutation(req, isHttps)) {
