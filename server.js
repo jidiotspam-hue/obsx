@@ -210,7 +210,13 @@ function isRequestHttps(req) {
   if (req.socket && req.socket.encrypted) return true;
   const rawSocketIp = req.socket && req.socket.remoteAddress ? req.socket.remoteAddress : '127.0.0.1';
   if (process.env.TRUST_PROXY === 'true' && isTrustedProxyPeer(rawSocketIp)) {
-    const xfp = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
+    // Use the rightmost X-Forwarded-Proto hop appended by the trusted edge proxy
+    // rather than the leftmost client-controllable value.
+    const xfpList = String(req.headers['x-forwarded-proto'] || '')
+      .split(',')
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
+    const xfp = xfpList.length ? xfpList[xfpList.length - 1] : '';
     if (xfp === 'https') return true;
     if (xfp === 'http') return false;
     if (req.headers['cf-visitor']) {
@@ -222,6 +228,35 @@ function isRequestHttps(req) {
     }
   }
   return false;
+}
+
+function isProxiedPlaintextHttp(req, proxyTrustEnabled, isHttps) {
+  if (!proxyTrustEnabled || isHttps) return false;
+  const xfpList = String(req.headers['x-forwarded-proto'] || '')
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  if (xfpList.length > 0 && xfpList[xfpList.length - 1] === 'http') return true;
+  if (req.headers['cf-visitor']) {
+    try {
+      return JSON.parse(req.headers['cf-visitor']).scheme === 'http';
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+function resolveHttpsRedirectHost(req) {
+  const configured = String(process.env.OBSX_PUBLIC_HOST || '').trim().toLowerCase();
+  if (configured && /^[a-z0-9.-]+(?::\d{1,5})?$/.test(configured) && !configured.includes('..')) {
+    return configured;
+  }
+  const rawHost = String((req && req.headers && req.headers.host) || '').trim().toLowerCase();
+  if (rawHost && /^[a-z0-9.-]+(?::\d{1,5})?$/.test(rawHost) && !rawHost.includes('..')) {
+    return rawHost;
+  }
+  return null;
 }
 
 function detectProxyHeaders(req) {
@@ -434,29 +469,46 @@ const startedAt = Date.now();
 // testable without a running server. The server's job is measurement only —
 // open sockets, in-flight requests, request rate.
 const pageCache = new Map();
+const pageCacheInflight = new Map();
+const MAX_PAGE_CACHE_ENTRIES = 200;
 
-function staticEntry(targetPath) {
+async function staticEntry(targetPath) {
   const now = Date.now();
   const hit = pageCache.get(targetPath);
   if (hit && now - hit.at < 30000) return hit;
-  const body = fs.readFileSync(targetPath);
-  const ext = path.extname(targetPath).toLowerCase();
-  const entry = {
-    at: now,
-    body,
-    size: body.length,
-    etag: 'W/"' + body.length.toString(16) + '-' + crypto.sha256(body).slice(0, 10) + '"',
-    contentType: MIME_TYPES[ext] || 'application/octet-stream',
-    // Cacheable on purpose: an edge cache absorbs repeat hits so the origin
-    // only sees one fetch per TTL instead of one per request.
-    cacheControl: ext === '.html'
-      ? 'public, max-age=60, stale-while-revalidate=300'
-      : ext === '.js'
-        ? 'public, max-age=3600, stale-while-revalidate=86400'
-        : 'public, max-age=86400',
-  };
-  pageCache.set(targetPath, entry);
-  return entry;
+  if (pageCacheInflight.has(targetPath)) return pageCacheInflight.get(targetPath);
+
+  const loader = (async () => {
+    const body = await fsp.readFile(targetPath);
+    const ext = path.extname(targetPath).toLowerCase();
+    const entry = {
+      at: Date.now(),
+      body,
+      size: body.length,
+      etag: 'W/"' + body.length.toString(16) + '-' + crypto.sha256(body).slice(0, 10) + '"',
+      contentType: MIME_TYPES[ext] || 'application/octet-stream',
+      // Cacheable on purpose: an edge cache absorbs repeat hits so the origin
+      // only sees one fetch per TTL instead of one per request.
+      cacheControl: ext === '.html'
+        ? 'public, max-age=60, stale-while-revalidate=300'
+        : ext === '.js'
+          ? 'public, max-age=3600, stale-while-revalidate=86400'
+          : 'public, max-age=86400',
+    };
+    if (!pageCache.has(targetPath) && pageCache.size >= MAX_PAGE_CACHE_ENTRIES) {
+      const oldest = pageCache.keys().next().value;
+      if (oldest !== undefined) pageCache.delete(oldest);
+    }
+    pageCache.set(targetPath, entry);
+    return entry;
+  })();
+
+  pageCacheInflight.set(targetPath, loader);
+  try {
+    return await loader;
+  } finally {
+    pageCacheInflight.delete(targetPath);
+  }
 }
 
 const NON_HTML_404_EXTS = new Set([
@@ -796,15 +848,21 @@ function trimVerdict(v) {
   };
 }
 
-// Session issuance and note posting budgets cap per-IP burst abuse.
+// Session issuance, note posting, and demo budgets cap per-IP burst abuse.
 const sessionIssueBudget = new Map();
 const notePostBudget = new Map();
+const demoBudget = new Map();
 function withinRateBudget(budgetMap, ip, limit, windowMs = 60000, maxEntries = 20000) {
   const now = Date.now();
   const entry = budgetMap.get(ip);
   if (!entry || now >= entry.reset) {
-    if (budgetMap.size > maxEntries) {
+    if (budgetMap.size >= maxEntries) {
       for (const [k, v] of budgetMap) if (now >= v.reset) budgetMap.delete(k);
+      while (budgetMap.size >= maxEntries) {
+        const oldest = budgetMap.keys().next().value;
+        if (oldest === undefined) break;
+        budgetMap.delete(oldest);
+      }
     }
     budgetMap.set(ip, { count: 1, reset: now + windowMs });
     return true;
@@ -819,6 +877,10 @@ function withinSessionBudget(ip) {
 
 function withinNotePostBudget(ip) {
   return withinRateBudget(notePostBudget, ip, Number(process.env.OBSX_NOTE_POST_BUDGET || 20));
+}
+
+function withinDemoBudget(ip) {
+  return withinRateBudget(demoBudget, ip, Number(process.env.OBSX_DEMO_BUDGET || 120));
 }
 
 const shedOffenders = new Map();   // ip -> {count, reason, first}
@@ -861,6 +923,36 @@ const server = http.createServer(async (req, res) => {
   const pathname = url.pathname;
   const method = req.method;
 
+  const rawSocketIp = req.socket && req.socket.remoteAddress ? req.socket.remoteAddress : '127.0.0.1';
+  const proxyTrustEnabled = process.env.TRUST_PROXY === 'true' && isTrustedProxyPeer(rawSocketIp);
+
+  // Opt-in origin HTTPS enforcement for plaintext requests forwarded by a trusted
+  // reverse proxy. Loopback health/verification probes without proxy plaintext
+  // headers are never redirected.
+  if (
+    process.env.OBSX_ENFORCE_HTTPS === 'true' &&
+    pathname !== '/api/v1/health' &&
+    isProxiedPlaintextHttp(req, proxyTrustEnabled, isHttps)
+  ) {
+    if (pathname.length > botshield.config.maxPathLen) {
+      return sendJson(res, 400, { ok: false, error: 'path_too_long' });
+    }
+    if (method === 'GET' || method === 'HEAD') {
+      const safeHost = resolveHttpsRedirectHost(req);
+      if (!safeHost) {
+        return sendJson(res, 400, { ok: false, error: 'invalid_host' });
+      }
+      const safePath = '/' + pathname.replace(/^\/+/, '') + (url.search || '').replace(/[\r\n]/g, '');
+      res.writeHead(308, {
+        Location: `https://${safeHost}${safePath}`,
+        'Cache-Control': 'no-store',
+        'X-Content-Type-Options': 'nosniff',
+      });
+      return res.end();
+    }
+    return sendJson(res, 426, { ok: false, error: 'https_required' }, { Upgrade: 'TLS/1.2' });
+  }
+
   const reqRateNow = tickRate();
   inFlight++;
   const arrivedAt = Date.now();
@@ -869,8 +961,6 @@ const server = http.createServer(async (req, res) => {
   // budgets, challenges and quarantine, and it measures its own health (RSS,
   // event-loop lag, served rate) so the decision to refuse happens before any
   // application work starts.
-  const rawSocketIp = req.socket && req.socket.remoteAddress ? req.socket.remoteAddress : '127.0.0.1';
-  const proxyTrustEnabled = process.env.TRUST_PROXY === 'true' && isTrustedProxyPeer(rawSocketIp);
   const shield = botshield.evaluate(req, res, clientIp, pathname, reqRateNow, url, {
     activeConnections,
     inFlight,
@@ -1125,6 +1215,9 @@ const server = http.createServer(async (req, res) => {
       // 4. Sandbox / Interactive Demo Verification
       if (pathname === '/api/v1/demo') {
         if (method !== 'POST') return sendMethodNotAllowed(res, ['POST', 'OPTIONS']);
+        if (!withinDemoBudget(clientIp)) {
+          return sendJson(res, 429, { ok: false, error: 'demo_rate_limited', retry_after: 60 }, CORS_HEADERS);
+        }
         const body = await readBody(req);
         const project = await core.loadProject(core.DEMO.pid);
         const verdict = await core.verify(project, body, {
@@ -1192,6 +1285,7 @@ const server = http.createServer(async (req, res) => {
         if (body.action === 'verify') {
           try {
             const authResult = await accounts.verifyEmailAuth(body.email, body.code, isHttps, {
+              clientIp,
               termsAccepted: body.termsAccepted === true,
               ...(typeof body.termsVersion === 'string' && body.termsVersion.trim()
                 ? { termsVersion: body.termsVersion.trim().slice(0, 64) }
@@ -1204,7 +1298,7 @@ const server = http.createServer(async (req, res) => {
               { 'Set-Cookie': authResult.sessionCookie }
             );
           } catch (err) {
-            return sendJson(res, 400, { ok: false, error: err.message });
+            return sendJson(res, err.status || 400, { ok: false, error: err.message });
           }
         } else {
           try {
@@ -1498,6 +1592,9 @@ const server = http.createServer(async (req, res) => {
       // 11c. High-Stakes Vault Payment & Scratch Exploit Arena
       if (pathname === '/api/v1/vault/drain') {
         if (method !== 'POST') return sendMethodNotAllowed(res, ['POST', 'OPTIONS']);
+        if (!withinDemoBudget(clientIp)) {
+          return sendJson(res, 429, { ok: false, error: 'demo_rate_limited', retry_after: 60 }, CORS_HEADERS);
+        }
         const body = await readBody(req);
         // Vault evaluation enforces full OBSX cryptographic verification regardless of caller hints.
         const result = await core.processVaultDrain({
@@ -1933,23 +2030,6 @@ const server = http.createServer(async (req, res) => {
     }
 
     try {
-      if (fs.existsSync(targetPath) && fs.statSync(targetPath).isFile()) {
-        const entry = staticEntry(targetPath);
-        const headers = {
-          'Content-Type': entry.contentType,
-          'Content-Length': entry.size,
-          'ETag': entry.etag,
-          'Cache-Control': entry.cacheControl,
-          'Access-Control-Allow-Origin': '*',
-        };
-        if (req.headers['if-none-match'] === entry.etag) {
-          res.writeHead(304, headers);
-          return res.end();
-        }
-        res.writeHead(200, headers);
-        if (method === 'HEAD') return res.end();
-        return res.end(entry.body);
-      }
       let stat = await fsp.stat(targetPath);
       if (stat.isDirectory()) {
         targetPath = path.join(targetPath, 'index.html');
@@ -1957,6 +2037,24 @@ const server = http.createServer(async (req, res) => {
       }
 
       if (stat.isFile()) {
+        if (stat.size <= 512 * 1024) {
+          const entry = await staticEntry(targetPath);
+          const headers = {
+            'Content-Type': entry.contentType,
+            'Content-Length': entry.size,
+            'ETag': entry.etag,
+            'Cache-Control': entry.cacheControl,
+            'Access-Control-Allow-Origin': '*',
+          };
+          if (req.headers['if-none-match'] === entry.etag) {
+            res.writeHead(304, headers);
+            return res.end();
+          }
+          res.writeHead(200, headers);
+          if (method === 'HEAD') return res.end();
+          return res.end(entry.body);
+        }
+
         const ext = path.extname(targetPath).toLowerCase();
         const contentType = MIME_TYPES[ext] || 'application/octet-stream';
         const etag = `W/"${stat.size.toString(16)}-${stat.mtimeMs.toString(16)}"`;
@@ -2180,16 +2278,43 @@ function handleShutdown(signal) {
 process.on('SIGTERM', () => handleShutdown('SIGTERM'));
 process.on('SIGINT', () => handleShutdown('SIGINT'));
 
+let serverListening = false;
+
+server.on('error', (err) => {
+  console.error('[OBSX Server Error]', err);
+  if (require.main === module) {
+    try {
+      const kv = getKv();
+      if (!serverListening && kv) kv._dirty = false;
+    } catch (_) {}
+    process.exit(1);
+  }
+});
+
 process.on('unhandledRejection', (reason) => {
   console.error('[OBSX UnhandledRejection]', reason);
 });
 
 process.on('uncaughtException', (err) => {
   console.error('[OBSX UncaughtException]', err);
+  if (require.main === module) {
+    // Exit non-zero so a process manager restarts cleanly instead of leaving
+    // a zombie process behind (e.g. after EADDRINUSE).
+    try {
+      const kv = getKv();
+      if (!serverListening && kv) {
+        kv._dirty = false;
+      } else if (kv && kv.close) {
+        kv.close();
+      }
+    } catch (_) {}
+    process.exit(1);
+  }
 });
 
 if (require.main === module) {
   server.listen(PORT, BIND, 4096, () => {
+    serverListening = true;
     console.log(`[OBSX Security] Server listening on http://localhost:${PORT}`);
     updater.startAutoUpdater();
   });
