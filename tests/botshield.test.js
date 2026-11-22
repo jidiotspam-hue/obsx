@@ -709,16 +709,37 @@ test('a path-fuzz flood closes unseen paths without routing them', () => {
 test('a puzzle that real browsers take too long to solve is eased back to base', () => {
   const slowBrowser = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36';
   const cap = { reqRate: 900, activeConnections: 40, inFlight: 2 };
-  fresh({ engageRps: 120, baseDifficulty: 12, maxDifficulty: 16, maxSolveMs: 3000,
-    ipBudget: 10000, calmBudget: 10000, maxAttempts: 50 });
+  const cfg = { engageRps: 120, baseDifficulty: 12, maxDifficulty: 16, maxSolveMs: 3000,
+    ipBudget: 10000, calmBudget: 10000, maxAttempts: 50 };
+
+  // 1. Instant solve claiming __ms=9000 must be clamped to server-observed elapsed time
+  fresh(cfg);
+  for (let i = 0; i < 3; i++) hit('203.0.113.8', '/', slowBrowser, cap);
+  assert.ok(botshield.stats().difficultyBits > 12, 'difficulty ramps with pressure');
+  const spoofPage = hit('203.0.113.8', '/', slowBrowser, cap);
+  assert.equal(spoofPage.status, 403);
+  const spoofCh = parseChallenge(spoofPage.body);
+  hit('203.0.113.8', `/?__bs=${spoofCh.cid}&__bn=${solve(spoofCh.challenge, spoofCh.bits)}&__ms=9000`, slowBrowser, cap);
+  assert.ok(botshield.stats().difficultyBits > 12, 'instant forged __ms must not downgrade PoW difficulty');
+
+  // 2. Genuine slow browser whose wall-clock elapsed time >= 9000ms DOES ease difficulty
+  fresh(cfg);
   for (let i = 0; i < 3; i++) hit('203.0.113.7', '/', slowBrowser, cap);
   assert.ok(botshield.stats().difficultyBits > 12, 'difficulty ramps with pressure');
-  const page = hit('203.0.113.7', '/', slowBrowser, cap);
-  assert.equal(page.status, 403, 'the client is challenged (got ' + page.status + ')');
-  const ch = parseChallenge(page.body);
-  const answer = hit('203.0.113.7', `/?__bs=${ch.cid}&__bn=${solve(ch.challenge, ch.bits)}&__ms=9000`, slowBrowser, cap);
-  assert.ok(answer.headers['Set-Cookie'], 'the slow browser is still let through');
-  assert.strictEqual(botshield.stats().difficultyBits, 12, 'difficulty drops back to base for real, struggling users');
+  const realNow = Date.now;
+  let fakeNow = realNow();
+  Date.now = () => fakeNow;
+  try {
+    const page = hit('203.0.113.7', '/', slowBrowser, cap);
+    assert.equal(page.status, 403, 'the client is challenged (got ' + page.status + ')');
+    const ch = parseChallenge(page.body);
+    fakeNow += 9000;
+    const answer = hit('203.0.113.7', `/?__bs=${ch.cid}&__bn=${solve(ch.challenge, ch.bits)}&__ms=9000`, slowBrowser, cap);
+    assert.ok(answer.headers['Set-Cookie'], 'the slow browser is still let through');
+    assert.strictEqual(botshield.stats().difficultyBits, 12, 'difficulty drops back to base for real, struggling users');
+  } finally {
+    Date.now = realNow;
+  }
 });
 
 test('a reported solve time out of range is ignored', () => {

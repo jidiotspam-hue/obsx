@@ -67,6 +67,7 @@ function readBody(req, maxBytes = 512 * 1024, timeoutMs = 10000) {
       return reject(new Error('Unsupported Content-Type'));
     }
 
+    const bodyStart = Date.now();
     const chunks = [];
     let received = 0;
     let settled = false;
@@ -74,6 +75,7 @@ function readBody(req, maxBytes = 512 * 1024, timeoutMs = 10000) {
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
+      req._obsxClientAborted = true;
       req.destroy(new Error('Body read timeout'));
       reject(new Error('Body read timeout'));
     }, timeoutMs);
@@ -84,6 +86,7 @@ function readBody(req, maxBytes = 512 * 1024, timeoutMs = 10000) {
       if (received > maxBytes) {
         settled = true;
         clearTimeout(timer);
+        req._obsxClientAborted = true;
         req.pause();
         return reject(new Error('Payload too large'));
       }
@@ -94,6 +97,7 @@ function readBody(req, maxBytes = 512 * 1024, timeoutMs = 10000) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      req._obsxBodyWaitMs = (req._obsxBodyWaitMs || 0) + (Date.now() - bodyStart);
       if (chunks.length === 0) return resolve({});
       try {
         const text = Buffer.concat(chunks).toString('utf8');
@@ -111,10 +115,24 @@ function readBody(req, maxBytes = 512 * 1024, timeoutMs = 10000) {
       }
     });
 
+    const abortRead = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      req._obsxClientAborted = true;
+      reject(new Error('Client aborted request'));
+    };
+
+    req.on('aborted', abortRead);
+    req.on('close', () => {
+      if (!req.complete) abortRead();
+    });
+
     req.on('error', (err) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      req._obsxClientAborted = true;
       reject(err);
     });
   });
@@ -181,14 +199,18 @@ function isTrustedProxyPeer(rawSocketIp) {
 
 // Trusted-hop IP resolution: proxy headers are honored ONLY when TRUST_PROXY=true
 // AND the direct TCP socket peer is loopback or in TRUSTED_PROXY_CIDRS.
+// CF-Connecting-IP is honored ONLY when TRUST_CLOUDFLARE=true (explicit opt-in so
+// non-Cloudflare reverse proxies like nginx/Caddy cannot be spoofed via CF headers).
 // Walks X-Forwarded-For right-to-left skipping trusted proxies to avoid spoofing.
 function getClientIp(req) {
   const rawSocketIp = req.socket && req.socket.remoteAddress ? req.socket.remoteAddress : '127.0.0.1';
   const socketIp = crypto.normalizeIp(rawSocketIp) || '127.0.0.1';
   if (process.env.TRUST_PROXY === 'true' && isTrustedProxyPeer(rawSocketIp)) {
-    const cf = String(req.headers['cf-connecting-ip'] || '').trim();
-    if (cf && cf.length <= 45 && net.isIP(cf) !== 0) {
-      return crypto.normalizeIp(cf) || cf;
+    if (process.env.TRUST_CLOUDFLARE === 'true') {
+      const cf = String(req.headers['cf-connecting-ip'] || '').trim();
+      if (cf && cf.length <= 45 && net.isIP(cf) !== 0) {
+        return crypto.normalizeIp(cf) || cf;
+      }
     }
     const xffRaw = String(req.headers['x-forwarded-for'] || '');
     if (xffRaw) {
@@ -219,7 +241,7 @@ function isRequestHttps(req) {
     const xfp = xfpList.length ? xfpList[xfpList.length - 1] : '';
     if (xfp === 'https') return true;
     if (xfp === 'http') return false;
-    if (req.headers['cf-visitor']) {
+    if (process.env.TRUST_CLOUDFLARE === 'true' && req.headers['cf-visitor']) {
       try {
         return JSON.parse(req.headers['cf-visitor']).scheme === 'https';
       } catch {
@@ -237,7 +259,7 @@ function isProxiedPlaintextHttp(req, proxyTrustEnabled, isHttps) {
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean);
   if (xfpList.length > 0 && xfpList[xfpList.length - 1] === 'http') return true;
-  if (req.headers['cf-visitor']) {
+  if (process.env.TRUST_CLOUDFLARE === 'true' && req.headers['cf-visitor']) {
     try {
       return JSON.parse(req.headers['cf-visitor']).scheme === 'http';
     } catch {
@@ -368,7 +390,7 @@ function isTrustedSameOriginMutation(req, isHttps = false) {
 
 async function requireOperatorAccess(req, res, isHttps = false) {
   if (hasValidOperatorKey(req)) return { via: 'key', email: null };
-  const user = await accounts.getSessionUser(req);
+  const user = await accounts.getSessionUser(req, isHttps);
   if (!user) {
     sendJson(res, 401, { ok: false, error: 'unauthorized' });
     return null;
@@ -856,8 +878,9 @@ function trimVerdict(v) {
   };
 }
 
-// Session issuance, note posting, and demo budgets cap per-IP burst abuse.
+// Session issuance, signal, note posting, and demo budgets cap per-IP burst abuse.
 const sessionIssueBudget = new Map();
+const signalBudget = new Map();
 const notePostBudget = new Map();
 const demoBudget = new Map();
 function withinRateBudget(budgetMap, ip, limit, windowMs = 60000, maxEntries = 20000) {
@@ -883,6 +906,10 @@ function withinSessionBudget(ip) {
   return withinRateBudget(sessionIssueBudget, ip, Number(process.env.OBSX_SESSION_BUDGET || 40));
 }
 
+function withinSignalBudget(ip) {
+  return withinRateBudget(signalBudget, ip, Number(process.env.OBSX_SIGNAL_BUDGET || 120));
+}
+
 function withinNotePostBudget(ip) {
   return withinRateBudget(notePostBudget, ip, Number(process.env.OBSX_NOTE_POST_BUDGET || 20));
 }
@@ -893,12 +920,18 @@ function withinDemoBudget(ip) {
 
 const shedOffenders = new Map();   // ip -> {count, reason, first}
 function noteShed(ip, reason) {
+  if (!shedOffenders.has(ip) && shedOffenders.size >= 5000) {
+    const now = Date.now();
+    for (const [k, v] of shedOffenders) if (now - v.first > 120000) shedOffenders.delete(k);
+    while (shedOffenders.size >= 5000) {
+      const oldest = shedOffenders.keys().next().value;
+      if (oldest === undefined) break;
+      shedOffenders.delete(oldest);
+    }
+  }
   const e = shedOffenders.get(ip) || { count: 0, reason, first: Date.now() };
   e.count++;
   shedOffenders.set(ip, e);
-  if (shedOffenders.size > 5000) {
-    for (const [k, v] of shedOffenders) if (Date.now() - v.first > 120000) shedOffenders.delete(k);
-  }
   if (shedCount % 50 === 0) {
     // Bounded top-6 scan: sorting a 5000-entry table every 50 sheds is itself a
     // cost the origin pays while it is being flooded.
@@ -949,7 +982,17 @@ const server = http.createServer(async (req, res) => {
   });
   res.on('close', () => {
     inFlight--;
-    if (!shield.handled) botshield.noteWorkLatency(Date.now() - arrivedAt, clientIp);
+    if (!shield.handled) {
+      // Exclude client-controlled slow-body waits, read timeouts, and aborted sockets from
+      // server work-latency EMA so slowloris-style POSTs cannot poison saturation shedding.
+      const clientIo = Boolean(req._obsxClientAborted || req.aborted || !res.writableEnded);
+      if (clientIo) {
+        botshield.releaseInflight(clientIp);
+      } else {
+        const serverWorkMs = Math.max(0, (Date.now() - arrivedAt) - (req._obsxBodyWaitMs || 0));
+        botshield.noteWorkLatency(serverWorkMs, clientIp);
+      }
+    }
   });
 
   if (shield.handled) return;
@@ -992,9 +1035,16 @@ const server = http.createServer(async (req, res) => {
   );
 
   if (pathname === '/api/v1/health') {
+    const uptime = Math.round((Date.now() - startedAt) / 1000);
+    const healthOp = hasValidOperatorKey(req)
+      ? true
+      : isOperatorAuthorized(req, await accounts.getSessionUser(req, isHttps));
+    if (!healthOp) {
+      return sendJson(res, 200, { ok: true, uptime });
+    }
     const bs = botshield.stats();
     return sendJson(res, 200, {
-      ok: true, uptime: Math.round((Date.now() - startedAt) / 1000),
+      ok: true, uptime,
       activeConnections, inFlight, shed: shedCount, reqRate,
       workLatencyMs: bs.health.workLatencyMs,
       rssMb: bs.health.rssMb,
@@ -1171,6 +1221,9 @@ const server = http.createServer(async (req, res) => {
       if (pathname === '/api/v1/signal') {
         if (method !== 'POST') return sendMethodNotAllowed(res, ['POST', 'OPTIONS']);
         if (checkSafeModeBlock()) return;
+        if (!withinSignalBudget(clientIp)) {
+          return sendJson(res, 429, { ok: false, error: 'signal_rate_limited', retry_after: 10 }, CORS_HEADERS);
+        }
         const body = await readBody(req);
         const result = await core.recordSignals(body, {
           ip: clientIp,
@@ -1263,8 +1316,12 @@ const server = http.createServer(async (req, res) => {
         const normalizedEmail = accounts.cleanEmail(body && body.email);
         const isAllowlistedOperator = Boolean(normalizedEmail && getOperatorAllowlist().has(normalizedEmail));
         if (inSafeMode) {
-          if (!withinSessionBudget(clientIp)) {
-            return sendJson(res, 429, { ok: false, error: 'session_rate_limited', retry_after: 10 });
+          const kv = getKv();
+          const subHash = crypto.sha256(crypto.getSubnetKey(clientIp) || clientIp);
+          const safeModeAttempts = await kv.incr(`tr:rl:safemode:${subHash}`, 600);
+          const safeModeLimit = Number(process.env.OBSX_SAFEMODE_AUTH_LIMIT || 8);
+          if (safeModeAttempts > safeModeLimit || !withinSessionBudget(clientIp)) {
+            return sendJson(res, 429, { ok: false, error: 'safemode_rate_limited', retry_after: 600 });
           }
           if (!isAllowlistedOperator) {
             sendSafeModeBlocked(lic);
@@ -1321,7 +1378,7 @@ const server = http.createServer(async (req, res) => {
         if (!isTrustedSameOriginMutation(req, isHttps)) {
           return sendJson(res, 403, { ok: false, error: 'cross_origin_forbidden' });
         }
-        const result = await accounts.deleteUserSession(req);
+        const result = await accounts.deleteUserSession(req, isHttps);
         return sendJson(
           res,
           200,
@@ -1333,7 +1390,7 @@ const server = http.createServer(async (req, res) => {
       // 7. Get or Delete Current User Account
       if (pathname === '/api/v1/me') {
         if (method === 'GET') {
-          const user = await accounts.getSessionUser(req);
+          const user = await accounts.getSessionUser(req, isHttps);
           const isOperator = Boolean(user && isOperatorAuthorized(req, user));
           return sendJson(res, 200, {
             ok: true,
@@ -1345,9 +1402,9 @@ const server = http.createServer(async (req, res) => {
           if (!isTrustedSameOriginMutation(req, isHttps)) {
             return sendJson(res, 403, { ok: false, error: 'cross_origin_forbidden' });
           }
-          const user = await accounts.getSessionUser(req);
+          const user = await accounts.getSessionUser(req, isHttps);
           if (!user) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
-          const deleted = await accounts.deleteUserAccount(user.uid, req);
+          const deleted = await accounts.deleteUserAccount(user.uid, req, isHttps);
           return sendJson(res, 200, { ok: true, deleted: deleted.ok }, { 'Set-Cookie': deleted.sessionCookie });
         }
         return sendMethodNotAllowed(res, ['GET', 'DELETE']);
@@ -1355,7 +1412,7 @@ const server = http.createServer(async (req, res) => {
 
       if (pathname === '/api/v1/me/export') {
         if (method !== 'GET') return sendMethodNotAllowed(res, ['GET']);
-        const user = await accounts.getSessionUser(req);
+        const user = await accounts.getSessionUser(req, isHttps);
         if (!user) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
         const exportData = await accounts.exportUserData(user.uid);
         return sendJson(res, 200, { ok: true, data: exportData }, { 'Cache-Control': 'no-store' });
@@ -1364,7 +1421,7 @@ const server = http.createServer(async (req, res) => {
       // 8. List User Projects
       if (pathname === '/api/v1/projects') {
         if (method !== 'GET') return sendMethodNotAllowed(res, ['GET']);
-        const user = await accounts.getSessionUser(req);
+        const user = await accounts.getSessionUser(req, isHttps);
         if (!user) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
         return sendJson(res, 200, { ok: true, projects: user.projects || [] });
       }
@@ -1373,7 +1430,7 @@ const server = http.createServer(async (req, res) => {
       if (pathname === '/api/v1/project') {
         if (method !== 'POST') return sendMethodNotAllowed(res, ['POST']);
         if (checkSafeModeBlock()) return;
-        const user = await accounts.getSessionUser(req);
+        const user = await accounts.getSessionUser(req, isHttps);
         if (!user) {
           return sendJson(res, 401, { ok: false, error: 'unauthorized', message: 'Authentication required to create projects.' });
         }
@@ -1462,7 +1519,7 @@ const server = http.createServer(async (req, res) => {
       if (pathname === '/api/v1/metrics') {
         if (method !== 'GET') return sendMethodNotAllowed(res, ['GET']);
         const metrics = await core.getLiveMetrics();
-        const metricsUser = await accounts.getSessionUser(req);
+        const metricsUser = await accounts.getSessionUser(req, isHttps);
         if (!isOperatorAuthorized(req, metricsUser) && metrics && typeof metrics === 'object') {
           metrics.topReasons = {};
         }
@@ -1474,7 +1531,7 @@ const server = http.createServer(async (req, res) => {
         if (method !== 'GET') return sendMethodNotAllowed(res, ['GET']);
         const telemetry = await core.getLiveTelemetry();
         // Public visitors receive aggregated totals and sandbox-only (DEMO.pid) events; tenant events & reason counts stay operator-facing.
-        const teleUser = await accounts.getSessionUser(req);
+        const teleUser = await accounts.getSessionUser(req, isHttps);
         if (!isOperatorAuthorized(req, teleUser) && telemetry && typeof telemetry === 'object') {
           telemetry.recentEvents = Array.isArray(telemetry.recentEvents)
             ? telemetry.recentEvents.filter((ev) => ev && ev.pid === core.DEMO.pid)
@@ -1490,7 +1547,7 @@ const server = http.createServer(async (req, res) => {
       if (pathname === '/api/v1/system/version') {
         if (method !== 'GET') return sendMethodNotAllowed(res, ['GET', 'OPTIONS']);
         const info = updater.getSystemVersionInfo();
-        const opUser = await accounts.getSessionUser(req);
+        const opUser = await accounts.getSessionUser(req, isHttps);
         const isOp = isOperatorAuthorized(req, opUser);
         res.setHeader(
           'X-OBSX-Build',
@@ -1557,7 +1614,7 @@ const server = http.createServer(async (req, res) => {
         if (method !== 'GET' && method !== 'HEAD') return sendMethodNotAllowed(res, ['GET', 'HEAD']);
         // Anonymous callers get a minimal liveness view; the full posture (thresholds,
         // health, state sizes, offenders) is for operators only (key or operator session).
-        const btUser = hasValidOperatorKey(req) ? null : await accounts.getSessionUser(req);
+        const btUser = hasValidOperatorKey(req) ? null : await accounts.getSessionUser(req, isHttps);
         const btOperator = hasValidOperatorKey(req) || Boolean(btUser && isOperatorAuthorized(req, btUser));
         const body = JSON.stringify(btOperator ? botshield.stats(true) : botshield.publicStats());
         res.writeHead(200, {
@@ -1656,7 +1713,7 @@ const server = http.createServer(async (req, res) => {
         if (actionSuffix === '/rotate-key') {
           if (method !== 'POST') return sendMethodNotAllowed(res, ['POST']);
           if (checkSafeModeBlock()) return;
-          const user = await accounts.getSessionUser(req);
+          const user = await accounts.getSessionUser(req, isHttps);
           if (!user) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
           if (!isTrustedSameOriginMutation(req, isHttps)) return sendJson(res, 403, { ok: false, error: 'cross_origin_forbidden' });
           const project = await core.loadProject(pid);
@@ -1681,7 +1738,7 @@ const server = http.createServer(async (req, res) => {
         if (actionSuffix === '/settings') {
           if (method !== 'PATCH' && method !== 'POST') return sendMethodNotAllowed(res, ['PATCH', 'POST']);
           if (checkSafeModeBlock()) return;
-          const user = await accounts.getSessionUser(req);
+          const user = await accounts.getSessionUser(req, isHttps);
           if (!user) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
           if (!isTrustedSameOriginMutation(req, isHttps)) return sendJson(res, 403, { ok: false, error: 'cross_origin_forbidden' });
           const project = await core.loadProject(pid);
@@ -1705,7 +1762,7 @@ const server = http.createServer(async (req, res) => {
         // Circuit Breaker Status: GET /api/v1/project/:pid/circuit-breaker
         if (actionSuffix === '/circuit-breaker') {
           if (method !== 'GET') return sendMethodNotAllowed(res, ['GET']);
-          const user = await accounts.getSessionUser(req);
+          const user = await accounts.getSessionUser(req, isHttps);
           if (!user) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
           const project = await core.loadProject(pid);
           if (!project || project.owner !== user.uid) return sendJson(res, 404, { ok: false, error: 'project_not_found' });
@@ -1720,7 +1777,7 @@ const server = http.createServer(async (req, res) => {
         if (actionSuffix === '/circuit-breaker/reset') {
           if (method !== 'POST') return sendMethodNotAllowed(res, ['POST']);
           if (checkSafeModeBlock()) return;
-          const user = await accounts.getSessionUser(req);
+          const user = await accounts.getSessionUser(req, isHttps);
           if (!user) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
           if (!isTrustedSameOriginMutation(req, isHttps)) return sendJson(res, 403, { ok: false, error: 'cross_origin_forbidden' });
           const project = await core.loadProject(pid);
@@ -1743,7 +1800,7 @@ const server = http.createServer(async (req, res) => {
         // Tenant Project Telemetry: GET /api/v1/project/:pid/telemetry
         if (actionSuffix === '/telemetry') {
           if (method !== 'GET') return sendMethodNotAllowed(res, ['GET']);
-          const user = await accounts.getSessionUser(req);
+          const user = await accounts.getSessionUser(req, isHttps);
           if (!user) return sendJson(res, 401, { ok: false, error: 'unauthorized', message: 'Operator session required' });
           const project = await core.loadProject(pid);
           if (!project || project.owner !== user.uid) return sendJson(res, 404, { ok: false, error: 'project_not_found', message: 'Project not found or unauthorized' });
@@ -1777,7 +1834,7 @@ const server = http.createServer(async (req, res) => {
 
         // Get project details: GET /api/v1/project/:pid
         if (method === 'GET') {
-          const user = await accounts.getSessionUser(req);
+          const user = await accounts.getSessionUser(req, isHttps);
           if (!user) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
           const project = await core.loadProject(pid);
           if (!project || project.owner !== user.uid) return sendJson(res, 404, { ok: false, error: 'project_not_found' });
@@ -1787,7 +1844,7 @@ const server = http.createServer(async (req, res) => {
         // Delete project: DELETE /api/v1/project/:pid
         if (method === 'DELETE') {
           if (checkSafeModeBlock()) return;
-          const user = await accounts.getSessionUser(req);
+          const user = await accounts.getSessionUser(req, isHttps);
           if (!user) return sendJson(res, 401, { ok: false, error: 'unauthorized' });
           if (!isTrustedSameOriginMutation(req, isHttps)) {
             return sendJson(res, 403, { ok: false, error: 'cross_origin_forbidden' });
@@ -1846,7 +1903,7 @@ const server = http.createServer(async (req, res) => {
       // List Notes
       if (pathname === '/api/v1/notes') {
         if (method === 'GET') {
-          const user = await accounts.getSessionUser(req);
+          const user = await accounts.getSessionUser(req, isHttps);
           const { uid, guestCookieHeader } = resolveNotesIdentity(user, req);
           const notes = await core.getUserNotes(uid);
           const extraHeaders = guestCookieHeader ? { 'Set-Cookie': guestCookieHeader } : {};
@@ -1854,7 +1911,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         if (method === 'POST') {
-          const user = await accounts.getSessionUser(req);
+          const user = await accounts.getSessionUser(req, isHttps);
           if (!isTrustedSameOriginMutation(req, isHttps)) {
             return sendJson(res, 403, { ok: false, error: 'cross_origin_forbidden' });
           }
@@ -1946,7 +2003,7 @@ const server = http.createServer(async (req, res) => {
       // Delete Note
       if (pathname.startsWith('/api/v1/notes/')) {
         if (method !== 'DELETE') return sendMethodNotAllowed(res, ['DELETE']);
-        const user = await accounts.getSessionUser(req);
+        const user = await accounts.getSessionUser(req, isHttps);
         if (!isTrustedSameOriginMutation(req, isHttps)) {
           return sendJson(res, 403, { ok: false, error: 'cross_origin_forbidden' });
         }
@@ -2007,7 +2064,16 @@ const server = http.createServer(async (req, res) => {
 
         res.writeHead(200, headers);
         if (method === 'HEAD') return res.end();
-        return fs.createReadStream(targetScript).pipe(res);
+        const stream = fs.createReadStream(targetScript);
+        stream.on('error', (streamErr) => {
+          console.error('[SDK Stream Error]', streamErr);
+          if (!res.headersSent) res.writeHead(500);
+          res.end();
+        });
+        res.on('close', () => {
+          if (!stream.destroyed) stream.destroy();
+        });
+        return stream.pipe(res);
       }
     }
 
@@ -2143,8 +2209,15 @@ const server = http.createServer(async (req, res) => {
     if (err.message === 'Body read timeout') {
       return sendJson(res, 408, { ok: false, error: 'request_timeout' });
     }
+    if (err.message === 'Client aborted request') {
+      if (!res.destroyed && !res.writableEnded) res.end();
+      return;
+    }
     if (err.message === 'note_quota_exceeded') {
       return sendJson(res, 429, { ok: false, error: 'note_quota_exceeded' });
+    }
+    if (err.code === 'project_quota_exceeded' || err.statusCode === 429) {
+      return sendJson(res, 429, { ok: false, error: err.code || 'rate_limited', message: err.message });
     }
     if (err.code === 'invalid_origin' || err.statusCode === 400) {
       return sendJson(res, 400, { ok: false, error: err.code || 'bad_request', message: err.message });
