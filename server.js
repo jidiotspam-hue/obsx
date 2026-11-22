@@ -252,10 +252,18 @@ function resolveHttpsRedirectHost(req) {
   if (configured && /^[a-z0-9.-]+(?::\d{1,5})?$/.test(configured) && !configured.includes('..')) {
     return configured;
   }
-  const rawHost = String((req && req.headers && req.headers.host) || '').trim().toLowerCase();
-  if (rawHost && /^[a-z0-9.-]+(?::\d{1,5})?$/.test(rawHost) && !rawHost.includes('..')) {
-    return rawHost;
+  const allowedHosts = String(process.env.OBSX_ALLOWED_HOSTS || '')
+    .split(',')
+    .map((h) => h.trim().toLowerCase())
+    .filter((h) => h && /^[a-z0-9.-]+(?::\d{1,5})?$/.test(h) && !h.includes('..'));
+  if (allowedHosts.length > 0) {
+    const rawHost = String((req && req.headers && req.headers.host) || '').trim().toLowerCase();
+    if (allowedHosts.includes(rawHost)) {
+      return rawHost;
+    }
   }
+  // Fail closed when neither OBSX_PUBLIC_HOST nor an allowlisted Host is configured
+  // so client-supplied Host headers can never be turned into an open 308 redirect.
   return null;
 }
 
@@ -923,36 +931,6 @@ const server = http.createServer(async (req, res) => {
   const pathname = url.pathname;
   const method = req.method;
 
-  const rawSocketIp = req.socket && req.socket.remoteAddress ? req.socket.remoteAddress : '127.0.0.1';
-  const proxyTrustEnabled = process.env.TRUST_PROXY === 'true' && isTrustedProxyPeer(rawSocketIp);
-
-  // Opt-in origin HTTPS enforcement for plaintext requests forwarded by a trusted
-  // reverse proxy. Loopback health/verification probes without proxy plaintext
-  // headers are never redirected.
-  if (
-    process.env.OBSX_ENFORCE_HTTPS === 'true' &&
-    pathname !== '/api/v1/health' &&
-    isProxiedPlaintextHttp(req, proxyTrustEnabled, isHttps)
-  ) {
-    if (pathname.length > botshield.config.maxPathLen) {
-      return sendJson(res, 400, { ok: false, error: 'path_too_long' });
-    }
-    if (method === 'GET' || method === 'HEAD') {
-      const safeHost = resolveHttpsRedirectHost(req);
-      if (!safeHost) {
-        return sendJson(res, 400, { ok: false, error: 'invalid_host' });
-      }
-      const safePath = '/' + pathname.replace(/^\/+/, '') + (url.search || '').replace(/[\r\n]/g, '');
-      res.writeHead(308, {
-        Location: `https://${safeHost}${safePath}`,
-        'Cache-Control': 'no-store',
-        'X-Content-Type-Options': 'nosniff',
-      });
-      return res.end();
-    }
-    return sendJson(res, 426, { ok: false, error: 'https_required' }, { Upgrade: 'TLS/1.2' });
-  }
-
   const reqRateNow = tickRate();
   inFlight++;
   const arrivedAt = Date.now();
@@ -960,7 +938,9 @@ const server = http.createServer(async (req, res) => {
   // Bot Protection is the first thing any request meets. It owns capacity,
   // budgets, challenges and quarantine, and it measures its own health (RSS,
   // event-loop lag, served rate) so the decision to refuse happens before any
-  // application work starts.
+  // application work starts — including proxied plaintext HTTP traffic.
+  const rawSocketIp = req.socket && req.socket.remoteAddress ? req.socket.remoteAddress : '127.0.0.1';
+  const proxyTrustEnabled = process.env.TRUST_PROXY === 'true' && isTrustedProxyPeer(rawSocketIp);
   const shield = botshield.evaluate(req, res, clientIp, pathname, reqRateNow, url, {
     activeConnections,
     inFlight,
@@ -973,6 +953,31 @@ const server = http.createServer(async (req, res) => {
   });
 
   if (shield.handled) return;
+
+  // Opt-in origin HTTPS enforcement for plaintext requests forwarded by a trusted
+  // reverse proxy (runs AFTER BotShield so plaintext HTTP floods cannot bypass
+  // rate tracking, quarantine, or capacity shedding). Loopback probes without
+  // proxy plaintext headers and /api/v1/health are never redirected.
+  if (
+    process.env.OBSX_ENFORCE_HTTPS === 'true' &&
+    pathname !== '/api/v1/health' &&
+    isProxiedPlaintextHttp(req, proxyTrustEnabled, isHttps)
+  ) {
+    if (method === 'GET' || method === 'HEAD') {
+      const safeHost = resolveHttpsRedirectHost(req);
+      if (!safeHost) {
+        return sendJson(res, 426, { ok: false, error: 'https_required' }, { Upgrade: 'TLS/1.2' });
+      }
+      const safePath = '/' + pathname.replace(/^\/+/, '') + (url.search || '').replace(/[\r\n]/g, '');
+      res.writeHead(308, {
+        Location: `https://${safeHost}${safePath}`,
+        'Cache-Control': 'no-store',
+        'X-Content-Type-Options': 'nosniff',
+      });
+      return res.end();
+    }
+    return sendJson(res, 426, { ok: false, error: 'https_required' }, { Upgrade: 'TLS/1.2' });
+  }
 
   // Global Hardened Security Headers (applied to all routes including /api/v1/health)
   res.setHeader('X-Frame-Options', 'DENY');

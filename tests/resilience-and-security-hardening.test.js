@@ -575,3 +575,181 @@ test('server: duplicate process exits non-zero on EADDRINUSE instead of hanging 
     await new Promise((resolve) => blocker.close(resolve));
   }
 });
+
+test('review regressions: async KV snapshot race, cleanup volatile expiry, guest eviction, Host fail-closed, and post-BotShield HTTP', async () => {
+  // 1. Async snapshot must NOT lose writes arriving mid-writeFile and must restore _dirty on failure
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'obsx-snap-race-'));
+  const snapPath = path.join(tmpDir, 'snapshot.json');
+  const origWriteFile = fs.promises.writeFile;
+  const store = new MemoryStore(500, snapPath);
+  try {
+    await store.set('tr:durable:A', '1');
+    let injected = false;
+    fs.promises.writeFile = async (...args) => {
+      if (!injected) {
+        injected = true;
+        await store.set('tr:durable:B', '2');
+      }
+      return origWriteFile.apply(fs.promises, args);
+    };
+    await store._saveSnapshotAsync();
+    assert.equal(store._dirty, true, 'concurrent durable write during writeFile must leave _dirty=true');
+    fs.promises.writeFile = origWriteFile;
+    store.close();
+
+    const reloaded = new MemoryStore(500, snapPath);
+    try {
+      assert.equal(await reloaded.get('tr:durable:A'), '1');
+      assert.equal(await reloaded.get('tr:durable:B'), '2');
+    } finally {
+      reloaded.close();
+    }
+
+    // Write failure restores _dirty=true so subsequent sync/close retries cleanly
+    const failStore = new MemoryStore(500, snapPath);
+    try {
+      await failStore.set('tr:durable:C', '3');
+      fs.promises.writeFile = async () => { throw new Error('disk_full_sim'); };
+      await failStore._saveSnapshotAsync();
+      assert.equal(failStore._dirty, true, 'failed async snapshot must restore _dirty=true');
+    } finally {
+      fs.promises.writeFile = origWriteFile;
+      failStore.close();
+    }
+
+    // 2. cleanup() expiring volatile keys must NOT dirty snapshot, while durable expiry does
+    const store3 = new MemoryStore(500, snapPath);
+    try {
+      store3._dirty = false;
+      await store3.incr('tr:rl:sub:expire_only', 1);
+      store3.ttls.set('tr:rl:sub:expire_only', Date.now() - 50);
+      store3.cleanup();
+      assert.equal(store3._dirty, false, 'expiring volatile key must not dirty snapshot');
+
+      await store3.set('tr:durable:expiring', 'bye', 'EX', 1);
+      store3._dirty = false;
+      store3.ttls.set('tr:durable:expiring', Date.now() - 50);
+      store3.cleanup();
+      assert.equal(store3._dirty, true, 'expiring durable key must dirty snapshot');
+    } finally {
+      store3.close();
+    }
+
+    // 2b. Pass 2 volatile eviction removes tr:guest:* keys while preserving verified human sessions
+    const tinyStore = new MemoryStore(6, null);
+    try {
+      await tinyStore.hset('tr:s:verified_human', { p: 'p1', sig: '{"ok":1}' });
+      for (let i = 0; i < 10; i++) {
+        await tinyStore.set(`tr:guest:n:note_${i}`, 'payload');
+      }
+      assert.ok(tinyStore.store.size <= 6);
+      const surviving = await tinyStore.hgetall('tr:s:verified_human');
+      assert.equal(surviving.p, 'p1');
+    } finally {
+      tinyStore.close();
+    }
+  } finally {
+    fs.promises.writeFile = origWriteFile;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+
+  // 3. Guest-note global eviction must NOT cause ghost-quota lockout for the evicted guest
+  const prevGuestCap = process.env.OBSX_MAX_GLOBAL_GUEST_NOTES;
+  const guestA = `guest_${crypto.randomId(8)}`;
+  const guestB = `guest_${crypto.randomId(8)}`;
+  try {
+    process.env.OBSX_MAX_GLOBAL_GUEST_NOTES = '25';
+    for (let i = 0; i < 25; i++) {
+      await core.createUserNote(guestA, { title: `A-${i}`, content: 'a' });
+    }
+    for (let i = 0; i < 25; i++) {
+      await core.createUserNote(guestB, { title: `B-${i}`, content: 'b' });
+    }
+    assert.equal((await core.getUserNotes(guestA)).length, 0);
+    const createdAfterEviction = await core.createUserNote(guestA, { title: 'A-fresh', content: 'recovered' });
+    assert.ok(createdAfterEviction && createdAfterEviction.id);
+    assert.equal((await core.getUserNotes(guestA)).length, 1);
+  } finally {
+    await core.purgeUserNotes(guestA);
+    await core.purgeUserNotes(guestB);
+    if (prevGuestCap === undefined) delete process.env.OBSX_MAX_GLOBAL_GUEST_NOTES;
+    else process.env.OBSX_MAX_GLOBAL_GUEST_NOTES = prevGuestCap;
+  }
+
+  // 4. OBSX_ENFORCE_HTTPS without OBSX_PUBLIC_HOST/OBSX_ALLOWED_HOSTS fails closed (426, no open redirect)
+  //    and runs AFTER BotShield so plaintext HTTP traffic cannot bypass shield tracking/blocks
+  const server = require('../server');
+  const prevCfg = { ...botshield.config };
+  const savedEnv = {
+    TRUST_PROXY: process.env.TRUST_PROXY,
+    OBSX_ENFORCE_HTTPS: process.env.OBSX_ENFORCE_HTTPS,
+    OBSX_PUBLIC_HOST: process.env.OBSX_PUBLIC_HOST,
+    OBSX_ALLOWED_HOSTS: process.env.OBSX_ALLOWED_HOSTS,
+  };
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  try {
+    process.env.TRUST_PROXY = 'true';
+    process.env.OBSX_ENFORCE_HTTPS = 'true';
+    delete process.env.OBSX_PUBLIC_HOST;
+    delete process.env.OBSX_ALLOWED_HOSTS;
+
+    botshield.reset();
+    botshield.configure({ enabled: true, mode: 'auto', maxRssMb: 9999 });
+
+    const botPlain = await httpRawRequest(port, '/dashboard.html', {
+      headers: {
+        Host: 'attacker.example',
+        'User-Agent': BOT_UA,
+        'X-Forwarded-Proto': 'http',
+        'X-Forwarded-For': '198.51.100.180',
+      },
+    });
+    assert.equal(botPlain.status, 403);
+    assert.equal(botPlain.headers['x-obsx-botshield'], 'challenge');
+    assert.ok(botshield.stats(true).counters.requests >= 1);
+
+    const noHostAllowlist = await httpRawRequest(port, '/dashboard.html', {
+      headers: {
+        Host: 'attacker.example',
+        'User-Agent': BROWSER_UA,
+        Accept: 'text/html,application/xhtml+xml',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Dest': 'document',
+        'X-Forwarded-Proto': 'http',
+        'X-Forwarded-For': '198.51.100.181',
+      },
+    });
+    assert.equal(noHostAllowlist.status, 426);
+    assert.equal(noHostAllowlist.headers.location, undefined);
+
+    process.env.OBSX_ALLOWED_HOSTS = 'example.com,www.example.com';
+    const allowedBrowser = await httpRawRequest(port, '/dashboard.html', {
+      headers: {
+        Host: 'www.example.com',
+        'User-Agent': BROWSER_UA,
+        Accept: 'text/html,application/xhtml+xml',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Dest': 'document',
+        'X-Forwarded-Proto': 'http',
+        'X-Forwarded-For': '198.51.100.182',
+      },
+    });
+    assert.equal(allowedBrowser.status, 308);
+    assert.equal(allowedBrowser.headers.location, 'https://www.example.com/dashboard.html');
+  } finally {
+    botshield.reset();
+    botshield.configure(prevCfg);
+    await new Promise((resolve) => server.close(resolve));
+    for (const [k, v] of Object.entries(savedEnv)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+});
